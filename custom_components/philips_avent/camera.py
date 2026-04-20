@@ -68,10 +68,6 @@ class AventCamera(Camera):
     ) -> bytes | None:
         import subprocess
 
-        scale = ""
-        if width and height:
-            scale = f"-vf scale={width}:{height}"
-
         try:
             result = subprocess.run(
                 [
