@@ -1,0 +1,36 @@
+name: "Philips Avent WebRTC Bridge"
+description: "WebRTC to RTSP bridge for Philips Avent baby monitors"
+version: "0.1.0"
+slug: "aventproxy_bridge"
+url: "https://github.com/thekoma/aventproxy"
+arch:
+  - amd64
+  - aarch64
+ports:
+  8554/tcp: 8554
+ports_description:
+  8554/tcp: "RTSP stream"
+options:
+  signing_key: ""
+  sid: ""
+  ecode: ""
+  partner: ""
+  app_key: ""
+  device_id: ""
+  package_name: ""
+  cameras: []
+schema:
+  signing_key: str
+  sid: str
+  ecode: str
+  partner: str
+  app_key: str
+  device_id: str
+  package_name: str
+  cameras:
+    - camera_id: str
+      camera_name: str
+startup: "application"
+boot: "auto"
+map:
+  - config:rw

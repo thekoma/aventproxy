@@ -1,6 +1,8 @@
 """Philips Avent Baby Monitor integration for Home Assistant."""
 
+import json
 import logging
+from pathlib import Path
 
 import aiohttp
 
@@ -9,12 +11,14 @@ from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, Platform
 from homeassistant.core import HomeAssistant
 
 from .api import PhilipsAventAPI
-from .const import CONF_CAMERA_ID, CONF_ECODE, CONF_PARTNER, CONF_SID, CONF_UID, DOMAIN
-from .coordinator import PhilipsAventCoordinator
+from .const import (
+    CONF_CAMERA_ID, CONF_ECODE, CONF_PARTNER, CONF_SID, CONF_UID, DOMAIN,
+    TUYA_APP_KEY, TUYA_CH_KEY, TUYA_PACKAGE_NAME, TUYA_SIGNING_KEY,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.SENSOR, Platform.SWITCH, Platform.NUMBER, Platform.BUTTON]
+PLATFORMS = [Platform.CAMERA, Platform.SENSOR, Platform.SWITCH, Platform.NUMBER, Platform.BUTTON]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -57,6 +61,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "coordinators": coordinators,
         "config": entry.data,
     }
+
+    # Write bridge config for the add-on
+    bridge_config = {
+        "signing_key": TUYA_SIGNING_KEY,
+        "sid": entry.data[CONF_SID],
+        "ecode": entry.data.get(CONF_ECODE, ""),
+        "partner": entry.data.get(CONF_PARTNER, ""),
+        "app_key": TUYA_APP_KEY,
+        "device_id": api.device_id,
+        "package_name": TUYA_PACKAGE_NAME,
+        "cameras": [
+            {"camera_id": cam.get("deviceId", cam.get("devId")),
+             "camera_name": cam.get("deviceName", cam.get("name", "camera"))}
+            for cam in cameras
+        ],
+    }
+    bridge_path = Path(hass.config.path("philips_avent_bridge.json"))
+    bridge_path.write_text(json.dumps(bridge_config, indent=2))
+    _LOGGER.info("Bridge config written to %s", bridge_path)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
