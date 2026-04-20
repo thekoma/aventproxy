@@ -1,6 +1,8 @@
 # Philips Avent Baby Monitor — Home Assistant Integration
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/thekoma/aventproxy/actions/workflows/ci.yml/badge.svg)](https://github.com/thekoma/aventproxy/actions/workflows/ci.yml)
+[![HACS](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 
 Home Assistant integration for Philips Avent SCD973/SCD923 baby monitors, providing local streaming, temperature monitoring, night light control, lullaby playback, and motion/sound alerts.
 
@@ -8,77 +10,74 @@ Home Assistant integration for Philips Avent SCD973/SCD923 baby monitors, provid
 
 | Feature | Entity Type | Description |
 |---------|-------------|-------------|
-| Live Video | Camera | 1080p H.264 stream via WebRTC→RTSP bridge |
-| Temperature | Sensor | Room temperature from built-in sensor |
-| Night Light | Switch + Number | On/off + brightness 1-100% |
-| Lullabies | Buttons + Number | Play/pause/stop/next/prev + volume |
-| Motion Alert | Switch | Motion detection on/off |
-| Sound Alert | Switch | Sound detection on/off |
-| Privacy Mode | Switch | Camera on/off |
-
-## How It Works
-
-The integration communicates with the camera through the Tuya Mobile SDK API (the same API used by the official Philips Avent Baby Monitor+ app). A WebRTC bridge translates the camera's video stream to standard RTSP, consumable by Home Assistant and any media player.
-
-```
-┌─────────────────────────┐
-│     Home Assistant       │
-│                          │
-│  ┌────────────────────┐  │
-│  │  Custom Component  │  │   Tuya Cloud
-│  │  (config flow,     │◄─┼──► a1.tuyaeu.com
-│  │   sensors, lights) │  │   (API calls)
-│  └────────────────────┘  │
-│                          │
-│  ┌────────────────────┐  │
-│  │  Bridge Add-on     │  │   Camera
-│  │  (WebRTC → RTSP)   │◄─┼──► via STUN/TURN
-│  │  :8554             │  │   (video stream)
-│  └────────────────────┘  │
-│                          │
-│  ┌────────────────────┐  │
-│  │  Camera Entity     │  │
-│  │  rtsp://...:8554   │  │
-│  └────────────────────┘  │
-└─────────────────────────┘
-```
+| 📹 Live Video | Camera | 1080p H.264 stream via WebRTC→RTSP bridge |
+| 🌡️ Temperature | Sensor | Room temperature from built-in sensor |
+| 💡 Night Light | Switch + Number | On/off + brightness 1-100% |
+| 🎵 Lullabies | Buttons + Number | Play/pause/stop/next/prev + volume |
+| 🏃 Motion Alert | Switch | Motion detection on/off |
+| 🔊 Sound Alert | Switch | Sound detection on/off |
+| 🔒 Privacy Mode | Switch | Camera on/off |
 
 ## Installation
 
-### 1. Add-on (WebRTC Bridge)
+### Integration (HACS)
 
-1. Add this repository to Home Assistant add-on store
-2. Install "Philips Avent WebRTC Bridge"
-3. The add-on auto-configures after the integration login (step 2)
+[![Open HACS repository](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=thekoma&repository=aventproxy&category=integration)
 
-### 2. Integration (HACS)
+Or manually:
 
-1. Add this repository as a custom HACS repository
-2. Install "Philips Avent Baby Monitor"
-3. Go to Settings → Integrations → Add → "Philips Avent"
-4. Enter your email and password (same as the Baby Monitor+ app)
-5. Check your email for the verification code, enter it
-6. Done — camera and all entities appear automatically
+1. Open HACS → Integrations → Three dots menu → Custom repositories
+2. Add `https://github.com/thekoma/aventproxy` as category **Integration**
+3. Install "Philips Avent Baby Monitor"
+4. Restart Home Assistant
 
-## Setup Flow
+### Add-on (WebRTC Bridge)
 
-The integration uses the same login as the official app:
+[![Add add-on repository](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fthekoma%2Faventproxy)
 
-1. **Email + Password** — your Philips Avent account
-2. **Verification Code** — 6-digit code sent to your email (MFA)
-3. **Auto-discovery** — cameras are found automatically
+Or manually:
 
-No additional configuration needed. The signing credentials are embedded in the integration (same for all users, extracted from the public APK).
+1. Settings → Add-ons → Add-on Store → Three dots → Repositories
+2. Add `https://github.com/thekoma/aventproxy`
+3. Install "Philips Avent WebRTC Bridge"
 
-## Technical Details
+### Setup
 
-See [WHITEPAPER.md](WHITEPAPER.md) for the complete reverse engineering methodology, including:
+[![Add integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=philips_avent)
 
-- API signing algorithm (HMAC-SHA256)
-- Login flow (password + RSA + MFA)
-- MQTT credential derivation
-- WebRTC signaling
-- DPS (Data Point) reference for all camera features
+1. Go to Settings → Integrations → Add Integration → **Philips Avent Baby Monitor**
+2. Enter your email and password (same as the Baby Monitor+ app)
+3. Check your email for the 6-digit verification code
+4. Enter the code — done!
+
+The integration discovers your cameras automatically and creates all entities. The bridge add-on starts streaming.
+
+## How It Works
+
+The integration uses the same Tuya Mobile SDK API as the official Philips Avent Baby Monitor+ app. Authentication uses the same password + MFA flow — your traffic is indistinguishable from the real app.
+
+```
+┌─────────────────────────────┐
+│       Home Assistant         │
+│                              │
+│  ┌────────────────────────┐  │
+│  │  Custom Integration    │  │   Tuya Cloud
+│  │  (login, sensors,      │◄─┼──► a1.tuyaeu.com
+│  │   lights, lullabies)   │  │   (API calls)
+│  └────────────────────────┘  │
+│                              │
+│  ┌────────────────────────┐  │
+│  │  Bridge Add-on         │  │   Camera
+│  │  (WebRTC → RTSP)       │◄─┼──► via STUN/TURN
+│  │  :8554                 │  │   (1080p H.264)
+│  └────────────────────────┘  │
+│                              │
+│  ┌────────────────────────┐  │
+│  │  Camera Entity         │  │
+│  │  rtsp://...:8554/Name  │  │
+│  └────────────────────────┘  │
+└─────────────────────────────┘
+```
 
 ## Camera Data Points
 
@@ -93,43 +92,36 @@ See [WHITEPAPER.md](WHITEPAPER.md) for the complete reverse engineering methodol
 | 139 | `decibel_switch` | Sound alert | on/off |
 | 237 | `privacy_switch` | Privacy mode | 0/1 |
 
-Full list: [examples/DPS_REFERENCE.md](examples/DPS_REFERENCE.md)
+Full reference: [examples/DPS_REFERENCE.md](examples/DPS_REFERENCE.md)
+
+## Technical Background
+
+This integration was built through reverse engineering of the Tuya Mobile SDK API. The complete methodology is documented in [WHITEPAPER.md](WHITEPAPER.md), including:
+
+- API signing algorithm (HMAC-SHA256 with composite key)
+- Password + MFA login flow
+- MQTT credential derivation for WebRTC signaling
+- 10 documented failures and dead ends
 
 ## For Developers
 
 ### Adapting for other Tuya whitelabel cameras
 
-The API signing algorithm is generic to all Tuya Thing SDK apps. To adapt for a different camera:
-
-1. Extract signing key from the APK: `docker run -v app.apk:/input/app.apk apk-key-extractor`
-2. Extract the embedded key via Frida (one-time): `python3 tools/extract_signing_key.py`
-3. Update `const.py` with the new credentials
-
-See [tools/apk-key-extractor/README.md](tools/apk-key-extractor/README.md) for details.
-
-### Running the bridge manually
-
-```bash
-cd tuya-ipc-terminal
-go build -o tuya-ipc-terminal .
-./tuya-ipc-terminal direct \
-  --signing-key "..." \
-  --sid "..." \
-  --ecode "..." \
-  --partner "..." \
-  --app-key "..." \
-  --device-id "..." \
-  --package "..." \
-  --camera-id "..." \
-  --camera-name "MyCamera" \
-  --port 8554
-```
+The signing algorithm is generic to all Tuya Thing SDK apps. See [tools/apk-key-extractor/](tools/apk-key-extractor/) for automated key extraction from any APK.
 
 ### Running tests
 
 ```bash
-pip install pytest pycryptodome
-pytest tests/test_philips_avent/
+python3 -m venv .venv && source .venv/bin/activate
+pip install pytest pycryptodome aiohttp voluptuous homeassistant
+PYTHONPATH=. pytest tests/test_philips_avent/ -v
+```
+
+### Running the bridge manually
+
+```bash
+cd tuya-ipc-terminal && go build -o tuya-ipc-terminal .
+./tuya-ipc-terminal direct --help
 ```
 
 ## License
@@ -138,4 +130,4 @@ MIT — See [LICENSE](LICENSE)
 
 ## Disclaimer
 
-This project is not affiliated with Philips or Tuya. It is created for interoperability purposes, enabling consumers to use their own devices with open home automation platforms. All API access uses the owner's own credentials and the same protocol as the official app.
+This project is not affiliated with Philips or Tuya. It enables consumers to use their own devices with open home automation platforms. All API access uses the owner's own credentials and the same protocol as the official app.
