@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  test-python:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -20,37 +20,49 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: pip install pytest ruff
+        run: pip install pytest pycryptodome aiohttp voluptuous homeassistant
 
       - name: Lint
-        run: ruff check aventproxy/proxy tests
+        run: |
+          pip install ruff
+          ruff check custom_components/ examples/ tools/ --ignore E501
 
       - name: Test
-        run: pytest -v --tb=short
-        env:
-          PYTHONPATH: aventproxy
+        run: PYTHONPATH=. pytest -v --tb=short tests/test_philips_avent/
 
-  docker:
+  test-go:
     runs-on: ubuntu-latest
-    needs: test
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build Docker image
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Build bridge
+        working-directory: tuya-ipc-terminal
+        run: go build -o tuya-ipc-terminal .
+
+      - name: Verify binary
+        working-directory: tuya-ipc-terminal
+        run: ./tuya-ipc-terminal --help
+
+  docker-addon:
+    runs-on: ubuntu-latest
+    needs: [test-python, test-go]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy bridge source for Docker build
+        run: cp -r tuya-ipc-terminal aventproxy-bridge-addon/tuya-ipc-terminal
+
+      - name: Build add-on Docker image
         run: |
           docker build \
-            --build-arg BUILD_FROM=python:3.12-alpine \
-            -t aventproxy:test \
-            aventproxy/
+            --build-arg BUILD_FROM=debian:bookworm-slim \
+            -t aventproxy-bridge:test \
+            aventproxy-bridge-addon/
 
-      - name: Smoke test
+      - name: Verify binary in container
         run: |
-          docker run -d --name aventproxy-test \
-            -v ${{ github.workspace }}/tests/fixtures/options.json:/data/options.json:ro \
-            -p 18554:8554 \
-            aventproxy:test
-          sleep 2
-          docker logs aventproxy-test
-          docker ps --filter name=aventproxy-test --format '{{.Status}}' | grep -q Up
-          docker stop aventproxy-test
-          docker rm aventproxy-test
+          docker run --rm aventproxy-bridge:test tuya-ipc-terminal --help
