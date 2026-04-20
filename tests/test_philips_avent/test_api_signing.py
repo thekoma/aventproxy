@@ -6,8 +6,8 @@ import hmac
 import pytest
 
 # Import the signing internals
-from custom_components.philips_avent.api import _sign, _swap, PhilipsAventAPI
-from custom_components.philips_avent.const import TUYA_SIGNING_KEY, TUYA_APP_KEY
+from api import _sign, _swap, PhilipsAventAPI
+from const import TUYA_SIGNING_KEY, TUYA_APP_KEY
 
 
 class TestSwapSignString:
