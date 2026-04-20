@@ -1,6 +1,7 @@
 package tuya
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -60,13 +61,51 @@ func NewMqttClient(clientId, mobileMqttsUrl string, mqttConfig *MQTConfig) (*MQT
 	opts.SetClientID(username)
 	opts.SetUsername(username)
 	opts.SetPassword(password)
-	// opts.SetDefaultPublishHandler(messageHandler)
 	opts.SetOnConnectHandler(client.onConnect)
 	opts.SetConnectionLostHandler(client.onDisconnect)
 	opts.SetAutoReconnect(true)
 	opts.SetConnectTimeout(10 * time.Second)
 	opts.SetKeepAlive(60 * time.Second)
 	opts.SetCleanSession(true)
+
+	client.mqtt = mqtt.NewClient(opts)
+	if token := client.mqtt.Connect(); token.Wait() && token.Error() != nil {
+		return nil, token.Error()
+	}
+
+	return client, nil
+}
+
+type MobileMQTTConfig struct {
+	Username       string
+	Password       string
+	ClientID       string
+	SubscribeTopic string
+	UID            string
+	BrokerURL      string
+}
+
+func NewMobileMqttClient(config *MobileMQTTConfig) (*MQTTClient, error) {
+	client := &MQTTClient{
+		uid:            config.UID,
+		subscribeTopic: config.SubscribeTopic,
+		Connected:      utils.Waiter{},
+	}
+
+	opts := mqtt.NewClientOptions()
+	opts.AddBroker(config.BrokerURL)
+	opts.SetClientID(config.ClientID)
+	opts.SetUsername(config.Username)
+	opts.SetPassword(config.Password)
+	opts.SetOnConnectHandler(client.onConnect)
+	opts.SetConnectionLostHandler(client.onDisconnect)
+	opts.SetAutoReconnect(true)
+	opts.SetConnectTimeout(10 * time.Second)
+	opts.SetKeepAlive(60 * time.Second)
+	opts.SetCleanSession(true)
+
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	opts.SetTLSConfig(tlsConfig)
 
 	client.mqtt = mqtt.NewClient(opts)
 	if token := client.mqtt.Connect(); token.Wait() && token.Error() != nil {

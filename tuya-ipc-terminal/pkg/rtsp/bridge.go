@@ -96,10 +96,8 @@ func (wb *WebRTCBridge) Start() error {
 
 	core.Logger.Info().Msgf("Starting WebRTC bridge for camera: %s", wb.camera.DeviceName)
 
-	var mqttConfig *tuya.MQTTConfigResponse
 	var webRTCConfig *tuya.WebRTCConfigResponse
 	var mobileMqttsUrl string
-	var clientId string
 	var err error
 
 	if wb.mobileClient != nil {
@@ -111,17 +109,36 @@ func (wb *WebRTCBridge) Start() error {
 			return fmt.Errorf("failed to get WebRTC config: %v", err)
 		}
 
-		mqttConfig, err = wb.mobileClient.GetMQTTConfig()
-		if err != nil {
-			return fmt.Errorf("failed to get MQTT config: %v", err)
-		}
-
 		userInfo, err := wb.mobileClient.GetUserInfo()
 		if err != nil {
 			return fmt.Errorf("failed to get user info: %v", err)
 		}
 		mobileMqttsUrl = userInfo.Domain.MobileMqttsUrl
-		clientId = wb.mobileClient.AppKey
+
+		// Derive MQTT credentials and connect directly
+		ecode := wb.mobileClient.Ecode
+		uid := wb.mobileClient.UID
+		mqttDerived := wb.mobileClient.DeriveMQTTConfig(ecode)
+		mqttUsername := wb.mobileClient.DeriveMQTTUsername(wb.mobileClient.SID, ecode, "p1319959")
+		mqttClientID := wb.mobileClient.DeriveMQTTClientID(uid)
+		subscribeTopic := fmt.Sprintf("/av/u/%s", uid)
+
+		wb.mqttClient, err = tuya.NewMobileMqttClient(&tuya.MobileMQTTConfig{
+			Username:       mqttUsername,
+			Password:       mqttDerived.Password,
+			ClientID:       mqttClientID,
+			SubscribeTopic: subscribeTopic,
+			UID:            uid,
+			BrokerURL:      fmt.Sprintf("ssl://%s:8883", mobileMqttsUrl),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to connect to MQTT: %v", err)
+		}
+
+		if err = wb.mqttClient.Connected.Wait(); err != nil {
+			return fmt.Errorf("MQTT connection failed: %v", err)
+		}
+
 	} else {
 		// Original web portal path
 		httpClient := wb.createHTTPClient()
@@ -133,8 +150,9 @@ func (wb *WebRTCBridge) Start() error {
 		if err != nil {
 			return fmt.Errorf("failed to get app info: %v", err)
 		}
-		clientId = appInfo.Result.ClientId
+		clientId := appInfo.Result.ClientId
 
+		var mqttConfig *tuya.MQTTConfigResponse
 		mqttConfig, err = tuya.GetMQTTConfig(httpClient, wb.user.SessionData.ServerHost)
 		if err != nil {
 			return fmt.Errorf("failed to get MQTT config: %v", err)
@@ -146,27 +164,27 @@ func (wb *WebRTCBridge) Start() error {
 		if err != nil {
 			return fmt.Errorf("failed to get WebRTC config: %v", err)
 		}
+
+		wb.mqttClient, err = tuya.NewMqttClient(
+			clientId,
+			mobileMqttsUrl,
+			&mqttConfig.Result,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to connect to MQTT: %v", err)
+		}
+
+		if err = wb.mqttClient.Connected.Wait(); err != nil {
+			return fmt.Errorf("MQTT connection failed: %v", err)
+		}
 	}
 
-	// Connect to MQTT broker
-	wb.mqttClient, err = tuya.NewMqttClient(
-		clientId,
-		mobileMqttsUrl,
-		&mqttConfig.Result,
-	)
-
-	if err != nil {
-		return fmt.Errorf("failed to connect to MQTT: %v", err)
-	}
-
-	if err = wb.mqttClient.Connected.Wait(); err != nil {
-		return fmt.Errorf("MQTT connection failed: %v", err)
-	}
-
-	// Parse skill information
+	// Parse skill information (may be empty for direct mode)
 	var skill tuya.Skill
-	if err := json.Unmarshal([]byte(webRTCConfig.Result.Skill), &skill); err != nil {
-		return fmt.Errorf("failed to parse skill info: %v", err)
+	if webRTCConfig.Result.Skill != "" {
+		if err := json.Unmarshal([]byte(webRTCConfig.Result.Skill), &skill); err != nil {
+			core.Logger.Warn().Err(err).Msg("Could not parse skill, using defaults")
+		}
 	}
 
 	// Determine stream settings

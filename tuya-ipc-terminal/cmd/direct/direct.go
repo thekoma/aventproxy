@@ -40,8 +40,9 @@ Example:
 		RunE: runDirect,
 	}
 
-	cmd.Flags().String("signing-key", "", "HMAC-SHA256 signing key (pkg_cert_emb_secret)")
+	cmd.Flags().String("signing-key", "", "HMAC-SHA256 signing key")
 	cmd.Flags().String("sid", "", "Tuya session ID")
+	cmd.Flags().String("ecode", "", "Tuya ecode (from login response)")
 	cmd.Flags().String("app-key", "", "Tuya app key (clientId)")
 	cmd.Flags().String("device-id", "", "Phone device ID")
 	cmd.Flags().String("ch-key", "071d81fa", "Channel key")
@@ -51,6 +52,7 @@ Example:
 
 	cmd.MarkFlagRequired("signing-key")
 	cmd.MarkFlagRequired("sid")
+	cmd.MarkFlagRequired("ecode")
 	cmd.MarkFlagRequired("app-key")
 	cmd.MarkFlagRequired("device-id")
 	cmd.MarkFlagRequired("camera-id")
@@ -61,6 +63,7 @@ Example:
 func runDirect(cmd *cobra.Command, args []string) error {
 	signingKey, _ := cmd.Flags().GetString("signing-key")
 	sid, _ := cmd.Flags().GetString("sid")
+	ecode, _ := cmd.Flags().GetString("ecode")
 	appKey, _ := cmd.Flags().GetString("app-key")
 	deviceID, _ := cmd.Flags().GetString("device-id")
 	chKey, _ := cmd.Flags().GetString("ch-key")
@@ -71,9 +74,10 @@ func runDirect(cmd *cobra.Command, args []string) error {
 	if cameraName == "" {
 		cameraName = cameraID
 	}
-	rtspPath := strings.ReplaceAll(cameraName, " ", "_")
+	rtspPath := "/" + strings.ReplaceAll(cameraName, " ", "_")
 
 	client := tuya.NewMobileSDKClient(signingKey, sid, appKey, deviceID, chKey)
+	client.Ecode = ecode
 
 	core.Logger.Info().Msg("Verifying API access...")
 	_, err := client.Call("smartlife.p.time.get", "1.0", nil)
@@ -88,8 +92,9 @@ func runDirect(cmd *cobra.Command, args []string) error {
 	}
 	core.Logger.Info().Msgf("User: %s (%s)", userInfo.Nickname, userInfo.Email)
 	core.Logger.Info().Msgf("MQTT domain: %s", userInfo.Domain.MobileMqttsUrl)
+	client.UID = userInfo.ID
 
-	userKey := "direct_" + userInfo.ID
+	userKey := "direct_" + strings.ReplaceAll(strings.ReplaceAll(userInfo.Email, "@", "_at_"), ".", "_")
 	user := &storage.UserSession{
 		Email:  userInfo.Email,
 		Region: "direct",

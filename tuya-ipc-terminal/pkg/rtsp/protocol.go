@@ -523,10 +523,10 @@ func (s *RTSPServer) generateSDP(camera *storage.CameraInfo, baseURL string) str
 	sdp += "a=range:npt=0-\r\n"
 
 	var skill *tuya.Skill
-	err := json.Unmarshal([]byte(camera.Skill), &skill)
-	if err != nil {
-		core.Logger.Error().Err(err).Msg("Error unmarshalling skill")
-		return ""
+	if camera.Skill != "" {
+		if err := json.Unmarshal([]byte(camera.Skill), &skill); err != nil {
+			core.Logger.Warn().Err(err).Msg("Could not parse skill, using defaults")
+		}
 	}
 
 	audioSdp := ""

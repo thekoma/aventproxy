@@ -13,21 +13,23 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"tuya-ipc-terminal/pkg/core"
 
 	"github.com/google/uuid"
 )
 
 type MobileSDKClient struct {
-	SigningKey    string
-	SID          string
-	AppKey       string
-	DeviceID     string // phone device ID
-	ChKey        string
-	TTID         string
-	BaseURL      string
-	AppVersion   string
-	SDKVersion   string
+	SigningKey       string
+	SID              string
+	AppKey           string
+	DeviceID         string // phone device ID
+	ChKey            string
+	TTID             string
+	BaseURL          string
+	AppVersion       string
+	SDKVersion       string
+	Ecode            string
+	PartnerIdentity  string
+	UID              string
 }
 
 var signKeyWhitelist = []string{
@@ -188,20 +190,26 @@ func (c *MobileSDKClient) GetWebRTCConfig(deviceID string) (*WebRTCConfigRespons
 	return &WebRTCConfigResponse{Result: config, Success: true}, nil
 }
 
-func (c *MobileSDKClient) GetMQTTConfig() (*MQTTConfigResponse, error) {
-	raw, err := c.Call("smartlife.m.mqtt.config.get", "1.0", nil)
-	if err != nil {
-		core.Logger.Warn().Msgf("smartlife.m.mqtt.config.get failed: %v, trying tuya.m.mqtt.config.get", err)
-		raw, err = c.Call("tuya.m.mqtt.config.get", "1.0", nil)
-		if err != nil {
-			return nil, err
-		}
-	}
-	var config MQTConfig
-	if err := json.Unmarshal(raw, &config); err != nil {
-		return nil, err
-	}
-	return &MQTTConfigResponse{Result: config, Success: true}, nil
+func (c *MobileSDKClient) DeriveMQTTConfig(ecode string) *MQTConfig {
+	md5SignKey := fmt.Sprintf("%x", md5.Sum([]byte(c.SigningKey)))
+	pwFull := fmt.Sprintf("%x", md5.Sum([]byte(md5SignKey+ecode)))
+	password := pwFull[8:24]
+	md5AppKey := fmt.Sprintf("%x", md5.Sum([]byte(c.AppKey)))
+	userTail := fmt.Sprintf("%x", md5.Sum([]byte(md5AppKey+ecode)))
+	msid := userTail[len(userTail)-16:]
+	return &MQTConfig{Msid: msid, Password: password}
+}
+
+func (c *MobileSDKClient) DeriveMQTTUsername(sid, ecode, partnerIdentity string) string {
+	md5AppKey := fmt.Sprintf("%x", md5.Sum([]byte(c.AppKey)))
+	userTail := fmt.Sprintf("%x", md5.Sum([]byte(md5AppKey+ecode)))
+	return fmt.Sprintf("%s_v1_%s_%s_mb_%s%s",
+		partnerIdentity, c.AppKey, c.ChKey, sid, userTail[len(userTail)-16:])
+}
+
+func (c *MobileSDKClient) DeriveMQTTClientID(uid string) string {
+	uidHash := fmt.Sprintf("%x", md5.Sum([]byte(uid+"sdkfasodifca")))
+	return fmt.Sprintf("com.philips.ph.babymonitorplus_mb_%s_%s_DEFAULT", c.DeviceID, uidHash)
 }
 
 func (c *MobileSDKClient) GetUserInfo() (*UserInfoResult, error) {
