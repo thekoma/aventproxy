@@ -91,20 +91,33 @@ ffplay rtsp://127.0.0.1:8554/baby/stream_0
 
 ## Come Funziona
 
-```
-┌──────────┐    OPTIONS     ┌───────────┐
-│  Client   │──────────────▶│   Proxy   │──── ✗ (finto 200 OK)
-│ (HA/VLC/  │               │           │
-│  Frigate) │   DESCRIBE    │           │    DESCRIBE     ┌──────────┐
-│           │──────────────▶│ riscrive  │───────────────▶│Telecamera│
-│           │◀──────────────│   URL     │◀───────────────│  (Tuya)  │
-│           │   200 + SDP   │           │   200 + SDP    │          │
-│           │               │           │                │          │
-│           │  SETUP/PLAY   │           │  SETUP/PLAY    │          │
-│           │──────────────▶│ inoltra   │───────────────▶│          │
-│           │◀══════════════│═══════════│◀═══════════════│          │
-│           │  stream RTP   │passthrough│  stream RTP    │          │
-└──────────┘               └───────────┘                └──────────┘
+```mermaid
+sequenceDiagram
+    participant C as Client<br/>(HA / VLC / Frigate)
+    participant P as Proxy
+    participant K as Telecamera<br/>(Tuya)
+
+    C->>P: OPTIONS
+    P-->>C: 200 OK (finto)
+    Note right of P: Mai inoltrato
+
+    C->>P: DESCRIBE /cam/stream_0
+    P->>K: DESCRIBE /stream_0
+    K-->>P: 200 OK + SDP
+    P-->>C: 200 OK + SDP (URL riscritti)
+
+    C->>P: SETUP /cam/stream_0/trackID=0
+    P->>K: SETUP /stream_0/trackID=0
+    K-->>P: 200 OK + Transport
+    P-->>C: 200 OK + Transport
+
+    C->>P: PLAY
+    P->>K: PLAY
+    K-->>P: 200 OK
+    P-->>C: 200 OK
+
+    K--)P: Stream RTP
+    P--)C: Stream RTP
 ```
 
 ## Sviluppo
