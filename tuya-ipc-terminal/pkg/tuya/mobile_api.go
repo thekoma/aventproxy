@@ -30,6 +30,7 @@ type MobileSDKClient struct {
 	Ecode            string
 	PartnerIdentity  string
 	UID              string
+	PackageName      string
 }
 
 var signKeyWhitelist = []string{
@@ -113,7 +114,7 @@ func (c *MobileSDKClient) buildParams(action, version string, postData interface
 		"lang":             "en_US",
 		"os":               "Android",
 		"osSystem":         "14",
-		"platform":         "LE2113",
+		"platform":         "tuya_bridge",
 		"requestId":        uuid.New().String(),
 		"sdkVersion":       c.SDKVersion,
 		"sid":              c.SID,
@@ -209,7 +210,11 @@ func (c *MobileSDKClient) DeriveMQTTUsername(sid, ecode, partnerIdentity string)
 
 func (c *MobileSDKClient) DeriveMQTTClientID(uid string) string {
 	uidHash := fmt.Sprintf("%x", md5.Sum([]byte(uid+"sdkfasodifca")))
-	return fmt.Sprintf("com.philips.ph.babymonitorplus_mb_%s_%s_DEFAULT", c.DeviceID, uidHash)
+	pkg := c.PackageName
+	if pkg == "" {
+		pkg = "tuya_bridge"
+	}
+	return fmt.Sprintf("%s_mb_%s_%s_DEFAULT", pkg, c.DeviceID, uidHash)
 }
 
 func (c *MobileSDKClient) GetUserInfo() (*UserInfoResult, error) {
