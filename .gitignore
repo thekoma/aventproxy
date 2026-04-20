@@ -67,3 +67,5 @@ c8750f0d.0
 # Third-party scripts
 unpin_config.js
 unpin_hooks.js
+hook_full_login.js
+hook_password.js
