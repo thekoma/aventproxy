@@ -1,35 +1,12 @@
 [project]
-name = "aventproxy"
-version = "2026.4.0"
-description = "RTSP proxy for Philips Avent / Tuya cameras that reject OPTIONS requests"
-readme = "README.md"
-license = "MIT"
+name = "philips-avent-ha"
+version = "0.1.0"
+description = "Home Assistant integration for Philips Avent Baby Monitor"
 requires-python = ">=3.11"
-authors = [{ name = "thekoma" }]
-classifiers = [
-    "Development Status :: 4 - Beta",
-    "Programming Language :: Python :: 3",
-    "Topic :: Multimedia :: Video",
-    "Topic :: Home Automation",
-]
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0",
-    "ruff>=0.4",
-]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["aventproxy"]
 
 [tool.ruff]
+line-length = 120
 target-version = "py311"
-line-length = 88
-
-[tool.ruff.lint]
-select = ["E", "F", "W", "I"]
-
-[build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"

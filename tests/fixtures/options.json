@@ -1,7 +1,0 @@
-{
-  "cameras": [
-    {"name": "test_camera", "host": "192.168.1.100", "port": 554}
-  ],
-  "bind_address": "0.0.0.0",
-  "log_level": "info"
-}
