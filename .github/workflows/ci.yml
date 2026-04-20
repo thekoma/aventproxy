@@ -45,10 +45,12 @@ jobs:
 
       - name: Smoke test
         run: |
-          docker run --rm -d --name aventproxy-test \
+          docker run -d --name aventproxy-test \
             -v ${{ github.workspace }}/tests/fixtures/options.json:/data/options.json:ro \
             -p 18554:8554 \
             aventproxy:test
           sleep 2
           docker logs aventproxy-test
+          docker ps --filter name=aventproxy-test --format '{{.Status}}' | grep -q Up
           docker stop aventproxy-test
+          docker rm aventproxy-test

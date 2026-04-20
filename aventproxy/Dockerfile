@@ -6,6 +6,7 @@ COPY run.sh /
 
 RUN chmod a+x /run.sh
 
+WORKDIR /app
 EXPOSE 8554
 
 CMD ["/run.sh"]
