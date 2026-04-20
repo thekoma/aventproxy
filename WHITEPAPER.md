@@ -773,3 +773,48 @@ rtc = call_api("smartlife.m.rtc.config.get", post_data={"devId": "camera_id"}, s
 ---
 
 *This document describes research conducted on personally-owned devices for interoperability purposes. All credentials shown are anonymized or redacted. The Tuya trademark belongs to Tuya Inc.*
+
+---
+
+## Appendix A: MQTT Credential Derivation
+
+Added after the main research was complete. The MQTT credentials for WebRTC signaling
+are derived entirely from the login response and the signing key.
+
+### MQTT Username
+
+```
+{partnerIdentity}_v1_{appKey}_{chKey}_mb_{SID}{MD5(MD5(appKey) + ecode)[-16:]}
+```
+
+### MQTT Password
+
+```python
+md5_key = hashlib.md5(signing_key.encode()).hexdigest()
+full = hashlib.md5((md5_key + ecode).encode()).hexdigest()
+password = full[len(full)//2 - 8 : len(full)//2 + 8]  # middle 16 chars
+```
+
+This uses native `doCommandNative(cmd=2)` which applies `MD5(MD5(signing_key) + ecode)`.
+The Java side extracts the 16 middle characters as the MQTT password.
+
+### MQTT Client ID
+
+```
+{packageName}_mb_{deviceHash}_{MD5(uid + "sdkfasodifca")}_DEFAULT
+```
+
+### MQTT Broker
+
+- TLS: `ssl://m1.tuyaeu.com:8883`
+- WSS: `wss://m1.tuyaeu.com:443/mqtt`
+
+Both work. The native app uses TLS on 8883, the web portal uses WSS on 443.
+
+### MQTT Topics
+
+- Subscribe: `{partnerIdentity}/mb/{uid}` (receive signaling responses)
+- Publish: `/av/moto/{motoId}/u/{deviceId}` (send WebRTC offers)
+
+All values (`ecode`, `partnerIdentity`, `SID`) come from the login response.
+No additional API calls or phone access needed after login.
