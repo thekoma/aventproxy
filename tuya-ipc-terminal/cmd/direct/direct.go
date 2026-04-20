@@ -43,6 +43,7 @@ Example:
 	cmd.Flags().String("signing-key", "", "HMAC-SHA256 signing key")
 	cmd.Flags().String("sid", "", "Tuya session ID")
 	cmd.Flags().String("ecode", "", "Tuya ecode (from login response)")
+	cmd.Flags().String("partner", "", "Partner identity (from login response)")
 	cmd.Flags().String("app-key", "", "Tuya app key (clientId)")
 	cmd.Flags().String("device-id", "", "Phone device ID")
 	cmd.Flags().String("ch-key", "071d81fa", "Channel key")
@@ -53,6 +54,7 @@ Example:
 	cmd.MarkFlagRequired("signing-key")
 	cmd.MarkFlagRequired("sid")
 	cmd.MarkFlagRequired("ecode")
+	cmd.MarkFlagRequired("partner")
 	cmd.MarkFlagRequired("app-key")
 	cmd.MarkFlagRequired("device-id")
 	cmd.MarkFlagRequired("camera-id")
@@ -64,6 +66,7 @@ func runDirect(cmd *cobra.Command, args []string) error {
 	signingKey, _ := cmd.Flags().GetString("signing-key")
 	sid, _ := cmd.Flags().GetString("sid")
 	ecode, _ := cmd.Flags().GetString("ecode")
+	partner, _ := cmd.Flags().GetString("partner")
 	appKey, _ := cmd.Flags().GetString("app-key")
 	deviceID, _ := cmd.Flags().GetString("device-id")
 	chKey, _ := cmd.Flags().GetString("ch-key")
@@ -78,6 +81,7 @@ func runDirect(cmd *cobra.Command, args []string) error {
 
 	client := tuya.NewMobileSDKClient(signingKey, sid, appKey, deviceID, chKey)
 	client.Ecode = ecode
+	client.PartnerIdentity = partner
 
 	core.Logger.Info().Msg("Verifying API access...")
 	_, err := client.Call("smartlife.p.time.get", "1.0", nil)
