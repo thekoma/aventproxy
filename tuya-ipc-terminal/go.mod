@@ -1,17 +1,16 @@
 module tuya-ipc-terminal
 
-go 1.23.0
-
-toolchain go1.23.9
+go 1.24
 
 require (
 	github.com/eclipse/paho.mqtt.golang v1.5.0
+	github.com/google/uuid v1.6.0
 	github.com/mattn/go-isatty v0.0.20
 	github.com/mdp/qrterminal v1.0.1
 	github.com/pion/ice/v4 v4.0.10
 	github.com/pion/interceptor v0.1.38
 	github.com/pion/rtp v1.8.15
-	github.com/pion/sdp/v3 v3.0.13
+	github.com/pion/sdp/v3 v3.0.18
 	github.com/pion/stun/v3 v3.0.0
 	github.com/pion/webrtc/v4 v4.1.1
 	github.com/rs/zerolog v1.34.0
@@ -21,7 +20,6 @@ require (
 )
 
 require (
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
