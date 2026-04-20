@@ -1,0 +1,30 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Philips Avent Baby Monitor",
+        "description": "Enter your {app_name} account credentials.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      },
+      "mfa": {
+        "title": "Verification Code",
+        "description": "A verification code has been sent to {email}. Enter it below.",
+        "data": {
+          "mfa_code": "6-digit code"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password",
+      "invalid_mfa": "Invalid verification code",
+      "cannot_connect": "Cannot connect to Philips Avent servers",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This account is already configured"
+    }
+  }
+}
