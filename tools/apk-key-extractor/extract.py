@@ -11,7 +11,6 @@ Usage:
 """
 
 import base64
-import hashlib
 import json
 import os
 import re
@@ -137,10 +136,8 @@ def extract_embedded_key(apk_path, app_secret, pkg_name, cert_sha256):
 
         if candidates and pkg_name and cert_sha256 and app_secret:
             # Verify each candidate
-            import hmac as hmac_mod
-            test_data = "a=test||v=1.0"
             for candidate in candidates:
-                key = f"{pkg_name}_{cert_sha256}_{candidate}_{app_secret}"
+                # Key would be: pkg_cert_candidate_secret
                 # We can't verify without a known good signature, but we can check the key builds
                 if len(candidate) == 32:
                     return candidate, "extracted via XOR decryption"
@@ -163,9 +160,9 @@ def main():
     output_dir = os.environ.get("OUTPUT_DIR", "/output" if os.path.isdir("/output") else ".")
 
     print(f"{'='*60}")
-    print(f"Tuya APK Key Extractor")
+    print("Tuya APK Key Extractor")
     print(f"{'='*60}")
-    print(f"APK: {apk_path}\n")
+    print(f"APK: {apk_path}")
 
     # 1. Cert SHA-256
     cert = get_cert_sha256(apk_path)

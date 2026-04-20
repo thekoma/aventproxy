@@ -11,7 +11,6 @@ Environment variables:
     TUYA_CAM_ID      — Camera device ID
 """
 
-import json
 import os
 import sys
 
@@ -94,7 +93,7 @@ def get_webrtc_config():
     """Get WebRTC streaming configuration."""
     config = client.get_rtc_config(CAM)
     print(f"WebRTC session: {config['p2pConfig']['session']['sessionId']}")
-    print(f"STUN/TURN servers:")
+    print("STUN/TURN servers:")
     for ice in config["p2pConfig"]["ices"]:
         print(f"  {ice['urls']}")
     print(f"AES key: {config['p2pConfig']['session']['aesKey']}")

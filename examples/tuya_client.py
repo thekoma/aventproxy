@@ -17,11 +17,10 @@ Usage:
 import hashlib
 import hmac
 import json
-import os
 import time
 import uuid
-from dataclasses import dataclass, field
-from typing import Any, Optional
+from dataclasses import dataclass
+from typing import Any
 
 import requests
 from Crypto.Cipher import PKCS1_v1_5
@@ -176,7 +175,7 @@ class TuyaClient:
             )
             self.sid = result["sid"]
             return self.sid
-        except TuyaAPIError as e:
+        except TuyaAPIError:
             self.sid = old_sid
             raise
 

@@ -14,7 +14,6 @@ Example:
 import frida
 import json
 import sys
-import os
 
 FRIDA_SCRIPT = """
 Java.perform(function() {
@@ -173,7 +172,7 @@ def main():
         json.dump(output, f, indent=2)
 
     print(f"\n{'='*60}")
-    print(f"Tuya Signing Key Extracted Successfully")
+    print("Tuya Signing Key Extracted Successfully")
     print(f"{'='*60}")
     print(f"Package:      {pkg_name}")
     print(f"App Key:      {app_key}")
@@ -182,7 +181,7 @@ def main():
     print(f"Embedded Key: {embedded_key}")
     print(f"Signing Key:  {signing_key[:60]}...")
     print(f"\nSaved to: {out_file}")
-    print(f"\nThis key is STATIC per APK version. Extract once, use forever.")
+    print("\nThis key is STATIC per APK version. Extract once, use forever.")
 
 
 if __name__ == "__main__":
