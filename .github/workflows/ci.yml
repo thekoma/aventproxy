@@ -13,7 +13,7 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v5
         with:
@@ -33,7 +33,7 @@ jobs:
   test-go:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-go@v5
         with:
@@ -51,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test-python, test-go]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Copy bridge source for Docker build
         run: cp -r tuya-ipc-terminal aventproxy-bridge-addon/tuya-ipc-terminal
