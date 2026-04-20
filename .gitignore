@@ -1,0 +1,69 @@
+# Captures and logs — contain personal network data
+captures/
+mitm_data/
+mitm_full_log.txt
+mmkv_data/
+
+# APK and decompiled sources — too large, copyrighted
+apk_extract/
+extracted/
+extracted_libs/
+jadx_out/
+*.apk
+*.apkm
+*.so
+
+# Session data — contains active credentials
+tuya_session_data.json
+tuya_keys*.json
+snapshot.json
+
+# Frida temporary scripts with hardcoded credentials
+gen_signs.js
+gen_signs2.js
+sign_and_call.js
+hook_deep.js
+hook_digest.js
+hook_mbedtls.js
+hook_native.js
+hook_responses.js
+hook_sign.js
+hook_sign2.js
+hook_api.js
+find_classes.js
+find_key.js
+find_key2.js
+extract_tokens.js
+extract_tokens2.js
+combined_hooks.js
+ssl_unpin.js
+sign_proxy.js
+
+# Temp files
+/tmp/
+*.log
+*.flow
+
+# Old RE scripts with hardcoded credentials
+EXTRACT_KEY.md
+ONEPLUS9_SETUP.md
+NEXT_SESSION.md
+decrypt_test.py
+rtsp_proxy.py
+captures/baby_rtsp_proxy.py
+captures/baby_rtsp_proxy_debug.py
+
+# Compiled binaries
+tuya-ipc-terminal/tuya-ipc-terminal
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Mitmproxy certs
+mitmproxy-ca*
+c8750f0d.0
+
+# Third-party scripts
+unpin_config.js
+unpin_hooks.js
