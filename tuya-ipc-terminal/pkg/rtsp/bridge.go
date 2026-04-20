@@ -119,7 +119,7 @@ func (wb *WebRTCBridge) Start() error {
 		ecode := wb.mobileClient.Ecode
 		uid := wb.mobileClient.UID
 		mqttDerived := wb.mobileClient.DeriveMQTTConfig(ecode)
-		mqttUsername := wb.mobileClient.DeriveMQTTUsername(wb.mobileClient.SID, ecode, "p1319959")
+		mqttUsername := wb.mobileClient.DeriveMQTTUsername(wb.mobileClient.SID, ecode, wb.mobileClient.PartnerIdentity)
 		mqttClientID := wb.mobileClient.DeriveMQTTClientID(uid)
 		subscribeTopic := fmt.Sprintf("/av/u/%s", uid)
 
