@@ -1,4 +1,4 @@
-FROM eclipse-temurin:21-jre-jammy
+FROM eclipse-temurin:21.0.10_7-jre-jammy
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
