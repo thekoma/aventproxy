@@ -1,9 +1,20 @@
 name: Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      type:
+        description: "Release type"
+        type: choice
+        options:
+          - release
+          - rc
+          - beta
+        default: release
   push:
     tags:
-      - "*.*.*"
+      - "[0-9]*.[0-9]*.[0-9]*"
+      - "[0-9]*.[0-9]*.[0-9]*-*"
 
 permissions:
   contents: write
@@ -14,7 +25,82 @@ env:
   IMAGE: ghcr.io/thekoma/aventproxy
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Resolve version
+        id: resolve
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            YEAR_MONTH="$(date +%Y).$(date +%-m)"
+            TYPE="${{ inputs.type }}"
+
+            # Find the latest release tag (no pre-release suffix) for this month
+            LATEST=$(git tag -l "${YEAR_MONTH}.*" --sort=-v:refname | grep -vE '\-' | head -1)
+            if [ -z "$LATEST" ]; then
+              NEXT_INC=0
+            else
+              CURRENT_INC=$(echo "$LATEST" | awk -F. '{print $3}')
+              NEXT_INC=$((CURRENT_INC + 1))
+            fi
+            BASE="${YEAR_MONTH}.${NEXT_INC}"
+
+            if [ "$TYPE" = "release" ]; then
+              VERSION="$BASE"
+              PRERELEASE=false
+            else
+              # For pre-release, find latest pre-release with this base
+              LATEST_PRE=$(git tag -l "${BASE}-${TYPE}.*" --sort=-v:refname | head -1)
+              if [ -z "$LATEST_PRE" ]; then
+                PRE_NUM=1
+              else
+                CURRENT_PRE=$(echo "$LATEST_PRE" | grep -oE '[0-9]+$')
+                PRE_NUM=$((CURRENT_PRE + 1))
+              fi
+              VERSION="${BASE}-${TYPE}.${PRE_NUM}"
+              PRERELEASE=true
+            fi
+
+            # Update version in source files
+            sed -i "s/^version:.*/version: \"${VERSION}\"/" aventproxy/config.yaml
+            sed -i "s/^__version__.*/__version__ = \"${VERSION}\"/" aventproxy/proxy/__init__.py
+
+            # Commit, tag, push
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add aventproxy/config.yaml aventproxy/proxy/__init__.py
+            git commit -m "Release ${VERSION}"
+            git tag "${VERSION}"
+            git push origin main --tags
+
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
+          else
+            # Manual tag push
+            VERSION="${GITHUB_REF_NAME}"
+            if echo "$VERSION" | grep -qE '\-(rc|beta|alpha)\.'; then
+              PRERELEASE=true
+            else
+              PRERELEASE=false
+            fi
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "### Release" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Version:** ${VERSION}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Pre-release:** ${PRERELEASE}" >> "$GITHUB_STEP_SUMMARY"
+
   build:
+    needs: version
     strategy:
       matrix:
         include:
@@ -27,10 +113,12 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.version }}
 
-      - name: Update version in source
+      - name: Ensure version in source
         run: |
-          VERSION="${GITHUB_REF_NAME}"
+          VERSION="${{ needs.version.outputs.version }}"
           sed -i "s/^version:.*/version: \"${VERSION}\"/" aventproxy/config.yaml
           sed -i "s/^__version__.*/__version__ = \"${VERSION}\"/" aventproxy/proxy/__init__.py
 
@@ -49,10 +137,10 @@ jobs:
           push: true
           platforms: ${{ matrix.platform }}
           build-args: BUILD_FROM=python:3.12-alpine
-          tags: ${{ env.IMAGE }}:${{ github.ref_name }}-${{ matrix.suffix }}
+          tags: ${{ env.IMAGE }}:${{ needs.version.outputs.version }}-${{ matrix.suffix }}
 
   manifest:
-    needs: build
+    needs: [version, build]
     runs-on: ubuntu-latest
     steps:
       - uses: docker/login-action@v3
@@ -63,19 +151,24 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Create and push multi-arch manifest
+      - name: Create multi-arch manifest
         run: |
-          VERSION="${GITHUB_REF_NAME}"
-          docker buildx imagetools create -t ${{ env.IMAGE }}:${VERSION} \
+          VERSION="${{ needs.version.outputs.version }}"
+
+          docker buildx imagetools create \
+            -t ${{ env.IMAGE }}:${VERSION} \
             ${{ env.IMAGE }}:${VERSION}-amd64 \
             ${{ env.IMAGE }}:${VERSION}-arm64
 
-          docker buildx imagetools create -t ${{ env.IMAGE }}:latest \
-            ${{ env.IMAGE }}:${VERSION}-amd64 \
-            ${{ env.IMAGE }}:${VERSION}-arm64
+          if [ "${{ needs.version.outputs.prerelease }}" = "false" ]; then
+            docker buildx imagetools create \
+              -t ${{ env.IMAGE }}:latest \
+              ${{ env.IMAGE }}:${VERSION}-amd64 \
+              ${{ env.IMAGE }}:${VERSION}-arm64
+          fi
 
   release:
-    needs: manifest
+    needs: [version, manifest]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -83,4 +176,6 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.version.outputs.version }}
+          prerelease: ${{ needs.version.outputs.prerelease }}
           generate_release_notes: true
