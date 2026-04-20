@@ -6,15 +6,12 @@ url: "https://github.com/thekoma/aventproxy"
 arch:
   - aarch64
   - amd64
-  - armhf
-  - armv7
-  - i386
 startup: application
 boot: auto
 ports:
-  "8554/tcp": 8554
+  "8554/tcp": 8654
 ports_description:
-  "8554/tcp": "RTSP proxy port"
+  "8554/tcp": "RTSP proxy port (remappable from HA UI)"
 options:
   cameras:
     - name: "baby_monitor"

@@ -1,5 +1,15 @@
-ARG BUILD_FROM
-FROM ${BUILD_FROM:-python:3.12-alpine}
+ARG BUILD_FROM=python:3.12-alpine
+FROM ${BUILD_FROM}
+
+ARG BUILD_ARCH
+ARG BUILD_VERSION
+
+LABEL \
+    io.hass.name="Avent RTSP Proxy" \
+    io.hass.description="RTSP proxy for Philips Avent / Tuya cameras" \
+    io.hass.arch="${BUILD_ARCH}" \
+    io.hass.type="addon" \
+    io.hass.version="${BUILD_VERSION}"
 
 COPY proxy /app/proxy
 COPY run.sh /
