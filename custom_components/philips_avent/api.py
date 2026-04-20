@@ -10,12 +10,10 @@ from typing import Any
 
 import aiohttp
 
-from .const import (
-    TUYA_API_URL,
-    TUYA_APP_KEY,
-    TUYA_CH_KEY,
-    TUYA_SIGNING_KEY,
-)
+try:
+    from .const import TUYA_API_URL, TUYA_APP_KEY, TUYA_CH_KEY, TUYA_SIGNING_KEY
+except ImportError:
+    from const import TUYA_API_URL, TUYA_APP_KEY, TUYA_CH_KEY, TUYA_SIGNING_KEY
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -251,5 +249,8 @@ class PhilipsAventAPI:
     @staticmethod
     def derive_mqtt_client_id(uid: str, device_id: str) -> str:
         uid_hash = hashlib.md5((uid + "sdkfasodifca").encode()).hexdigest()
-        from .const import TUYA_PACKAGE_NAME
+        try:
+            from .const import TUYA_PACKAGE_NAME
+        except ImportError:
+            from const import TUYA_PACKAGE_NAME
         return f"{TUYA_PACKAGE_NAME}_mb_{device_id}_{uid_hash}_DEFAULT"

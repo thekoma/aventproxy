@@ -1,6 +1,6 @@
 """Tests for DPS constants and value parsing."""
 
-from custom_components.philips_avent.const import (
+from const import (
     DPS_BRIGHTNESS,
     DPS_LULLABY_CONTROL,
     DPS_MOTION_SWITCH,

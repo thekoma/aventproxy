@@ -2,7 +2,7 @@
 
 import json
 
-from custom_components.philips_avent.api import TuyaAPIError
+from api import TuyaAPIError
 
 
 class TestTuyaAPIError:
