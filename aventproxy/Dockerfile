@@ -1,4 +1,4 @@
-ARG BUILD_FROM=python:3.12-alpine
+ARG BUILD_FROM=python:3.14-alpine
 FROM ${BUILD_FROM}
 
 ARG BUILD_ARCH
