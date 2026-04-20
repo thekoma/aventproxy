@@ -47,6 +47,7 @@ Example:
 	cmd.Flags().String("app-key", "", "Tuya app key (clientId)")
 	cmd.Flags().String("device-id", "", "Phone device ID")
 	cmd.Flags().String("ch-key", "071d81fa", "Channel key")
+	cmd.Flags().String("package", "", "App package name (for MQTT client ID)")
 	cmd.Flags().String("camera-id", "", "Camera device ID")
 	cmd.Flags().String("camera-name", "", "Camera display name (used in RTSP path)")
 	cmd.Flags().Int("port", 8554, "RTSP server port")
@@ -70,6 +71,7 @@ func runDirect(cmd *cobra.Command, args []string) error {
 	appKey, _ := cmd.Flags().GetString("app-key")
 	deviceID, _ := cmd.Flags().GetString("device-id")
 	chKey, _ := cmd.Flags().GetString("ch-key")
+	packageName, _ := cmd.Flags().GetString("package")
 	cameraID, _ := cmd.Flags().GetString("camera-id")
 	cameraName, _ := cmd.Flags().GetString("camera-name")
 	port, _ := cmd.Flags().GetInt("port")
@@ -82,6 +84,7 @@ func runDirect(cmd *cobra.Command, args []string) error {
 	client := tuya.NewMobileSDKClient(signingKey, sid, appKey, deviceID, chKey)
 	client.Ecode = ecode
 	client.PartnerIdentity = partner
+	client.PackageName = packageName
 
 	core.Logger.Info().Msg("Verifying API access...")
 	_, err := client.Call("smartlife.p.time.get", "1.0", nil)
