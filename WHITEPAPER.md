@@ -34,12 +34,13 @@ This paper documents the complete reverse engineering of the Tuya Mobile SDK API
 **Key findings:**
 
 - The API signing algorithm is **HMAC-SHA256** with a composite key derived from four static components extractable from the APK
-- Authentication can be performed via **email OTP** (no password required), producing a session token (SID)
+- Authentication uses the **same password + MFA flow** as the vendor app (email + password + RSA encryption + 6-digit email MFA code), making API traffic indistinguishable from legitimate app usage
+- A **passwordless OTP fallback** also exists but uses a different API endpoint
 - The signing key is **static per APK version** — extract once, use indefinitely
-- The SID is the only rotating credential, renewable via a simple email verification flow
+- The SID is the only rotating credential, renewable via the password + MFA flow
 - All WebRTC/MQTT/RTSP bridge logic is protocol-level and API-agnostic
 
-**Result:** Full autonomous API access from Python/Go, suitable for Home Assistant integration with a config flow similar to established integrations (Tado, Nest, etc.).
+**Result:** Full autonomous API access from Python/Go, suitable for Home Assistant integration with a config flow identical to the vendor app's login (email → password → MFA code from email).
 
 ---
 
@@ -315,50 +316,107 @@ response = call_api("tuya.m.device.get", post_data={"devId": "..."})
 
 The session ID (SID) is the only rotating credential. It's obtained during login and included in every API call. When it expires, a new login is required.
 
-### Email OTP Login
+### Password + MFA Login (Production Flow)
 
-The user must have an existing account registered through the vendor's app (email + password). The Tuya Mobile SDK supports two login methods:
+This is the exact flow used by the vendor's mobile app, reverse engineered via Frida instrumentation of a clean first-login (app data wiped, no prior session).
 
-1. **Password login** (`thing.m.user.email.password.login`) — requires fetching an RSA token, encrypting the password, and handling potential MFA challenges
-2. **Email OTP login** (`thing.m.user.email.code.login`) — sends a one-time code to the registered email, user enters it to authenticate
-
-We chose the OTP method for the integration because it avoids the complexity of RSA encryption and password storage, not because the account has no password. The user still needs the registered email address and access to its inbox.
-
-**Step 1 — Request verification code:**
+**Step 1 — Obtain RSA token:**
 ```
-Action: thing.m.user.email.code.send
-PostData: {"email": "user@example.com", "countryCode": "39", "type": 1}
+Action: thing.m.user.username.token.get  (v2.0)
+PostData: {"countryCode": "39", "username": "user@example.com", "isUid": false}
 SID: (empty — no session required)
-Result: {"result": true, "success": true}
+Result: {"token": "f065...", "pbKey": "MIGd...", "publicKey": "1353...", "exponent": "3"}
 ```
 
-The user receives a 6-digit code via email.
+**Step 2 — Encrypt password and attempt login:**
 
-**Step 2 — Login with code:**
+The password is MD5-hashed, then RSA-encrypted using the `pbKey` from step 1:
+```python
+md5_pass = hashlib.md5(password.encode()).hexdigest()
+pem_key = f"-----BEGIN PUBLIC KEY-----\n{pbKey}\n-----END PUBLIC KEY-----"
+rsa_key = RSA.import_key(pem_key)
+encrypted = PKCS1_v1_5.new(rsa_key).encrypt(md5_pass.encode()).hex()
 ```
-Action: thing.m.user.email.code.login
-PostData: {"email": "user@example.com", "code": "123456", "countryCode": "39"}
-SID: (empty)
+
+```
+Action: thing.m.user.email.password.login  (v3.0)
+PostData: {
+  "countryCode": "39", "email": "user@example.com",
+  "passwd": "<RSA encrypted MD5>", "token": "<from step 1>",
+  "ifencrypt": 1, "options": "{\"group\": 1, \"mfaCode\": \"\"}"
+}
+Result: {"errorCode": "MFA_NEED_SEND_CODE"}
+```
+
+The server validates the password and responds with `MFA_NEED_SEND_CODE`, indicating that MFA is required. Note: using the wrong RSA token endpoint (`thing.m.user.email.token.create` v1.0 instead of `thing.m.user.username.token.get` v2.0) produces a misleading `USER_PASSWD_WRONG` error even with valid credentials.
+
+**Step 3 — Request MFA code (requires new RSA token):**
+```
+Action: thing.m.user.username.token.get  (v2.0)  — fresh token needed
+Action: thing.m.user.username.mfa.code.get  (v1.0)
+PostData: {
+  "countryCode": "39", "username": "user@example.com",
+  "passwd": "<RSA encrypted MD5 with new token>", "token": "<new token>",
+  "ifencrypt": 1, "options": "{\"group\": 1, \"mfaCode\": \"null\"}"
+}
+Result: {"result": {"countryCode": "39", "email": "user@example.com"}, "success": true}
+```
+
+The server sends a 6-digit code to the user's email.
+
+**Step 4 — Complete login with MFA code (requires new RSA token):**
+```
+Action: thing.m.user.username.token.get  (v2.0)  — fresh token needed
+Action: thing.m.user.email.password.login  (v3.0)
+PostData: {
+  "countryCode": "39", "email": "user@example.com",
+  "passwd": "<RSA encrypted MD5 with new token>", "token": "<new token>",
+  "ifencrypt": 1, "options": "{\"group\": 1, \"mfaCode\": \"179958\"}"
+}
 Result: {
   "sid": "eu16619...(new session token)...",
   "uid": "eu166195...",
-  "email": "user@example.com",
+  "nickname": "...",
   "domain": { "mobileMqttsUrl": "m1.tuyaeu.com", ... }
 }
 ```
 
-**Why OTP over password for the integration:**
-- No RSA token exchange needed (password login requires a multi-step RSA encryption flow)
-- No password stored in the integration's config — only the resulting SID
-- Clean two-step flow ideal for Home Assistant config flows (enter email → enter code)
-- The signing key works without a SID for these auth endpoints
+This flow is identical to the vendor app's behavior. Each password submission requires a fresh RSA token (tokens are single-use). The MFA code is passed inside the `options` JSON field as `mfaCode`, not as a separate `code` parameter.
+
+### Alternative: Email OTP Login (Passwordless)
+
+The Tuya SDK also exposes a passwordless login endpoint that bypasses both password and MFA:
+
+```
+Action: thing.m.user.email.code.send  (no SID needed)
+PostData: {"email": "user@example.com", "countryCode": "39", "type": 1}
+→ sends 6-digit code to email
+
+Action: thing.m.user.email.code.login  (no SID needed)
+PostData: {"email": "user@example.com", "code": "123456", "countryCode": "39"}
+→ returns SID directly
+```
+
+This endpoint is likely intended for "forgot password" or passwordless onboarding flows. It produces a valid SID with full account access. However, it is not used by the vendor app's normal login flow and uses a different API action, making it potentially distinguishable server-side.
+
+**For the integration, we use the password + MFA flow** (same as the app) to be indistinguishable from normal app traffic. The OTP passwordless flow is documented here as a fallback.
 
 ### SID Lifecycle
 
-- **Issued at:** login
+- **Issued at:** login (password + MFA, or OTP)
 - **Expires after:** unknown (estimated weeks/months based on app behavior)
-- **Renewal:** re-trigger OTP flow
+- **Renewal:** re-trigger the full password + MFA flow
 - **Scope:** full account access (all devices, all APIs)
+
+### Home Assistant Config Flow
+
+The login maps naturally to a multi-step HA config flow:
+
+1. **Step 1:** User enters email + password
+2. **Step 2 (automatic):** Integration encrypts password, calls login API, triggers MFA
+3. **Step 3:** User checks email, enters 6-digit MFA code in HA
+4. **Step 4 (automatic):** Integration completes login, stores SID
+5. **On expiry:** Integration prompts user to re-authenticate (same flow)
 
 ---
 
@@ -420,11 +478,13 @@ The entire process is generic. Any app built on the Tuya Thing SDK uses the same
 
 ### Authentication
 
-| Action | Description | Requires SID |
-|--------|-------------|:---:|
-| `thing.m.user.email.code.send` | Send OTP to email | No |
-| `thing.m.user.email.code.login` | Login with OTP → returns SID | No |
-| `thing.m.user.email.password.login` | Password login (RSA encrypted) | No |
+| Action | Version | Description | Requires SID |
+|--------|---------|-------------|:---:|
+| `thing.m.user.username.token.get` | 2.0 | Get RSA token for password encryption | No |
+| `thing.m.user.email.password.login` | 3.0 | Password + MFA login → returns SID | No |
+| `thing.m.user.username.mfa.code.get` | 1.0 | Trigger MFA code email | No |
+| `thing.m.user.email.code.send` | 1.0 | Send OTP to email (passwordless) | No |
+| `thing.m.user.email.code.login` | 1.0 | Login with OTP → returns SID (passwordless) | No |
 
 ### Device Management
 
@@ -535,7 +595,21 @@ Dynamic (per user session):
 
 **Time wasted:** ~2 hours trying different country codes, credential formats, and endpoint variations.
 
-### 11.3 Tuya Cloud OpenAPI
+### 11.3 Wrong RSA Token Endpoint for Password Login
+
+**Approach:** Implement the password login flow on the mobile SDK API using `thing.m.user.email.token.create` (v1.0) to obtain the RSA token for password encryption.
+
+**What happened:** Password login consistently returned `USER_PASSWD_WRONG` despite using the exact same password and MD5+RSA encryption verified by Frida hooks on the real app. The real app also appeared to receive the same error and retry multiple times.
+
+**Root cause:** The app uses `thing.m.user.username.token.get` (v2.0) for the RSA token, not `thing.m.user.email.token.create` (v1.0). These are different endpoints that return different RSA keys. Encrypting the password with a token from the wrong endpoint produces a valid-looking ciphertext that the server cannot decrypt, resulting in a misleading `USER_PASSWD_WRONG` instead of a more informative error.
+
+**Additional discovery:** The correct flow returns `MFA_NEED_SEND_CODE` (not `USER_PASSWD_WRONG`) when the password is valid but MFA is required. The MFA code is passed inside `options.mfaCode`, not as a separate `code` field. Each password submission also requires a fresh single-use RSA token.
+
+**How it was found:** By doing a clean first-login capture (app data wiped) with Frida hooks on `ThingApiParams` constructor + `putPostData`, the exact sequence of API actions, versions, and parameter names was recorded.
+
+**Time wasted:** ~3 hours across multiple sessions.
+
+### 11.4 Tuya Cloud OpenAPI
 
 **Approach:** Use `tinytuya` (Python library) with the vendor's `appKey`/`appSecret` to access the Tuya Cloud OpenAPI.
 
@@ -543,7 +617,7 @@ Dynamic (per user session):
 
 **Root cause:** The vendor's `appKey`/`appSecret` are for the Mobile SDK API, not the Cloud OpenAPI. These are entirely different API surfaces with different credential systems. The Cloud OpenAPI requires IoT Platform developer credentials, not mobile app credentials.
 
-### 11.4 MMKV/SharedPreferences Token Extraction
+### 11.5 MMKV/SharedPreferences Token Extraction
 
 **Approach:** Extract session tokens directly from the app's local storage on a rooted phone.
 
@@ -554,7 +628,7 @@ Dynamic (per user session):
 
 **Why abandoned:** The encryption keys for MMKV and SharedPreferences are derived from the Android Keystore, making offline extraction impractical.
 
-### 11.5 Frida Java Bridge via Python API
+### 11.6 Frida Java Bridge via Python API
 
 **Approach:** Use Frida's Python API (`frida.attach()`, `session.create_script()`) to call Java methods for signing requests — creating a "signing proxy" where the phone signs requests and the PC makes API calls.
 
@@ -564,7 +638,7 @@ Dynamic (per user session):
 
 **User's valid criticism:** *"A phone running 24/7 as an HSM to sign API requests? I'd rather buy a different camera."* This drove the effort to fully reverse the signing algorithm.
 
-### 11.6 Brute-Forcing the Signing Key Derivation
+### 11.7 Brute-Forcing the Signing Key Derivation
 
 **Approach:** With a known input-output pair (parameter string → signature), try all plausible key derivations from `appSecret`, `appKey`, and the APK certificate hash.
 
@@ -580,7 +654,7 @@ Dynamic (per user session):
 
 **Total time:** ~1 hour of systematic elimination.
 
-### 11.7 Frida Hooks Crashing the App
+### 11.8 Frida Hooks Crashing the App
 
 Multiple Frida hook attempts crashed the target app:
 
@@ -589,7 +663,7 @@ Multiple Frida hook attempts crashed the target app:
 - **Java.perform + Module operations:** Mixing Java bridge operations with native `Module`/`Memory` operations in the same callback caused access violations.
 - **App PID instability:** The app's PID changed frequently (app restarts after Frida detaches ungracefully), requiring PID re-detection before each hook attempt.
 
-### 11.8 r2ghidra Decompilation Limitations
+### 11.9 r2ghidra Decompilation Limitations
 
 The r2ghidra decompiler produced useful but incomplete results for the 769-line `doCommandNative` function. Key limitations:
 
