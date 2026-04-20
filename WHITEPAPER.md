@@ -315,9 +315,14 @@ response = call_api("tuya.m.device.get", post_data={"devId": "..."})
 
 The session ID (SID) is the only rotating credential. It's obtained during login and included in every API call. When it expires, a new login is required.
 
-### Email OTP Login (No Password Required)
+### Email OTP Login
 
-The Tuya Mobile SDK supports email-based OTP authentication:
+The user must have an existing account registered through the vendor's app (email + password). The Tuya Mobile SDK supports two login methods:
+
+1. **Password login** (`thing.m.user.email.password.login`) — requires fetching an RSA token, encrypting the password, and handling potential MFA challenges
+2. **Email OTP login** (`thing.m.user.email.code.login`) — sends a one-time code to the registered email, user enters it to authenticate
+
+We chose the OTP method for the integration because it avoids the complexity of RSA encryption and password storage, not because the account has no password. The user still needs the registered email address and access to its inbox.
 
 **Step 1 — Request verification code:**
 ```
@@ -332,7 +337,7 @@ The user receives a 6-digit code via email.
 **Step 2 — Login with code:**
 ```
 Action: thing.m.user.email.code.login
-PostData: {"email": "user@example.com", "code": "485624", "countryCode": "39"}
+PostData: {"email": "user@example.com", "code": "123456", "countryCode": "39"}
 SID: (empty)
 Result: {
   "sid": "eu16619...(new session token)...",
@@ -342,10 +347,10 @@ Result: {
 }
 ```
 
-**Key advantages over password login:**
-- No RSA encryption needed (password login requires RSA-encrypted password tokens)
-- No password storage
-- Clean two-step flow ideal for Home Assistant config flows
+**Why OTP over password for the integration:**
+- No RSA token exchange needed (password login requires a multi-step RSA encryption flow)
+- No password stored in the integration's config — only the resulting SID
+- Clean two-step flow ideal for Home Assistant config flows (enter email → enter code)
 - The signing key works without a SID for these auth endpoints
 
 ### SID Lifecycle
