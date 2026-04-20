@@ -42,6 +42,38 @@ DPS_POWER_STATUS = "205"
 DPS_FLIP = "102"
 DPS_APP_TALKING = "253"
 
+LULLABY_TRACK_MAP = {
+    3542154: ("Baa Baa Black Sheep", "lullabies"),
+    3542155: ("Brahms' Lullaby", "lullabies"),
+    3542156: ("Rock-a-Bye Baby", "lullabies"),
+    3542157: ("Golden Slumbers", "lullabies"),
+    3542158: ("Hush Little Baby", "lullabies"),
+    3542159: ("Mother's Shh", "noise"),
+    3542160: ("Calming River", "noise"),
+    3542161: ("Heartbeat", "noise"),
+    3542162: ("Vacuum Cleaner", "noise"),
+    3542163: ("White Noise", "noise"),
+    3542164: ("Garden Bird Song", "nature_sounds"),
+    3542165: ("Valley Wind", "nature_sounds"),
+    3542166: ("Ocean Shore", "nature_sounds"),
+    3542167: ("Night-time Nature", "nature_sounds"),
+    3542168: ("Rain Shower", "nature_sounds"),
+}
+
+TIMER_OPTIONS = {
+    "Off": 0,
+    "5 min": 300,
+    "10 min": 600,
+    "20 min": 1200,
+    "30 min": 1800,
+    "60 min": 3600,
+    "90 min": 5400,
+}
+TIMER_SECONDS_TO_LABEL = {v: k for k, v in TIMER_OPTIONS.items()}
+
+LULLABY_TRACKS = [name for name, _ in LULLABY_TRACK_MAP.values()]
+LULLABY_ID_BY_NAME = {name: tid for tid, (name, _) in LULLABY_TRACK_MAP.items()}
+
 CONF_SID = "sid"
 CONF_ECODE = "ecode"
 CONF_PARTNER = "partner_identity"

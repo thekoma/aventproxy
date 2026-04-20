@@ -91,9 +91,12 @@ class PhilipsAventAPI:
         return params
 
     async def _call(
-        self, action: str, version: str = "1.0", post_data: Any = None
+        self, action: str, version: str = "1.0", post_data: Any = None,
+        extra_params: dict[str, str] | None = None,
     ) -> dict:
         params = self._build_params(action, version, post_data)
+        if extra_params:
+            params.update(extra_params)
         async with self._session.post(
             TUYA_API_URL,
             data=params,
@@ -102,7 +105,7 @@ class PhilipsAventAPI:
                 "Content-Type": "application/x-www-form-urlencoded",
             },
         ) as resp:
-            result = await resp.json()
+            result = await resp.json(content_type=None)
         if not result.get("success"):
             raise TuyaAPIError(
                 result.get("errorCode", "UNKNOWN"),
@@ -189,8 +192,14 @@ class PhilipsAventAPI:
     async def set_dps(self, dev_id: str, dps: dict) -> dict:
         return await self._call(
             "tuya.m.device.dp.publish",
-            "2.0",
+            "1.0",
             {"devId": dev_id, "gwId": dev_id, "dps": dps},
+        )
+
+    async def get_rssi(self, dev_id: str) -> dict:
+        return await self._call(
+            "tuya.m.device.upgrade.rssi.info.query",
+            post_data={"devId": dev_id},
         )
 
     async def get_rtc_config(self, dev_id: str) -> dict:
@@ -200,34 +209,116 @@ class PhilipsAventAPI:
 
     async def discover_cameras(self) -> list[dict]:
         """Find all IPC cameras in the account."""
-        homes = await self.get_homes()
         cameras = []
+        seen_ids = set()
+
+        homes = []
+        try:
+            homes = await self.get_homes()
+            _LOGGER.debug("Found %d homes: %s", len(homes), homes)
+        except TuyaAPIError as e:
+            _LOGGER.debug("Home list failed: %s", e)
+
         for home in homes:
-            try:
-                rooms = await self._call(
-                    "tuya.m.location.get",
-                    post_data={"gid": str(home["gid"])},
-                )
-                if isinstance(rooms, list):
-                    for room in rooms:
-                        for dev in room.get("deviceList", []):
-                            if dev.get("category") in ("sp", "dghsxj"):
+            gid = str(home.get("gid", ""))
+            if not gid:
+                continue
+
+            # Strategy 1: room-based discovery
+            for api_version in ("2.0", "1.0"):
+                try:
+                    rooms = await self._call(
+                        "tuya.m.location.get",
+                        api_version,
+                        post_data={"gid": gid},
+                        extra_params={"gid": gid},
+                    )
+                    _LOGGER.debug("Rooms (v%s, gid=%s): %s", api_version, gid, rooms)
+                    if isinstance(rooms, list):
+                        for room in rooms:
+                            for dev in room.get("deviceList", []):
+                                dev_id = dev.get("devId") or dev.get("deviceId")
+                                if dev_id and dev_id not in seen_ids:
+                                    seen_ids.add(dev_id)
+                                    cameras.append(dev)
+                                    _LOGGER.debug(
+                                        "Found device via rooms: %s (id=%s, category=%s)",
+                                        dev.get("name", dev.get("deviceName", "?")),
+                                        dev_id, dev.get("category", "?"),
+                                    )
+                    if cameras:
+                        break
+                except TuyaAPIError as e:
+                    _LOGGER.debug("Room discovery v%s failed for gid %s: %s", api_version, gid, e)
+
+            # Strategy 2: group device list per home (gid as form param)
+            if not cameras:
+                try:
+                    result = await self._call(
+                        "tuya.m.my.group.device.list",
+                        extra_params={"gid": gid},
+                    )
+                    _LOGGER.debug("Group device list for gid %s: %s", gid, result)
+                    if isinstance(result, list):
+                        for dev in result:
+                            dev_id = dev.get("devId") or dev.get("deviceId")
+                            if dev_id and dev_id not in seen_ids:
+                                seen_ids.add(dev_id)
                                 cameras.append(dev)
-            except TuyaAPIError:
-                pass
-        if not cameras:
-            user_info = await self.get_user_info()
-            uid = user_info["id"]
+                                _LOGGER.debug(
+                                    "Found device via group list: %s (id=%s, category=%s)",
+                                    dev.get("name", dev.get("deviceName", "?")),
+                                    dev_id, dev.get("category", "?"),
+                                )
+                except TuyaAPIError as e:
+                    _LOGGER.debug("Group device list failed for gid %s: %s", gid, e)
+
+        if cameras:
+            _LOGGER.info("Discovered %d devices", len(cameras))
+            return cameras
+
+        # Strategy 3: tuya.m.my.group.device.relation.list
+        for home in homes:
+            gid = str(home.get("gid", ""))
+            if not gid:
+                continue
             try:
                 result = await self._call(
-                    "tuya.m.my.group.device.list", post_data={"uid": uid}
+                    "tuya.m.my.group.device.relation.list",
+                    extra_params={"gid": gid},
                 )
+                _LOGGER.debug("Device relation list for gid %s: %s", gid, result)
                 if isinstance(result, list):
                     for dev in result:
-                        if dev.get("category") in ("sp", "dghsxj"):
+                        dev_id = dev.get("devId") or dev.get("deviceId") or dev.get("id")
+                        if dev_id and dev_id not in seen_ids:
+                            seen_ids.add(dev_id)
                             cameras.append(dev)
-            except TuyaAPIError:
-                pass
+            except TuyaAPIError as e:
+                _LOGGER.debug("Device relation list failed for gid %s: %s", gid, e)
+
+        if cameras:
+            _LOGGER.info("Discovered %d devices via relation list", len(cameras))
+            return cameras
+
+        # Strategy 4: tuya.m.device.list.get
+        try:
+            result = await self._call("tuya.m.device.list.get")
+            _LOGGER.debug("Device list get: %s", result)
+            if isinstance(result, list):
+                for dev in result:
+                    dev_id = dev.get("devId") or dev.get("deviceId")
+                    if dev_id and dev_id not in seen_ids:
+                        seen_ids.add(dev_id)
+                        cameras.append(dev)
+        except TuyaAPIError as e:
+            _LOGGER.debug("Device list get failed: %s", e)
+
+        if cameras:
+            _LOGGER.info("Discovered %d devices via device list", len(cameras))
+            return cameras
+
+        _LOGGER.warning("All device discovery strategies failed")
         return cameras
 
     # -- MQTT credentials --------------------------------------------------

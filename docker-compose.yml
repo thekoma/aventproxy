@@ -1,0 +1,29 @@
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+    volumes:
+      - ha_config:/config
+      - ./custom_components/philips_avent:/config/custom_components/philips_avent:ro
+    environment:
+      - TZ=Europe/Rome
+      - BRIDGE_PORT=8556
+
+  aventproxy-bridge:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.bridge
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ha_config:/config:ro
+    environment:
+      - WAIT_FOR_CONFIG=true
+      - BRIDGE_PORT=8556
+    depends_on:
+      - homeassistant
+
+volumes:
+  ha_config:

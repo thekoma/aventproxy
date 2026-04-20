@@ -13,13 +13,13 @@ from homeassistant.core import HomeAssistant
 from .api import PhilipsAventAPI
 from .coordinator import PhilipsAventCoordinator
 from .const import (
-    CONF_CAMERA_ID, CONF_ECODE, CONF_PARTNER, CONF_SID, DOMAIN,
+    CONF_ECODE, CONF_PARTNER, CONF_SID, DOMAIN,
     TUYA_APP_KEY, TUYA_PACKAGE_NAME, TUYA_SIGNING_KEY,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.CAMERA, Platform.SENSOR, Platform.SWITCH, Platform.NUMBER, Platform.BUTTON]
+PLATFORMS = [Platform.CAMERA, Platform.SENSOR, Platform.SWITCH, Platform.NUMBER, Platform.BUTTON, Platform.SELECT, Platform.BINARY_SENSOR]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -27,25 +27,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     session = aiohttp.ClientSession()
     api = PhilipsAventAPI(session, sid=entry.data[CONF_SID])
 
-    # Discover cameras
-    try:
-        cameras = await api.discover_cameras()
-    except Exception:
-        _LOGGER.warning("Camera discovery failed, trying direct device list")
-        cameras = []
+    # Use cameras stored in config entry (discovered during config flow)
+    cameras = []
+    stored_cameras = entry.data.get("cameras", [])
+    if stored_cameras:
+        for cam in stored_cameras:
+            cameras.append({
+                "deviceId": cam["id"],
+                "deviceName": cam["name"],
+            })
+        _LOGGER.info("Using %d cameras from config entry", len(cameras))
+    else:
+        # Fallback: re-discover via API
+        try:
+            cameras = await api.discover_cameras()
+        except Exception:
+            _LOGGER.exception("Camera discovery failed")
+            cameras = []
 
     if not cameras:
-        # Fallback: try to get all devices
-        try:
-            await api.get_user_info()
-            # If we have a stored camera_id, use it
-            if CONF_CAMERA_ID in entry.data:
-                device = await api.get_device(entry.data[CONF_CAMERA_ID])
-                cameras = [{"deviceId": device["devId"], "deviceName": device["name"]}]
-        except Exception:
-            _LOGGER.error("Could not find any cameras")
-            await session.close()
-            return False
+        _LOGGER.error("No cameras found. Reconfigure the integration to re-discover.")
+        await session.close()
+        return False
 
     coordinators = {}
     for cam in cameras:
@@ -79,7 +82,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ],
     }
     bridge_path = Path(hass.config.path("philips_avent_bridge.json"))
-    bridge_path.write_text(json.dumps(bridge_config, indent=2))
+    await hass.async_add_executor_job(
+        bridge_path.write_text, json.dumps(bridge_config, indent=2)
+    )
     _LOGGER.info("Bridge config written to %s", bridge_path)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
