@@ -51,7 +51,7 @@ mfa_code = input("Enter 6-digit MFA code from email: ").strip()
 
 # Step 4: Login with MFA
 sid = client.login(EMAIL, PASSWORD, COUNTRY, mfa_code=mfa_code)
-print(f"\nLogin successful!")
+print("\nLogin successful!")
 print(f"SID: {sid}")
 
 # Verify
@@ -60,5 +60,5 @@ print(f"User: {user['nickname']} ({user['email']})")
 print(f"MQTT: {user['domain']['mobileMqttsUrl']}")
 
 # Save SID for later use
-print(f"\nExport for other scripts:")
+print("\nExport for other scripts:")
 print(f'export TUYA_SID="{sid}"')

@@ -7,13 +7,14 @@ from pathlib import Path
 import aiohttp
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, Platform
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
 from .api import PhilipsAventAPI
+from .coordinator import PhilipsAventCoordinator
 from .const import (
-    CONF_CAMERA_ID, CONF_ECODE, CONF_PARTNER, CONF_SID, CONF_UID, DOMAIN,
-    TUYA_APP_KEY, TUYA_CH_KEY, TUYA_PACKAGE_NAME, TUYA_SIGNING_KEY,
+    CONF_CAMERA_ID, CONF_ECODE, CONF_PARTNER, CONF_SID, DOMAIN,
+    TUYA_APP_KEY, TUYA_PACKAGE_NAME, TUYA_SIGNING_KEY,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not cameras:
         # Fallback: try to get all devices
         try:
-            user_info = await api.get_user_info()
+            await api.get_user_info()
             # If we have a stored camera_id, use it
             if CONF_CAMERA_ID in entry.data:
                 device = await api.get_device(entry.data[CONF_CAMERA_ID])
