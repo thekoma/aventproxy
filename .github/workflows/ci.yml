@@ -20,13 +20,15 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        run: pip install pytest ruff
 
       - name: Lint
         run: ruff check aventproxy/proxy tests
 
       - name: Test
         run: pytest -v --tb=short
+        env:
+          PYTHONPATH: aventproxy
 
   docker:
     runs-on: ubuntu-latest
