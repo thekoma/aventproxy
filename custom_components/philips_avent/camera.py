@@ -1,8 +1,9 @@
 """Camera entity for Philips Avent Baby Monitor."""
 
 import logging
+import os
 
-from homeassistant.components.camera import Camera
+from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -12,16 +13,22 @@ from .coordinator import PhilipsAventCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-RTSP_PORT = 8554
+RTSP_PORT_DEFAULT = 8554
+BRIDGE_PORT_ENV = "BRIDGE_PORT"
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     data = hass.data[DOMAIN][entry.entry_id]
+    rtsp_port = int(
+        entry.options.get("rtsp_port")
+        or os.environ.get(BRIDGE_PORT_ENV)
+        or RTSP_PORT_DEFAULT
+    )
     entities = []
     for cam_id, coordinator in data["coordinators"].items():
-        entities.append(AventCamera(coordinator, cam_id))
+        entities.append(AventCamera(coordinator, cam_id, rtsp_port))
     async_add_entities(entities)
 
 
@@ -30,14 +37,15 @@ class AventCamera(Camera):
 
     _attr_has_entity_name = True
     _attr_name = "Camera"
+    _attr_supported_features = CameraEntityFeature.STREAM
 
-    def __init__(self, coordinator: PhilipsAventCoordinator, cam_id: str):
+    def __init__(self, coordinator: PhilipsAventCoordinator, cam_id: str, rtsp_port: int = RTSP_PORT_DEFAULT):
         super().__init__()
         self.coordinator = coordinator
         self._cam_id = cam_id
         self._attr_unique_id = f"{cam_id}_camera"
         safe_name = coordinator.camera_name.replace(" ", "_")
-        self._stream_url = f"rtsp://localhost:{RTSP_PORT}/{safe_name}"
+        self._stream_url = f"rtsp://localhost:{rtsp_port}/{safe_name}"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, cam_id)},
             "name": coordinator.camera_name,
@@ -47,6 +55,41 @@ class AventCamera(Camera):
 
     async def stream_source(self) -> str:
         return self._stream_url
+
+    async def async_camera_image(
+        self, width: int | None = None, height: int | None = None
+    ) -> bytes | None:
+        return await self.hass.async_add_executor_job(
+            self._get_still_image, width, height
+        )
+
+    def _get_still_image(
+        self, width: int | None = None, height: int | None = None
+    ) -> bytes | None:
+        import subprocess
+
+        scale = ""
+        if width and height:
+            scale = f"-vf scale={width}:{height}"
+
+        try:
+            result = subprocess.run(
+                [
+                    "ffmpeg", "-rtsp_transport", "tcp",
+                    "-i", self._stream_url,
+                    "-frames:v", "1",
+                    *(["-vf", f"scale={width}:{height}"] if width and height else []),
+                    "-f", "image2", "-c:v", "mjpeg",
+                    "-q:v", "5", "pipe:1",
+                ],
+                capture_output=True,
+                timeout=10,
+            )
+            if result.returncode == 0 and result.stdout:
+                return result.stdout
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            _LOGGER.debug("Failed to grab still image from %s", self._stream_url)
+        return None
 
     @property
     def is_streaming(self) -> bool:

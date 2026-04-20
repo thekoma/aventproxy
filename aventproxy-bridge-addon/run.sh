@@ -5,6 +5,14 @@ set -e
 BRIDGE_CONFIG="/config/philips_avent_bridge.json"
 ADDON_CONFIG="/data/options.json"
 
+if [ "${WAIT_FOR_CONFIG:-false}" = "true" ]; then
+    echo "Waiting for bridge config from HA integration..."
+    while [ ! -f "$BRIDGE_CONFIG" ] && [ ! -f "$ADDON_CONFIG" ]; do
+        sleep 5
+    done
+    echo "Config found!"
+fi
+
 if [ -f "$BRIDGE_CONFIG" ]; then
     echo "Using bridge config from HA integration"
     CONFIG_PATH="$BRIDGE_CONFIG"
@@ -42,9 +50,24 @@ CAMERA_NAME=$(jq -r '.cameras[0].camera_name // "camera"' "$CONFIG_PATH")
 echo "=============================="
 echo "Philips Avent WebRTC Bridge"
 echo "=============================="
+PORT="${BRIDGE_PORT:-8554}"
+
 echo "Camera: $CAMERA_NAME ($CAMERA_ID)"
-echo "RTSP:   rtsp://localhost:8554/$CAMERA_NAME"
+echo "RTSP:   rtsp://localhost:$PORT/$CAMERA_NAME"
 echo "=============================="
+
+CONFIG_HASH=$(md5sum "$CONFIG_PATH" | cut -d' ' -f1)
+(
+    while true; do
+        sleep 10
+        NEW_HASH=$(md5sum "$CONFIG_PATH" 2>/dev/null | cut -d' ' -f1)
+        if [ -n "$NEW_HASH" ] && [ "$NEW_HASH" != "$CONFIG_HASH" ]; then
+            echo "Config changed, restarting bridge..."
+            kill $$
+            exit 0
+        fi
+    done
+) &
 
 exec tuya-ipc-terminal direct \
     --signing-key "$SIGNING_KEY" \
@@ -56,4 +79,4 @@ exec tuya-ipc-terminal direct \
     --package "$PACKAGE_NAME" \
     --camera-id "$CAMERA_ID" \
     --camera-name "$CAMERA_NAME" \
-    --port 8554
+    --port "$PORT"

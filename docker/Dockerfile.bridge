@@ -1,0 +1,15 @@
+FROM golang:1.23-bookworm AS builder
+
+WORKDIR /src
+COPY tuya-ipc-terminal/ .
+RUN go mod download && CGO_ENABLED=0 go build -o /tuya-ipc-terminal .
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends jq ca-certificates && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /tuya-ipc-terminal /usr/local/bin/tuya-ipc-terminal
+COPY aventproxy-bridge-addon/run.sh /run.sh
+RUN chmod a+x /run.sh
+
+CMD [ "/run.sh" ]

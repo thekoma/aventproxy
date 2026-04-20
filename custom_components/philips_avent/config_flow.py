@@ -52,8 +52,9 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 # Get RSA token
                 token_data = await self._api.get_rsa_token(self._email)
-                encrypted = PhilipsAventAPI.encrypt_password(
-                    self._password, token_data["pbKey"]
+                encrypted = await self.hass.async_add_executor_job(
+                    PhilipsAventAPI.encrypt_password,
+                    self._password, token_data["pbKey"],
                 )
 
                 # First login attempt — triggers MFA
@@ -67,8 +68,9 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
                 # Get fresh token and trigger MFA code
                 token_data2 = await self._api.get_rsa_token(self._email)
-                encrypted2 = PhilipsAventAPI.encrypt_password(
-                    self._password, token_data2["pbKey"]
+                encrypted2 = await self.hass.async_add_executor_job(
+                    PhilipsAventAPI.encrypt_password,
+                    self._password, token_data2["pbKey"],
                 )
                 await self._api.trigger_mfa(
                     self._email, encrypted2, token_data2["token"]
@@ -103,8 +105,9 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 # Get fresh RSA token for final login
                 token_data = await self._api.get_rsa_token(self._email)
-                encrypted = PhilipsAventAPI.encrypt_password(
-                    self._password, token_data["pbKey"]
+                encrypted = await self.hass.async_add_executor_job(
+                    PhilipsAventAPI.encrypt_password,
+                    self._password, token_data["pbKey"],
                 )
 
                 # Login with MFA code
@@ -115,8 +118,19 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 sid = result["sid"]
                 self._api.sid = sid
 
-                # Discover cameras
                 user_info = await self._api.get_user_info()
+
+                # Discover cameras while we have a live session
+                cameras = []
+                try:
+                    discovered = await self._api.discover_cameras()
+                    for cam in discovered:
+                        cameras.append({
+                            "id": cam.get("devId") or cam.get("deviceId"),
+                            "name": cam.get("name") or cam.get("deviceName", "camera"),
+                        })
+                except Exception:
+                    _LOGGER.warning("Camera discovery during setup failed")
 
                 if self._session:
                     await self._session.close()
@@ -133,6 +147,7 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_ECODE: result.get("ecode", ""),
                         CONF_PARTNER: result.get("partnerIdentity", ""),
                         CONF_UID: result["uid"],
+                        "cameras": cameras,
                     },
                 )
 

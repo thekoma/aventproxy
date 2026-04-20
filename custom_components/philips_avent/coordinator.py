@@ -33,11 +33,17 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         self.camera_id = camera_id
         self.camera_name = camera_name
         self.device_info: dict = {}
+        self.rssi: int | None = None
 
     async def _async_update_data(self) -> dict:
         try:
             device = await self.api.get_device(self.camera_id)
             self.device_info = device
+            try:
+                rssi_data = await self.api.get_rssi(self.camera_id)
+                self.rssi = rssi_data.get("value")
+            except TuyaAPIError:
+                pass
             return device.get("dps", {})
         except TuyaAPIError as err:
             raise UpdateFailed(f"Error fetching data: {err}") from err
