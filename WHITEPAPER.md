@@ -22,8 +22,9 @@
 9. [Complete API Reference](#9-complete-api-reference)
 10. [Integration Architecture](#10-integration-architecture)
 11. [Failures and Dead Ends](#11-failures-and-dead-ends)
-12. [Security Considerations](#12-security-considerations)
-13. [Reproducibility Guide](#13-reproducibility-guide)
+12. [Phase 6: MQTT Credential Derivation](#12-phase-6-mqtt-credential-derivation)
+13. [Security Considerations](#13-security-considerations)
+14. [Reproducibility Guide](#14-reproducibility-guide)
 
 ---
 
@@ -674,9 +675,95 @@ The r2ghidra decompiler produced useful but incomplete results for the 769-line 
 
 The decompilation was useful for understanding the high-level flow (init → cert hash → store key → sign), but the actual key construction required memory dumping rather than static analysis.
 
+### 11.10 MQTT Credential Derivation (Multiple Failed Attempts)
+
+**Context:** After successfully reversing the API signing algorithm (Phase 3) and login flow (Phase 4), the final obstacle was connecting to the MQTT broker for WebRTC signaling. The existing open-source tool (`tuya-ipc-terminal`) uses MQTT credentials from the Smart Life web portal (`/api/jarvis/mqtt`), which is inaccessible to vendor-namespaced accounts.
+
+**Attempt 1 — Web portal MQTT config API:** The endpoint `smartlife.m.mqtt.config.get` and `tuya.m.mqtt.config.get` both return `API_OR_API_VERSION_WRONG` on the mobile SDK. These APIs don't exist on the mobile platform.
+
+**Attempt 2 — Token as MQTT password:** The `smartlife.m.token.get` API returns a UUID token. Using it as MQTT password with various username formats (`web_{uid}`, `uid`, `ecode`) → all rejected with "Not authorized".
+
+**Attempt 3 — MD5(MD5(appKey) + ecode) as password:** From the Frida login capture, the app computes this hash after login. Used as MQTT password → still "Not authorized".
+
+**Attempt 4 — SID cookie on web portal:** Tried calling the Smart Life web portal's `/api/jarvis/mqtt` with the mobile SDK SID set as a cookie → `USER_SESSION_LOSS`. Different session systems.
+
+**Attempt 5 — Client ID only (no username/password):** The app's MQTT client doesn't call `setUserName()`/`setPassword()` through the standard Java setters. Tried connecting with just the client ID → "Server unavailable".
+
+**Breakthrough:** Hooked `MqttConnectOptions.getUserName()` and `getPassword()` instead of the setters. The MQTT library reads credentials through getters during connection, revealing that credentials ARE set — just through a different code path (the `SdkMqttCertificationInfo` class).
+
+**Root cause of all failures:** The MQTT password uses `doCommandNative(cmd=2)` — a different native function than the API signing (cmd=1). Command 2 computes `MD5(MD5(signing_key) + ecode)` and returns the middle 16 characters. The signing key (not appKey or appSecret alone) is the HMAC key, which is why no combination of partial credentials worked.
+
+**Time wasted:** ~2 hours across MQTT credential attempts, decompilation of multiple MQTT classes, and testing 20+ derivation formulas.
+
 ---
 
-## 12. Security Considerations
+## 12. Phase 6: MQTT Credential Derivation
+
+The final piece of the puzzle: connecting to the MQTT broker for WebRTC signaling.
+
+### The Problem
+
+The existing WebRTC bridge (`tuya-ipc-terminal`) obtains MQTT credentials from the Smart Life web portal. This endpoint is inaccessible for vendor-namespaced accounts. The mobile app uses a completely different credential derivation.
+
+### Discovery Method
+
+1. **Frida hook on `MqttConnectOptions.getUserName()` / `getPassword()`** — the standard `setUserName`/`setPassword` methods were never called. The Tuya SDK uses a custom certification info class (`SdkMqttCertificationInfo`) that provides credentials through getter methods.
+
+2. **Decompilation of `SdkMqttCertificationInfo`** (jadx) revealed:
+   - Username is constructed from `partnerIdentity`, `appKey`, `chKey`, SID, and a hash suffix
+   - Password comes from `doCommandNative(context, 2, ecode.getBytes(), null, debug)`, taking the middle 16 characters
+
+3. **Native cmd=2 reversal** (r2ghidra) showed the algorithm: two rounds of hashing with the signing key and ecode. Tested as `MD5(MD5(signing_key) + ecode)` → exact match.
+
+### MQTT Credential Formulas
+
+**Username:**
+```
+{partnerIdentity}_v1_{appKey}_{chKey}_mb_{SID}{MD5(MD5(appKey) + ecode)[-16:]}
+```
+
+**Password:**
+```python
+md5_key = hashlib.md5(signing_key.encode()).hexdigest()
+full_hash = hashlib.md5((md5_key + ecode).encode()).hexdigest()
+password = full_hash[8:24]  # middle 16 characters
+```
+
+**Client ID:**
+```
+{packageName}_mb_{deviceHash}_{MD5(uid + "sdkfasodifca")}_DEFAULT
+```
+
+**MQTT Subscribe Topic:**
+```
+{partnerIdentity}/mb/{uid}
+```
+
+### Broker Endpoints
+
+| Transport | URL | Port |
+|-----------|-----|------|
+| TLS (app uses this) | `ssl://m1.tuyaeu.com` | 8883 |
+| WebSocket (web portal) | `wss://m1.tuyaeu.com/mqtt` | 443 |
+
+Both transports accept the same credentials.
+
+### Validation
+
+All MQTT credentials are derived from values available in the login response (`sid`, `ecode`, `partnerIdentity`, `uid`) combined with the static signing key. No additional API calls or phone access needed after login.
+
+```python
+# Complete MQTT connection — no phone, no web portal, no Frida
+client = mqtt.Client(client_id=mqtt_client_id)
+client.username_pw_set(mqtt_username, mqtt_password)
+client.tls_set(cert_reqs=ssl.CERT_REQUIRED)
+client.connect("m1.tuyaeu.com", 8883)
+# → Connected successfully
+```
+
+---
+
+## 13. Security Considerations
 
 ### Responsible Disclosure
 
@@ -697,13 +784,13 @@ This research targets personal devices owned by the researcher. No third-party s
 
 ---
 
-## 13. Reproducibility Guide
+## 14. Reproducibility Guide
 
 ### Requirements
 
 - A Tuya whitelabel camera and its companion APK
 - A rooted Android phone (for Frida one-shot key extraction)
-- Python 3.10+
+- Python 3.10+ with `pycryptodome`, `requests`, `paho-mqtt`
 - Docker (for APK static analysis)
 - `jadx`, `keytool`, `frida-tools`
 
@@ -730,40 +817,84 @@ console.log("SIGNING_KEY=" + key);
 # → outputs: complete signing key (parse with underscore separators)
 ```
 
-**3. Login (Python, no phone):**
+**3. Login (Python, no phone — same flow as the vendor app):**
 ```python
-# Send OTP
-call_api("thing.m.user.email.code.send",
-         post_data={"email": "user@example.com", "countryCode": "39", "type": 1},
-         sid="")
+# Step 3a: Get RSA token
+token = call_api("thing.m.user.username.token.get", "2.0",
+                 {"countryCode": "39", "username": "user@example.com", "isUid": False}, sid="")
 
-# User checks email for 6-digit code
+# Step 3b: Encrypt password (MD5 + RSA)
+md5_pass = hashlib.md5(password.encode()).hexdigest()
+rsa_key = RSA.import_key(f"-----BEGIN PUBLIC KEY-----\n{token['pbKey']}\n-----END PUBLIC KEY-----")
+encrypted = PKCS1_v1_5.new(rsa_key).encrypt(md5_pass.encode()).hex()
 
-# Login with code
-result = call_api("thing.m.user.email.code.login",
-                  post_data={"email": "user@example.com", "code": "123456", "countryCode": "39"},
-                  sid="")
-sid = result["sid"]  # Store this — it's the session token
+# Step 3c: Login attempt → triggers MFA
+call_api("thing.m.user.email.password.login", "3.0",
+         {"countryCode": "39", "email": "user@example.com", "passwd": encrypted,
+          "token": token["token"], "ifencrypt": 1,
+          "options": '{"group": 1, "mfaCode": ""}'}, sid="")
+# → returns MFA_NEED_SEND_CODE
+
+# Step 3d: Request MFA code (needs fresh RSA token)
+token2 = call_api("thing.m.user.username.token.get", "2.0", ...)
+encrypted2 = encrypt_password(password, token2["pbKey"])
+call_api("thing.m.user.username.mfa.code.get", "1.0",
+         {"countryCode": "39", "username": "user@example.com", "passwd": encrypted2,
+          "token": token2["token"], "ifencrypt": 1,
+          "options": '{"group": 1, "mfaCode": "null"}'}, sid="")
+# → server sends 6-digit code to email
+
+# Step 3e: Complete login with MFA code (needs fresh RSA token)
+token3 = call_api("thing.m.user.username.token.get", "2.0", ...)
+encrypted3 = encrypt_password(password, token3["pbKey"])
+result = call_api("thing.m.user.email.password.login", "3.0",
+                  {"countryCode": "39", "email": "user@example.com", "passwd": encrypted3,
+                   "token": token3["token"], "ifencrypt": 1,
+                   "options": '{"group": 1, "mfaCode": "179958"}'}, sid="")
+sid = result["sid"]
+ecode = result["ecode"]
+partner = result["partnerIdentity"]
 ```
 
-**4. Access camera:**
+**4. Derive MQTT credentials (no additional API calls):**
 ```python
-# Get device info
-device = call_api("tuya.m.device.get", post_data={"devId": "camera_id"}, sid=sid)
+# Username
+md5_appkey = hashlib.md5(app_key.encode()).hexdigest()
+username_tail = hashlib.md5((md5_appkey + ecode).encode()).hexdigest()[-16:]
+mqtt_user = f"{partner}_v1_{app_key}_{ch_key}_mb_{sid}{username_tail}"
 
-# Get WebRTC config for streaming
+# Password
+md5_signkey = hashlib.md5(signing_key.encode()).hexdigest()
+pw_full = hashlib.md5((md5_signkey + ecode).encode()).hexdigest()
+mqtt_pass = pw_full[8:24]  # middle 16 chars
+
+# Client ID
+uid_hash = hashlib.md5((uid + "sdkfasodifca").encode()).hexdigest()
+mqtt_client = f"{pkg}_mb_{device_hash}_{uid_hash}_DEFAULT"
+```
+
+**5. Connect MQTT and stream:**
+```python
+# MQTT connection
+client = mqtt.Client(client_id=mqtt_client)
+client.username_pw_set(mqtt_user, mqtt_pass)
+client.tls_set(cert_reqs=ssl.CERT_REQUIRED)
+client.connect("m1.tuyaeu.com", 8883)
+
+# Get WebRTC config
 rtc = call_api("smartlife.m.rtc.config.get", post_data={"devId": "camera_id"}, sid=sid)
-# → contains STUN/TURN servers, ICE credentials, AES session key
+
+# WebRTC signaling via MQTT → RTP → RTSP bridge
 ```
 
-**5. Stream via WebRTC → RTSP bridge:**
+**6. Or use the bridge tool:**
 ```bash
 ./tuya-ipc-terminal direct \
   --signing-key "pkg_cert_key_secret" \
-  --sid "eu16619..." \
-  --app-key "wx3at9q..." \
-  --device-id "4ea12..." \
-  --camera-id "bf3fb..." \
+  --sid "$SID" \
+  --app-key "$APP_KEY" \
+  --device-id "$DEVICE_HASH" \
+  --camera-id "$CAMERA_ID" \
   --camera-name "MyCamera" \
   --port 8554
 
@@ -776,45 +907,4 @@ rtc = call_api("smartlife.m.rtc.config.get", post_data={"devId": "camera_id"}, s
 
 ---
 
-## Appendix A: MQTT Credential Derivation
-
-Added after the main research was complete. The MQTT credentials for WebRTC signaling
-are derived entirely from the login response and the signing key.
-
-### MQTT Username
-
-```
-{partnerIdentity}_v1_{appKey}_{chKey}_mb_{SID}{MD5(MD5(appKey) + ecode)[-16:]}
-```
-
-### MQTT Password
-
-```python
-md5_key = hashlib.md5(signing_key.encode()).hexdigest()
-full = hashlib.md5((md5_key + ecode).encode()).hexdigest()
-password = full[len(full)//2 - 8 : len(full)//2 + 8]  # middle 16 chars
-```
-
-This uses native `doCommandNative(cmd=2)` which applies `MD5(MD5(signing_key) + ecode)`.
-The Java side extracts the 16 middle characters as the MQTT password.
-
-### MQTT Client ID
-
-```
-{packageName}_mb_{deviceHash}_{MD5(uid + "sdkfasodifca")}_DEFAULT
-```
-
-### MQTT Broker
-
-- TLS: `ssl://m1.tuyaeu.com:8883`
-- WSS: `wss://m1.tuyaeu.com:443/mqtt`
-
-Both work. The native app uses TLS on 8883, the web portal uses WSS on 443.
-
-### MQTT Topics
-
-- Subscribe: `{partnerIdentity}/mb/{uid}` (receive signaling responses)
-- Publish: `/av/moto/{motoId}/u/{deviceId}` (send WebRTC offers)
-
-All values (`ecode`, `partnerIdentity`, `SID`) come from the login response.
 No additional API calls or phone access needed after login.
