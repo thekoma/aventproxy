@@ -62,11 +62,9 @@ class AventSwitch(CoordinatorEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         await self.coordinator.set_dps({self._dps_id: True})
-        await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self.coordinator.set_dps({self._dps_id: False})
-        await self.coordinator.async_request_refresh()
 
 
 class AventEnumSwitch(AventSwitch):
@@ -81,8 +79,6 @@ class AventEnumSwitch(AventSwitch):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         await self.coordinator.set_dps({self._dps_id: "1"})
-        await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self.coordinator.set_dps({self._dps_id: "0"})
-        await self.coordinator.async_request_refresh()
