@@ -43,10 +43,12 @@ type WebRTCBridge struct {
 	rtpForwarder   *RTPForwarder
 
 	// State
-	connected  bool
-	ownsClient bool
-	waiter    utils.Waiter
-	mutex     sync.RWMutex
+	connected       bool
+	ownsClient      bool
+	answerReceived  bool
+	pendingCandidates []pion.ICECandidateInit
+	waiter          utils.Waiter
+	mutex           sync.RWMutex
 
 	// Context for cancellation
 	ctx    context.Context
@@ -113,13 +115,13 @@ func (wb *WebRTCBridge) Start() error {
 			core.Logger.Warn().Err(err).Msg("P2P pre-link failed (non-fatal)")
 		}
 
-		if err := wb.mobileClient.RTCSessionInit(wb.camera.DeviceID); err != nil {
-			core.Logger.Warn().Err(err).Msg("RTC session init failed (non-fatal)")
-		}
-
 		webRTCConfig, err = wb.mobileClient.GetWebRTCConfig(wb.camera.DeviceID)
 		if err != nil {
 			return fmt.Errorf("failed to get WebRTC config: %v", err)
+		}
+
+		if err := wb.mobileClient.RTCSessionInit(wb.camera.DeviceID); err != nil {
+			core.Logger.Warn().Err(err).Msg("RTC session init failed (non-fatal)")
 		}
 
 		if wb.mqttClient == nil {
@@ -440,9 +442,11 @@ func (wb *WebRTCBridge) setupMQTTCameraClient(webRTCConfig *tuya.WebRTCConfig) {
 	wb.mqttClient.AddCameraClient(wb.cameraClient.SessionId, wb.cameraClient)
 
 	// Setup handlers
+	wb.answerReceived = false
+	wb.pendingCandidates = nil
+
 	wb.cameraClient.HandleAnswer = func(answer tuya.AnswerFrame) {
 		core.Logger.Trace().Msgf("Received WebRTC answer")
-		core.Logger.Trace().Msgf("Answer SDP: %s", answer.Sdp)
 
 		desc := pion.SessionDescription{
 			Type: pion.SDPTypePranswer,
@@ -458,30 +462,42 @@ func (wb *WebRTCBridge) setupMQTTCameraClient(webRTCConfig *tuya.WebRTCConfig) {
 			wb.handleError(err)
 			return
 		}
+
+		wb.answerReceived = true
+
+		// Flush any ICE candidates that arrived before the answer
+		for _, c := range wb.pendingCandidates {
+			if err := wb.peerConnection.AddICECandidate(c); err != nil {
+				core.Logger.Warn().Err(err).Msg("Failed to add buffered ICE candidate")
+			}
+		}
+		wb.pendingCandidates = nil
 	}
 
 	wb.cameraClient.HandleCandidate = func(candidate tuya.CandidateFrame) {
 		candidateStr := strings.TrimSpace(candidate.Candidate)
-		core.Logger.Trace().Msgf("Received ICE candidate: %s", candidateStr)
+		if candidateStr == "" {
+			return
+		}
 
-		if candidateStr != "" {
-			// Remove "a=" prefix if present
-			if strings.HasPrefix(candidateStr, "a=") {
-				candidateStr = candidateStr[2:]
-			}
+		if strings.HasPrefix(candidateStr, "a=") {
+			candidateStr = candidateStr[2:]
+		}
+		if !strings.HasSuffix(candidateStr, "\r\n") && !strings.HasSuffix(candidateStr, "\n") {
+			candidateStr = candidateStr + "\r\n"
+		}
 
-			// Ensure candidate ends with CRLF
-			if !strings.HasSuffix(candidateStr, "\r\n") && !strings.HasSuffix(candidateStr, "\n") {
-				candidateStr = candidateStr + "\r\n"
-			}
+		ice := pion.ICECandidateInit{Candidate: strings.TrimSpace(candidateStr)}
 
-			core.Logger.Trace().Msgf("Adding ICE candidate: %s", strings.TrimSpace(candidateStr))
+		if !wb.answerReceived {
+			core.Logger.Trace().Msgf("Buffering ICE candidate (answer not yet received): %s", strings.TrimSpace(candidateStr))
+			wb.pendingCandidates = append(wb.pendingCandidates, ice)
+			return
+		}
 
-			if err := wb.peerConnection.AddICECandidate(pion.ICECandidateInit{
-				Candidate: strings.TrimSpace(candidateStr),
-			}); err != nil {
-				wb.handleError(err)
-			}
+		core.Logger.Trace().Msgf("Adding ICE candidate: %s", strings.TrimSpace(candidateStr))
+		if err := wb.peerConnection.AddICECandidate(ice); err != nil {
+			core.Logger.Warn().Err(err).Msg("Failed to add ICE candidate")
 		}
 	}
 
