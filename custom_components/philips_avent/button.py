@@ -48,7 +48,5 @@ class AventLullabyButton(CoordinatorEntity, ButtonEntity):
         }
 
     async def async_press(self) -> None:
-        await self.coordinator.api.set_dps(
-            self._cam_id, {DPS_LULLABY_CONTROL: self._action}
-        )
+        await self.coordinator.set_dps({DPS_LULLABY_CONTROL: self._action})
         await self.coordinator.async_request_refresh()
