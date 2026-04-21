@@ -584,15 +584,12 @@ func (cs *CameraStream) stopStreamInternal() {
 		core.Logger.Info().Msgf("Stopping stream for camera: %s", cs.camera.DeviceName)
 	}
 
-	// Stop WebRTC bridge (sends SendDisconnect which poisons the MQTT session)
+	// Stop WebRTC bridge (sends SendDisconnect to clean device-side session)
 	if cs.webrtcBridge != nil {
 		cs.webrtcBridge.Stop()
 	}
 
-	// Invalidate MQTT client so next stream gets a fresh connection
-	if cs.server != nil && cs.server.mqttManager != nil {
-		cs.server.mqttManager.InvalidateClient(cs.camera.DeviceID)
-	}
+	// MQTT client is NOT closed — kept alive for next stream (matches app behavior)
 
 	// Remove from server map in a separate goroutine to avoid potential deadlock
 	go func() {

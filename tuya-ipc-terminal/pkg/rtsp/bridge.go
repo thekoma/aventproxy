@@ -113,6 +113,10 @@ func (wb *WebRTCBridge) Start() error {
 			core.Logger.Warn().Err(err).Msg("P2P pre-link failed (non-fatal)")
 		}
 
+		if err := wb.mobileClient.RTCSessionInit(wb.camera.DeviceID); err != nil {
+			core.Logger.Warn().Err(err).Msg("RTC session init failed (non-fatal)")
+		}
+
 		webRTCConfig, err = wb.mobileClient.GetWebRTCConfig(wb.camera.DeviceID)
 		if err != nil {
 			return fmt.Errorf("failed to get WebRTC config: %v", err)
