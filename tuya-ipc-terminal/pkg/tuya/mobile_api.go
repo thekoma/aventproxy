@@ -184,6 +184,11 @@ func (c *MobileSDKClient) P2PPreLink() error {
 	return err
 }
 
+func (c *MobileSDKClient) RTCSessionInit(deviceID string) error {
+	_, err := c.Call("smartlife.m.rtc.session.init", "1.0", map[string]string{"devId": deviceID})
+	return err
+}
+
 func (c *MobileSDKClient) GetWebRTCConfig(deviceID string) (*WebRTCConfigResponse, error) {
 	raw, err := c.Call("smartlife.m.rtc.config.get", "1.0", map[string]string{"devId": deviceID})
 	if err != nil {
