@@ -3,7 +3,7 @@
 import logging
 import os
 
-from homeassistant.components.camera import Camera, CameraEntityFeature
+from homeassistant.components.camera import Camera, CameraEntityFeature, StreamType
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -38,6 +38,7 @@ class AventCamera(Camera):
     _attr_has_entity_name = True
     _attr_name = "Camera"
     _attr_supported_features = CameraEntityFeature.STREAM
+    _attr_frontend_stream_type = StreamType.WEB_RTC
 
     def __init__(self, coordinator: PhilipsAventCoordinator, cam_id: str, rtsp_port: int = RTSP_PORT_DEFAULT):
         super().__init__()
