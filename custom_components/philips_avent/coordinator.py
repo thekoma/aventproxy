@@ -75,6 +75,8 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
             result = await self._lan_client.set_dps(dps)
             if result:
                 _LOGGER.debug("DPS sent via LAN for %s: %s", self.camera_name, dps)
+                if self.data is not None:
+                    self.async_set_updated_data({**self.data, **{str(k): v for k, v in dps.items()}})
                 try:
                     await self.api.set_dps(self.camera_id, dps)
                 except TuyaAPIError:
