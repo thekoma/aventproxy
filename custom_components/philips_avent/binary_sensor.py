@@ -12,7 +12,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, DPS_ALERT_EVENT, DPS_DECIBEL_EVENT, DPS_LULLABY_STATE
+from .const import DOMAIN, DPS_ALERT_EVENT, DPS_DECIBEL_EVENT, DPS_LULLABY_STATE, DPS_MOTION_SWITCH
 from .coordinator import PhilipsAventCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -88,8 +88,9 @@ class AventMotionDetected(CoordinatorEntity, BinarySensorEntity):
         dps = self.coordinator.data
         if dps and dps.get(DPS_ALERT_EVENT) == "motion_detection":
             dps.pop(DPS_ALERT_EVENT, None)
-            self._is_on = True
-            self._schedule_clear()
+            if dps.get(DPS_MOTION_SWITCH):
+                self._is_on = True
+                self._schedule_clear()
         self.async_write_ha_state()
 
     @callback
