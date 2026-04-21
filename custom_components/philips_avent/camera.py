@@ -1,4 +1,5 @@
 """Camera entity for Philips Avent Baby Monitor."""
+from __future__ import annotations
 
 import logging
 import os

@@ -1,10 +1,12 @@
 """Data update coordinator for Philips Avent."""
+from __future__ import annotations
 
 import logging
 from datetime import timedelta
 from typing import Any
 
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import PhilipsAventAPI, TuyaAPIError
@@ -113,4 +115,6 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
                 return {**self.data, **api_dps}
             return api_dps
         except TuyaAPIError as err:
+            if "SID_INVALID" in str(err) or "USER_SESSION_LOSS" in str(err):
+                raise ConfigEntryAuthFailed(f"Authentication failed: {err}") from err
             raise UpdateFailed(f"Error fetching data: {err}") from err

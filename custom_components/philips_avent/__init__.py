@@ -1,4 +1,5 @@
 """Philips Avent Baby Monitor integration for Home Assistant."""
+from __future__ import annotations
 
 import json
 import logging
