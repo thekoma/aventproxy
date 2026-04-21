@@ -54,9 +54,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     for cam in cameras:
         cam_id = cam.get("deviceId") or cam.get("devId")
         cam_name = cam.get("deviceName") or cam.get("name", cam_id)
+        local_key = cam.get("localKey")
 
-        coordinator = PhilipsAventCoordinator(hass, api, cam_id, cam_name)
+        coordinator = PhilipsAventCoordinator(hass, api, cam_id, cam_name, local_key=local_key)
         await coordinator.async_config_entry_first_refresh()
+
+        if not local_key:
+            local_key = coordinator.device_info.get("localKey")
+            if local_key:
+                coordinator._local_key = local_key
+
+        await coordinator.start_lan()
         coordinators[cam_id] = coordinator
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
@@ -98,6 +106,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if unload_ok:
         data = hass.data[DOMAIN].pop(entry.entry_id)
+        for coordinator in data["coordinators"].values():
+            await coordinator.stop_lan()
         await data["session"].close()
 
     return unload_ok
