@@ -146,6 +146,32 @@ class TuyaLANClient:
                 except Exception:
                     _LOGGER.exception("Error in DPS update callback")
 
+    async def set_dps(self, dps: dict) -> dict | None:
+        """Send DPS command via a temporary LAN connection.
+
+        Uses a separate short-lived socket so the persistent listener
+        is never disrupted. Sends each value individually — the device
+        ignores batched commands for certain codes (e.g. 201 + 202).
+        """
+        if not self._ip:
+            return None
+
+        def _send():
+            d = tinytuya.Device(self._device_id, self._ip, self._local_key, version=3.3)
+            d.set_socketTimeout(SOCKET_TIMEOUT)
+            try:
+                for key, value in dps.items():
+                    d.set_value(key, value)
+            finally:
+                d.close()
+
+        try:
+            await self._hass.async_add_executor_job(_send)
+            return {"success": True}
+        except Exception as ex:
+            _LOGGER.warning("LAN set_dps failed: %s", ex)
+            return None
+
     async def _interruptible_sleep(self, seconds: float) -> None:
         try:
             await asyncio.wait_for(self._stop_event.wait(), timeout=seconds)

@@ -69,6 +69,19 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("LAN push for %s: %s", self.camera_name, dps)
         self.async_set_updated_data(merged)
 
+    async def set_dps(self, dps: dict) -> dict:
+        """Send DPS command via LAN for instant response, plus REST for cloud sync."""
+        if self._lan_client and self._lan_client.connected:
+            result = await self._lan_client.set_dps(dps)
+            if result:
+                _LOGGER.debug("DPS sent via LAN for %s: %s", self.camera_name, dps)
+                try:
+                    await self.api.set_dps(self.camera_id, dps)
+                except TuyaAPIError:
+                    pass
+                return result
+        return await self.api.set_dps(self.camera_id, dps)
+
     async def _async_update_data(self) -> dict:
         self.update_interval = POLL_SLOW if self.lan_connected else POLL_FAST
 
