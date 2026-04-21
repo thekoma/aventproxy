@@ -1,4 +1,5 @@
 """Sensor entities for Philips Avent Baby Monitor."""
+from __future__ import annotations
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,

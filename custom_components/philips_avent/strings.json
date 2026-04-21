@@ -15,6 +15,21 @@
         "data": {
           "mfa_code": "6-digit code"
         }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Philips Avent",
+        "description": "Your session has expired. Please re-enter your credentials.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      },
+      "reauth_mfa": {
+        "title": "Re-authenticate - Verification Code",
+        "description": "A verification code has been sent to {email}. Enter it below.",
+        "data": {
+          "mfa_code": "6-digit code"
+        }
       }
     },
     "error": {
@@ -24,7 +39,8 @@
       "unknown": "Unexpected error"
     },
     "abort": {
-      "already_configured": "This account is already configured"
+      "already_configured": "This account is already configured",
+      "reauth_successful": "Re-authentication successful"
     }
   }
 }

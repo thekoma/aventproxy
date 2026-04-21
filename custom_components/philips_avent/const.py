@@ -1,4 +1,5 @@
 """Constants for the Philips Avent Baby Monitor integration."""
+from __future__ import annotations
 
 DOMAIN = "philips_avent"
 

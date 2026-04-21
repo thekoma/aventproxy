@@ -1,4 +1,5 @@
 """Number entities for Philips Avent Baby Monitor."""
+from __future__ import annotations
 
 from homeassistant.components.number import NumberEntity
 from homeassistant.config_entries import ConfigEntry

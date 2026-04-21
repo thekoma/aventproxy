@@ -1,4 +1,5 @@
 """Tuya LAN protocol client for real-time DPS push updates."""
+from __future__ import annotations
 
 import asyncio
 import logging

@@ -1,4 +1,5 @@
 """Switch entities for Philips Avent Baby Monitor."""
+from __future__ import annotations
 
 from typing import Any
 

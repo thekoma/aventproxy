@@ -1,4 +1,5 @@
 """Tuya Mobile SDK API client for Philips Avent."""
+from __future__ import annotations
 
 import hashlib
 import hmac
