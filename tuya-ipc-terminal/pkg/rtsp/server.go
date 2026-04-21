@@ -472,7 +472,7 @@ func NewCameraStream(camera *storage.CameraInfo, resolution string, user *storag
 		clients:       make(map[string]*RTSPClient),
 		active:        false,
 		lastActivity:  time.Now(),
-		shutdownDelay: 5 * time.Second,
+		shutdownDelay: 30 * time.Second,
 		server:        server,
 		streamId:      fmt.Sprintf("%s-%s", camera.DeviceID, resolution),
 	}
@@ -539,22 +539,66 @@ func (cs *CameraStream) Stop() {
 
 func (cs *CameraStream) startStream() {
 	cs.mutex.Lock()
-	defer cs.mutex.Unlock()
-
 	if cs.active || !cs.connecting {
+		cs.mutex.Unlock()
 		return
 	}
+	cs.mutex.Unlock()
 
-	core.Logger.Info().Msgf("Starting stream for camera: %s", cs.camera.DeviceName)
+	for attempt := 1; attempt <= 2; attempt++ {
+		if attempt > 1 {
+			core.Logger.Info().Msgf("Retrying stream for camera %s (attempt %d/2)", cs.camera.DeviceName, attempt)
+			time.Sleep(3 * time.Second)
+		}
 
-	if err := cs.webrtcBridge.Start(); err != nil {
-		core.Logger.Error().Err(err).Msg("Failed to start WebRTC bridge")
-		cs.stopStreamInternal()
-		return
+		cs.mutex.Lock()
+		if cs.active || !cs.connecting {
+			cs.mutex.Unlock()
+			return
+		}
+
+		core.Logger.Info().Msgf("Starting stream for camera: %s (attempt %d/2)", cs.camera.DeviceName, attempt)
+
+		// Recreate bridge for retry to get fresh PeerConnection
+		if attempt > 1 {
+			cs.webrtcBridge.Stop()
+			cs.webrtcBridge = NewWebRTCBridge(cs.camera, cs.resolution, cs.user, cs.server.storageManager)
+			if cs.server.MobileClient != nil {
+				cs.webrtcBridge.SetMobileClient(cs.server.MobileClient)
+			}
+			if cs.server.mqttManager != nil {
+				if mqttClient, err := cs.server.mqttManager.GetClient(cs.camera.DeviceID); err == nil {
+					cs.webrtcBridge.SetMQTTClient(mqttClient)
+				}
+			}
+			cs.webrtcBridge.OnError = func(err error) {
+				if cs.active || cs.connecting {
+					core.Logger.Error().Err(err).Msgf("WebRTC error for camera %s", cs.camera.DeviceName)
+					cs.mutex.Lock()
+					clientCount := len(cs.clients)
+					cs.mutex.Unlock()
+					if clientCount == 0 {
+						cs.stopStreamInternal()
+					}
+				}
+			}
+		}
+
+		err := cs.webrtcBridge.Start()
+		if err == nil {
+			cs.connecting = false
+			cs.active = true
+			cs.mutex.Unlock()
+			return
+		}
+
+		core.Logger.Error().Err(err).Msgf("Failed to start WebRTC bridge (attempt %d/2)", attempt)
+		cs.mutex.Unlock()
 	}
 
-	cs.connecting = false
-	cs.active = true
+	cs.mutex.Lock()
+	cs.stopStreamInternal()
+	cs.mutex.Unlock()
 }
 
 func (cs *CameraStream) stopStream() {
