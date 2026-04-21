@@ -32,6 +32,18 @@ type RTPForwarder struct {
 	firstVideoPacket bool
 	firstAudioPacket bool
 
+	// H264 SPS/PPS cache for parameter set injection
+	spsPacket *rtp.Packet
+	ppsPacket *rtp.Packet
+
+	// Timestamp rebasing
+	videoTimeStart  time.Time
+	videoSeqStart   uint16
+	videoTsStarted  bool
+	audioTimeStart  time.Time
+	audioSeqStart   uint16
+	audioTsStarted  bool
+
 	OnBackchannelAudio func(*rtp.Packet)
 }
 
@@ -259,29 +271,114 @@ func (rf *RTPForwarder) RemoveClient(sessionID string) {
 	}
 }
 
+func isDeadClientError(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "broken pipe") ||
+		strings.Contains(msg, "connection reset by peer") ||
+		strings.Contains(msg, "use of closed network connection")
+}
+
+func (rf *RTPForwarder) getNALType(packet *rtp.Packet) byte {
+	if len(packet.Payload) == 0 {
+		return 0
+	}
+	nalType := packet.Payload[0] & 0x1F
+	if nalType == 28 && len(packet.Payload) > 1 {
+		// FU-A: real NAL type is in second byte, only on start bit
+		if packet.Payload[1]&0x80 != 0 {
+			return packet.Payload[1] & 0x1F
+		}
+		return 0
+	}
+	return nalType
+}
+
+func (rf *RTPForwarder) cacheSTAP(packet *rtp.Packet) {
+	// STAP-A (type 24): contains multiple NAL units including SPS/PPS
+	payload := packet.Payload[1:] // skip STAP-A header byte
+	for len(payload) > 2 {
+		nalSize := int(payload[0])<<8 | int(payload[1])
+		payload = payload[2:]
+		if nalSize > len(payload) {
+			break
+		}
+		nalType := payload[0] & 0x1F
+		if nalType == 7 || nalType == 8 {
+			rf.cacheNAL(packet, nalType)
+		}
+		payload = payload[nalSize:]
+	}
+}
+
+func (rf *RTPForwarder) cacheNAL(packet *rtp.Packet, nalType byte) {
+	switch nalType {
+	case 7:
+		rf.spsPacket = packet.Clone()
+	case 8:
+		rf.ppsPacket = packet.Clone()
+	}
+}
+
 func (rf *RTPForwarder) ForwardVideoPacket(packet *rtp.Packet) {
 	rf.mutex.RLock()
-	defer rf.mutex.RUnlock()
 
 	if len(rf.clients) == 0 {
+		rf.mutex.RUnlock()
 		return
 	}
 
-	// Serialize packet
+	// Rebase timestamp to wall clock (90kHz for H264)
+	if !rf.videoTsStarted {
+		rf.videoTimeStart = time.Now()
+		rf.videoSeqStart = packet.SequenceNumber
+		rf.videoTsStarted = true
+	}
+	elapsed := time.Since(rf.videoTimeStart)
+	packet.Timestamp = uint32(elapsed.Seconds() * 90000)
+	packet.SequenceNumber = rf.videoSeqStart + (packet.SequenceNumber - rf.videoSeqStart)
+
+	nalType := rf.getNALType(packet)
+
+	// Cache SPS (7), PPS (8), and STAP-A (24) which may contain both
+	switch nalType {
+	case 7:
+		rf.spsPacket = packet.Clone()
+	case 8:
+		rf.ppsPacket = packet.Clone()
+	case 24:
+		rf.cacheSTAP(packet)
+	}
+
+	// Before IDR keyframe (5), inject cached SPS/PPS
+	if nalType == 5 && rf.spsPacket != nil && rf.ppsPacket != nil {
+		rf.forwardVideoData(rf.spsPacket)
+		rf.forwardVideoData(rf.ppsPacket)
+	}
+
+	rf.forwardVideoData(packet)
+	rf.mutex.RUnlock()
+}
+
+func (rf *RTPForwarder) forwardVideoData(packet *rtp.Packet) {
 	data, err := packet.Marshal()
 	if err != nil {
 		core.Logger.Error().Err(err).Msg("Error marshaling video RTP packet")
 		return
 	}
 
-	// Forward to all clients
+	var deadClients []string
+
 	for sessionID, client := range rf.clients {
 		client.lastActivity = time.Now()
 
 		if client.transportMode == TransportUDP {
 			if client.videoConn != nil {
 				if _, err := client.videoConn.Write(data); err != nil {
-					core.Logger.Error().Err(err).Msgf("Error forwarding video packet to UDP client %s", sessionID)
+					if isDeadClientError(err) {
+						deadClients = append(deadClients, sessionID)
+					} else {
+						core.Logger.Error().Err(err).Msgf("Error forwarding video packet to UDP client %s", sessionID)
+					}
 				} else if rf.firstVideoPacket {
 					rf.firstVideoPacket = false
 					core.Logger.Trace().Msgf("Successfully sent first video packet to UDP client %s on port %d",
@@ -291,13 +388,24 @@ func (rf *RTPForwarder) ForwardVideoPacket(packet *rtp.Packet) {
 		} else if client.transportMode == TransportTCP {
 			if client.tcpConn != nil {
 				if err := rf.sendInterleavedRTP(client.tcpConn, client.videoRTPChannel, data); err != nil {
-					core.Logger.Error().Err(err).Msgf("Error forwarding video packet to TCP client %s", sessionID)
+					if isDeadClientError(err) {
+						deadClients = append(deadClients, sessionID)
+					} else {
+						core.Logger.Error().Err(err).Msgf("Error forwarding video packet to TCP client %s", sessionID)
+					}
 				} else if rf.firstVideoPacket {
 					rf.firstVideoPacket = false
 					core.Logger.Trace().Msgf("Successfully sent first video packet to TCP client %s on channel %d",
 						sessionID, client.videoRTPChannel)
 				}
 			}
+		}
+	}
+
+	if len(deadClients) > 0 {
+		for _, id := range deadClients {
+			core.Logger.Info().Msgf("Removing dead video client %s", id)
+			delete(rf.clients, id)
 		}
 	}
 }
@@ -309,6 +417,14 @@ func (rf *RTPForwarder) ForwardAudioPacket(packet *rtp.Packet) {
 	if len(rf.clients) == 0 {
 		return
 	}
+
+	// Rebase timestamp to wall clock (8kHz for PCMU)
+	if !rf.audioTsStarted {
+		rf.audioTimeStart = time.Now()
+		rf.audioTsStarted = true
+	}
+	elapsed := time.Since(rf.audioTimeStart)
+	packet.Timestamp = uint32(elapsed.Seconds() * 8000)
 
 	// Serialize packet
 	data, err := packet.Marshal()
