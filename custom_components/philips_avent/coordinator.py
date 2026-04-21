@@ -89,6 +89,12 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
                 except TuyaAPIError:
                     pass
                 return result
+        if self.data is not None:
+            optimistic = {str(k): v for k, v in dps.items()}
+            lullaby_cmd = optimistic.get(DPS_LULLABY_CONTROL)
+            if lullaby_cmd in LULLABY_STATE_MAP:
+                optimistic[DPS_LULLABY_STATE] = LULLABY_STATE_MAP[lullaby_cmd]
+            self.async_set_updated_data({**self.data, **optimistic})
         return await self.api.set_dps(self.camera_id, dps)
 
     async def _async_update_data(self) -> dict:
