@@ -43,7 +43,8 @@ type WebRTCBridge struct {
 	rtpForwarder   *RTPForwarder
 
 	// State
-	connected bool
+	connected  bool
+	ownsClient bool
 	waiter    utils.Waiter
 	mutex     sync.RWMutex
 
@@ -86,6 +87,10 @@ func (wb *WebRTCBridge) SetMobileClient(client *tuya.MobileSDKClient) {
 	wb.mobileClient = client
 }
 
+func (wb *WebRTCBridge) SetMQTTClient(client *tuya.MQTTClient) {
+	wb.mqttClient = client
+}
+
 func (wb *WebRTCBridge) Start() error {
 	wb.mutex.Lock()
 	defer wb.mutex.Unlock()
@@ -109,34 +114,38 @@ func (wb *WebRTCBridge) Start() error {
 			return fmt.Errorf("failed to get WebRTC config: %v", err)
 		}
 
-		userInfo, err := wb.mobileClient.GetUserInfo()
-		if err != nil {
-			return fmt.Errorf("failed to get user info: %v", err)
-		}
-		mobileMqttsUrl = userInfo.Domain.MobileMqttsUrl
+		if wb.mqttClient == nil {
+			// No pre-set MQTT client — create one (fallback for non-managed mode)
+			userInfo, err := wb.mobileClient.GetUserInfo()
+			if err != nil {
+				return fmt.Errorf("failed to get user info: %v", err)
+			}
+			mobileMqttsUrl = userInfo.Domain.MobileMqttsUrl
 
-		// Derive MQTT credentials and connect directly
-		ecode := wb.mobileClient.Ecode
-		uid := wb.mobileClient.UID
-		mqttDerived := wb.mobileClient.DeriveMQTTConfig(ecode)
-		mqttUsername := wb.mobileClient.DeriveMQTTUsername(wb.mobileClient.SID, ecode, wb.mobileClient.PartnerIdentity)
-		mqttClientID := wb.mobileClient.DeriveMQTTClientID(uid)
-		subscribeTopic := fmt.Sprintf("/av/u/%s", uid)
+			ecode := wb.mobileClient.Ecode
+			uid := wb.mobileClient.UID
+			mqttDerived := wb.mobileClient.DeriveMQTTConfig(ecode)
+			mqttUsername := wb.mobileClient.DeriveMQTTUsername(wb.mobileClient.SID, ecode, wb.mobileClient.PartnerIdentity)
+			mqttClientID := wb.mobileClient.DeriveMQTTClientID(uid)
+			subscribeTopic := fmt.Sprintf("/av/u/%s", uid)
 
-		wb.mqttClient, err = tuya.NewMobileMqttClient(&tuya.MobileMQTTConfig{
-			Username:       mqttUsername,
-			Password:       mqttDerived.Password,
-			ClientID:       mqttClientID,
-			SubscribeTopic: subscribeTopic,
-			UID:            uid,
-			BrokerURL:      fmt.Sprintf("ssl://%s:8883", mobileMqttsUrl),
-		})
-		if err != nil {
-			return fmt.Errorf("failed to connect to MQTT: %v", err)
-		}
+			wb.mqttClient, err = tuya.NewMobileMqttClient(&tuya.MobileMQTTConfig{
+				Username:       mqttUsername,
+				Password:       mqttDerived.Password,
+				ClientID:       mqttClientID,
+				SubscribeTopic: subscribeTopic,
+				UID:            uid,
+				BrokerURL:      fmt.Sprintf("ssl://%s:8883", mobileMqttsUrl),
+			})
+			if err != nil {
+				return fmt.Errorf("failed to connect to MQTT: %v", err)
+			}
 
-		if err = wb.mqttClient.Connected.Wait(); err != nil {
-			return fmt.Errorf("MQTT connection failed: %v", err)
+			if err = wb.mqttClient.Connected.Wait(); err != nil {
+				return fmt.Errorf("MQTT connection failed: %v", err)
+			}
+
+			wb.ownsClient = true
 		}
 
 	} else {
@@ -241,8 +250,13 @@ func (wb *WebRTCBridge) Stop() {
 		wb.peerConnection.Close()
 	}
 
-	// Stop MQTT client
-	if wb.mqttClient != nil {
+	// Deregister camera client from MQTT
+	if wb.mqttClient != nil && wb.cameraClient != nil {
+		wb.mqttClient.RemoveCameraClient(wb.cameraClient.SessionId)
+	}
+
+	// Only stop MQTT client if we created it (not managed by MQTTManager)
+	if wb.ownsClient && wb.mqttClient != nil {
 		wb.mqttClient.Stop()
 	}
 
