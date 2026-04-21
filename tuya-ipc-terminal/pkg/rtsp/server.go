@@ -332,7 +332,6 @@ func (s *RTSPServer) getOrCreateStream(camera *storage.CameraInfo, streamResolut
 
 	// Create new stream
 	stream := NewCameraStream(camera, streamResolution, user, s.storageManager, s)
-	stream.connecting = true
 
 	stream.webrtcBridge.OnError = func(err error) {
 		if stream.active || stream.connecting {
@@ -480,8 +479,9 @@ func (cs *CameraStream) AddClient(client *RTSPClient) {
 	cs.clients[client.session] = client
 	cs.lastActivity = time.Now()
 
-	// Start stream if not active
-	if !cs.active {
+	// Start stream if not active and not already connecting
+	if !cs.active && !cs.connecting {
+		cs.connecting = true
 		go cs.startStream()
 	}
 }
@@ -524,7 +524,7 @@ func (cs *CameraStream) startStream() {
 	cs.mutex.Lock()
 	defer cs.mutex.Unlock()
 
-	if cs.active {
+	if cs.active || !cs.connecting {
 		return
 	}
 
