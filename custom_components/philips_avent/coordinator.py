@@ -8,7 +8,10 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import PhilipsAventAPI, TuyaAPIError
+from .const import DPS_LULLABY_CONTROL, DPS_LULLABY_STATE
 from .lan import TuyaLANClient
+
+LULLABY_STATE_MAP = {"play": "playing", "pause": "stopping", "stop": "stopping"}
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -76,7 +79,11 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
             if result:
                 _LOGGER.debug("DPS sent via LAN for %s: %s", self.camera_name, dps)
                 if self.data is not None:
-                    self.async_set_updated_data({**self.data, **{str(k): v for k, v in dps.items()}})
+                    optimistic = {str(k): v for k, v in dps.items()}
+                    lullaby_cmd = optimistic.get(DPS_LULLABY_CONTROL)
+                    if lullaby_cmd in LULLABY_STATE_MAP:
+                        optimistic[DPS_LULLABY_STATE] = LULLABY_STATE_MAP[lullaby_cmd]
+                    self.async_set_updated_data({**self.data, **optimistic})
                 try:
                     await self.api.set_dps(self.camera_id, dps)
                 except TuyaAPIError:
