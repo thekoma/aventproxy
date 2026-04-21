@@ -96,6 +96,17 @@ func (m *MQTTManager) connect(deviceId string) (*tuya.MQTTClient, error) {
 	return nil, fmt.Errorf("MQTT connect failed after %d attempts: %v", len(mqttBackoffDelays), lastErr)
 }
 
+func (m *MQTTManager) InvalidateClient(deviceId string) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	if client, exists := m.clients[deviceId]; exists {
+		core.Logger.Info().Msgf("Invalidating MQTT client for device %s (will reconnect on next use)", deviceId)
+		client.Stop()
+		delete(m.clients, deviceId)
+	}
+}
+
 func (m *MQTTManager) Stop() {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
