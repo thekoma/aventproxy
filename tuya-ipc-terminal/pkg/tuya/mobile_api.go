@@ -179,6 +179,11 @@ func (c *MobileSDKClient) Call(action, version string, postData interface{}) (js
 	return result.Result, nil
 }
 
+func (c *MobileSDKClient) P2PPreLink() error {
+	_, err := c.Call("thing.m.p2p.main.pre.link.get", "1.0", nil)
+	return err
+}
+
 func (c *MobileSDKClient) GetWebRTCConfig(deviceID string) (*WebRTCConfigResponse, error) {
 	raw, err := c.Call("smartlife.m.rtc.config.get", "1.0", map[string]string{"devId": deviceID})
 	if err != nil {
