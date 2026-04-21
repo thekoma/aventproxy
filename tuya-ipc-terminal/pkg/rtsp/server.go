@@ -26,6 +26,7 @@ type RTSPServer struct {
 	cancel         context.CancelFunc
 	running        bool
 	MobileClient   *tuya.MobileSDKClient
+	mqttManager    *MQTTManager
 }
 
 type RTSPClient struct {
@@ -108,6 +109,10 @@ func (s *RTSPServer) Start() error {
 	s.listener = listener
 	s.running = true
 
+	if s.MobileClient != nil {
+		s.mqttManager = NewMQTTManager(s.MobileClient)
+	}
+
 	core.Logger.Info().Msgf("RTSP Server started on port %d", s.port)
 	core.Logger.Info().Msgf("Available endpoints:")
 
@@ -152,6 +157,10 @@ func (s *RTSPServer) Stop() error {
 	// Stop all streams
 	for _, stream := range s.streams {
 		stream.Stop()
+	}
+
+	if s.mqttManager != nil {
+		s.mqttManager.Stop()
 	}
 
 	return nil
@@ -333,6 +342,18 @@ func (s *RTSPServer) getOrCreateStream(camera *storage.CameraInfo, streamResolut
 	// Create new stream
 	stream := NewCameraStream(camera, streamResolution, user, s.storageManager, s)
 
+	// Setup bridge dependencies
+	if s.MobileClient != nil {
+		stream.webrtcBridge.SetMobileClient(s.MobileClient)
+	}
+	if s.mqttManager != nil {
+		mqttClient, err := s.mqttManager.GetClient(camera.DeviceID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get MQTT client: %v", err)
+		}
+		stream.webrtcBridge.SetMQTTClient(mqttClient)
+	}
+
 	stream.webrtcBridge.OnError = func(err error) {
 		if stream.active || stream.connecting {
 			core.Logger.Error().Err(err).Msgf("WebRTC error for camera %s", camera.DeviceName)
@@ -457,10 +478,6 @@ func NewCameraStream(camera *storage.CameraInfo, resolution string, user *storag
 	}
 
 	stream.webrtcBridge = NewWebRTCBridge(camera, resolution, user, storageManager)
-
-	if server != nil && server.MobileClient != nil {
-		stream.webrtcBridge.SetMobileClient(server.MobileClient)
-	}
 
 	return stream
 }
