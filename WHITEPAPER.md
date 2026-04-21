@@ -763,7 +763,80 @@ client.connect("m1.tuyaeu.com", 8883)
 
 ---
 
-## 13. Security Considerations
+## 13. Phase 7: LAN Protocol & DPS Push Discovery
+
+### Cloud MQTT — Dead End for DPS Push
+
+After successfully reversing the MQTT credentials (Phase 6), we tested whether DPS status updates arrive on the mobile SDK's MQTT topic (`{partnerIdentity}/mb/{uid}`).
+
+**Result: No.** The Tuya cloud MQTT broker for mobile SDK connections is used **exclusively for WebRTC signaling** (protocol 302). DPS changes made via the REST API are not forwarded to the MQTT topic. We tested with three topic variants (`{partner}/mb/{uid}`, `/av/u/{uid}`, `smart/device/out/{devId}`) — all subscribed successfully but delivered zero DPS messages during controlled tests.
+
+The mobile app likely receives push notifications via Firebase Cloud Messaging, not MQTT.
+
+### LAN Protocol — Working Real-Time Push
+
+The device responds to the Tuya LAN protocol (version 3.3) on the local network. Discovery via UDP broadcast on ports 6666/6667 reveals the device at its LAN IP.
+
+**Connection sequence:**
+1. `tinytuya.deviceScan()` → finds device by `gwId` match
+2. Create `Device(device_id, ip, local_key, version=3.3)` with `localKey` from API discovery
+3. `set_socketPersistent(True)` + `updatedps([dps_list])` → primes the connection
+4. `receive()` in a loop → blocks until data arrives or socket timeout
+
+**DPS push behavior:**
+- After `updatedps()`, the device dumps its full current state
+- Device-initiated changes push in real-time (temperature fluctuations, alert events)
+- Cloud API-initiated changes (commands we send) are NOT echoed on LAN
+- The persistent socket drops periodically (error 904 "Unexpected Payload"); auto-reconnect handles this
+
+### Alert Event Discovery
+
+Controlled testing with motion and sound detection revealed the event DPS codes:
+
+| DPS | Value | Meaning |
+|-----|-------|---------|
+| 250 | `"motion_detection"` | Motion detected by camera |
+| 141 | `"decibel_upload"` | Sound detected above threshold |
+
+**DPS 250** is the primary alert event channel. Motion events arrive on this DPS even when DPS 134 (motion switch) is set to `false` — the switch controls whether the app shows notifications, not whether the device detects motion.
+
+**DPS 141** fires when the microphone picks up sound above the configured sensitivity threshold.
+
+Both events arrive via LAN push with sub-second latency, making them suitable for HA automations (e.g., turn on a light when motion is detected, send a notification when crying is heard).
+
+### Updated DPS Reference
+
+| DPS | Name | Type | Push via LAN? |
+|-----|------|------|---------------|
+| 207 | Temperature (°C × 100) | int | Yes |
+| 250 | Alert event | string | Yes — `"motion_detection"` |
+| 141 | Sound event | string | Yes — `"decibel_upload"` |
+| 138 | Night light | bool | Yes (initial state) |
+| 134 | Motion switch | bool | Yes (initial state) |
+| 139 | Sound switch | bool | Yes (initial state) |
+| 158 | Brightness | int | Yes (initial state) |
+| 246 | Lullaby state | string | Yes — `"playing"` / `"stopping"` |
+| 101 | Unknown status | bool | Yes |
+| 209 | Volume | int | Initial state only |
+| 248 | Lullaby track info | JSON string | Initial state only |
+
+### Integration Architecture
+
+```
+Baby Monitor (LAN, 192.168.85.x)
+    │
+    ├── Tuya LAN protocol 3.3 ──► TuyaLANClient (lan.py)
+    │   Real-time push: temperature, motion, sound       ──► Coordinator
+    │                                                          │
+    └── Tuya Cloud API (a1.tuyaeu.com) ──► PhilipsAventAPI    │
+        Polling every 120s (fallback)                    ──► Coordinator
+                                                               │
+                                                          All HA entities
+```
+
+---
+
+## 14. Security Considerations
 
 ### Responsible Disclosure
 
@@ -784,7 +857,7 @@ This research targets personal devices owned by the researcher. No third-party s
 
 ---
 
-## 14. Reproducibility Guide
+## 15. Reproducibility Guide
 
 ### Requirements
 
