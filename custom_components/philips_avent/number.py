@@ -56,5 +56,5 @@ class AventNumber(CoordinatorEntity, NumberEntity):
         return None
 
     async def async_set_native_value(self, value: float) -> None:
-        await self.coordinator.api.set_dps(self._cam_id, {self._dps_id: int(value)})
+        await self.coordinator.set_dps({self._dps_id: int(value)})
         await self.coordinator.async_request_refresh()
