@@ -16,7 +16,6 @@ SOCKET_TIMEOUT = 5
 RECONNECT_DELAY = 15
 SCAN_MAXRETRY = 5
 HEARTBEAT_TIMEOUT = 600
-PRIME_DPS = [101, 102, 106, 134, 138, 139, 140, 158, 207, 237, 246]
 
 
 class TuyaLANClient:
@@ -80,8 +79,8 @@ class TuyaLANClient:
             d = tinytuya.Device(self._device_id, ip, self._local_key, version=3.3)
             d.set_socketPersistent(True)
             d.set_socketTimeout(SOCKET_TIMEOUT)
-            result = d.updatedps(PRIME_DPS)
-            if result and isinstance(result, dict):
+            result = d.status()
+            if result and isinstance(result, dict) and "Error" not in result:
                 return d
             d.close()
         except Exception:
