@@ -63,7 +63,7 @@ func NewMqttClient(clientId, mobileMqttsUrl string, mqttConfig *MQTConfig) (*MQT
 	opts.SetPassword(password)
 	opts.SetOnConnectHandler(client.onConnect)
 	opts.SetConnectionLostHandler(client.onDisconnect)
-	opts.SetAutoReconnect(true)
+	opts.SetAutoReconnect(false)
 	opts.SetConnectTimeout(10 * time.Second)
 	opts.SetKeepAlive(60 * time.Second)
 	opts.SetCleanSession(true)
@@ -99,7 +99,7 @@ func NewMobileMqttClient(config *MobileMQTTConfig) (*MQTTClient, error) {
 	opts.SetPassword(config.Password)
 	opts.SetOnConnectHandler(client.onConnect)
 	opts.SetConnectionLostHandler(client.onDisconnect)
-	opts.SetAutoReconnect(true)
+	opts.SetAutoReconnect(false)
 	opts.SetConnectTimeout(10 * time.Second)
 	opts.SetKeepAlive(60 * time.Second)
 	opts.SetCleanSession(true)
@@ -120,6 +120,10 @@ func (c *MQTTClient) Stop() {
 		c.mqtt.Disconnect(250)
 		c.closed = true
 	}
+}
+
+func (c *MQTTClient) IsConnected() bool {
+	return c.mqtt != nil && c.mqtt.IsConnected() && !c.closed
 }
 
 func (c *MQTTClient) AddCameraClient(sessionId string, cameraClient *MQTTCameraClient) {
