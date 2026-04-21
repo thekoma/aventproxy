@@ -87,13 +87,10 @@ class AventLullabySelect(CoordinatorEntity, SelectEntity):
         track_id = LULLABY_ID_BY_NAME.get(option)
         if track_id is None:
             return
-        await self.coordinator.api.set_dps(
-            self._cam_id,
-            {
-                DPS_LULLABY_CONTROL: "play",
-                "202": json.dumps({"bizcode": "phi-no-bm", "id": track_id}),
-            },
-        )
+        await self.coordinator.set_dps({
+            "202": json.dumps({"bizcode": "phi-no-bm", "id": track_id}),
+            DPS_LULLABY_CONTROL: "play",
+        })
         self.coordinator.data["248"] = json.dumps(
             {"bizcode": "phi-no-bm", "id": track_id, "errcode": 0}
         )
@@ -128,9 +125,7 @@ class AventPlayModeSelect(CoordinatorEntity, SelectEntity):
         mode = next((k for k, v in PLAY_MODE_LABELS.items() if v == option), None)
         if mode is None:
             return
-        await self.coordinator.api.set_dps(
-            self._cam_id, {DPS_LULLABY_MODE: mode}
-        )
+        await self.coordinator.set_dps({DPS_LULLABY_MODE: mode})
         self.coordinator.data[DPS_LULLABY_MODE] = mode
         self.async_write_ha_state()
 
@@ -171,14 +166,10 @@ class AventTimerSelect(CoordinatorEntity, SelectEntity):
     async def async_select_option(self, option: str) -> None:
         seconds = TIMER_OPTIONS.get(option, 0)
         if seconds == 0:
-            await self.coordinator.api.set_dps(
-                self._cam_id, {self._dps_switch: False}
-            )
+            await self.coordinator.set_dps({self._dps_switch: False})
             self.coordinator.data[self._dps_switch] = False
         else:
-            await self.coordinator.api.set_dps(
-                self._cam_id, {self._dps_switch: True, self._dps_timer: seconds}
-            )
+            await self.coordinator.set_dps({self._dps_switch: True, self._dps_timer: seconds})
             self.coordinator.data[self._dps_switch] = True
             self.coordinator.data[self._dps_timer] = seconds
         self.async_write_ha_state()
