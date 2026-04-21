@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -14,6 +15,7 @@ _LOGGER = logging.getLogger(__name__)
 SOCKET_TIMEOUT = 5
 RECONNECT_DELAY = 15
 SCAN_MAXRETRY = 5
+HEARTBEAT_TIMEOUT = 60
 PRIME_DPS = [101, 102, 106, 134, 138, 139, 140, 158, 207, 209, 237, 246]
 
 
@@ -117,11 +119,19 @@ class TuyaLANClient:
         return False
 
     async def _run(self) -> None:
+        last_data = time.monotonic()
+
         while not self._stop_event.is_set():
             if not self._device:
                 if not await self._connect():
                     await self._interruptible_sleep(RECONNECT_DELAY)
                     continue
+                last_data = time.monotonic()
+
+            if time.monotonic() - last_data > HEARTBEAT_TIMEOUT:
+                _LOGGER.debug("LAN heartbeat timeout, reconnecting")
+                self._disconnect()
+                continue
 
             try:
                 data = await self._hass.async_add_executor_job(self._device.receive)
@@ -133,6 +143,8 @@ class TuyaLANClient:
 
             if not data or not isinstance(data, dict):
                 continue
+
+            last_data = time.monotonic()
 
             if "Error" in data or "Err" in data:
                 _LOGGER.debug("LAN device error: %s, reconnecting", data.get("Error", data.get("Err")))
