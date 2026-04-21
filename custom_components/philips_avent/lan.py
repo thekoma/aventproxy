@@ -74,13 +74,16 @@ class TuyaLANClient:
         return await self._hass.async_add_executor_job(_scan)
 
     def _try_direct_connect(self, ip: str) -> tinytuya.Device | None:
-        """Try connecting directly to a known IP."""
+        """Try connecting directly to a known IP via TCP handshake only.
+
+        Don't send status() or updatedps() — this IPC device doesn't
+        respond to DP_QUERY and updatedps() crashes the firmware.
+        """
         try:
             d = tinytuya.Device(self._device_id, ip, self._local_key, version=3.3)
             d.set_socketPersistent(True)
             d.set_socketTimeout(SOCKET_TIMEOUT)
-            result = d.status()
-            if result and isinstance(result, dict) and "Error" not in result:
+            if d._get_socket(False) is not None:
                 return d
             d.close()
         except Exception:
