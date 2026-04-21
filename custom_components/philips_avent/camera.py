@@ -2,7 +2,6 @@
 
 import logging
 import os
-import time
 
 from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.config_entries import ConfigEntry
@@ -16,7 +15,6 @@ _LOGGER = logging.getLogger(__name__)
 
 RTSP_PORT_DEFAULT = 8554
 BRIDGE_PORT_ENV = "BRIDGE_PORT"
-THUMBNAIL_INTERVAL = 600
 
 
 async def async_setup_entry(
@@ -55,7 +53,6 @@ class AventCamera(Camera):
             "model": "Avent SCD973",
         }
         self._cached_image: bytes | None = None
-        self._cached_image_time: float = 0
 
     async def stream_source(self) -> str:
         return self._stream_url
@@ -63,38 +60,4 @@ class AventCamera(Camera):
     async def async_camera_image(
         self, width: int | None = None, height: int | None = None
     ) -> bytes | None:
-        now = time.monotonic()
-        if self._cached_image and (now - self._cached_image_time) < THUMBNAIL_INTERVAL:
-            return self._cached_image
-
-        image = await self.hass.async_add_executor_job(
-            self._grab_frame, width, height
-        )
-        if image:
-            self._cached_image = image
-            self._cached_image_time = now
         return self._cached_image
-
-    def _grab_frame(
-        self, width: int | None = None, height: int | None = None
-    ) -> bytes | None:
-        import subprocess
-
-        try:
-            result = subprocess.run(
-                [
-                    "ffmpeg", "-rtsp_transport", "tcp",
-                    "-i", self._stream_url,
-                    "-frames:v", "1",
-                    *(["-vf", f"scale={width}:{height}"] if width and height else []),
-                    "-f", "image2", "-c:v", "mjpeg",
-                    "-q:v", "5", "pipe:1",
-                ],
-                capture_output=True,
-                timeout=15,
-            )
-            if result.returncode == 0 and result.stdout:
-                return result.stdout
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            _LOGGER.debug("Failed to grab still image from %s", self._stream_url)
-        return None
