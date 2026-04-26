@@ -68,12 +68,16 @@ jobs:
             fi
 
             # Update version in add-on config and HA manifest
-            sed -i "s/^version:.*/version: \"${VERSION}\"/" aventproxy-bridge-addon/config.yaml
             sed -i "s/\"version\":.*/\"version\": \"${VERSION}\"/" custom_components/philips_avent/manifest.json
+            if [ "$PRERELEASE" = "true" ]; then
+              sed -i "s/^version:.*/version: \"${VERSION}\"/" aventproxy-bridge-addon-beta/config.yaml
+            else
+              sed -i "s/^version:.*/version: \"${VERSION}\"/" aventproxy-bridge-addon/config.yaml
+            fi
 
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add aventproxy-bridge-addon/config.yaml custom_components/philips_avent/manifest.json
+            git add aventproxy-bridge-addon/config.yaml aventproxy-bridge-addon-beta/config.yaml custom_components/philips_avent/manifest.json
             git commit -m "Release ${VERSION}" || true
             git tag "${VERSION}"
             git push origin main --tags
