@@ -55,5 +55,84 @@
         }
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "temperature": {
+        "name": "Temperature"
+      },
+      "wifi_signal": {
+        "name": "WiFi Signal"
+      }
+    },
+    "switch": {
+      "138": {
+        "name": "Night Light"
+      },
+      "136": {
+        "name": "Motion Alert"
+      },
+      "137": {
+        "name": "Sound Alert"
+      },
+      "105": {
+        "name": "Privacy Mode"
+      }
+    },
+    "number": {
+      "158": {
+        "name": "Night Light Brightness"
+      },
+      "209": {
+        "name": "Lullaby Volume"
+      }
+    },
+    "button": {
+      "lullaby_play": {
+        "name": "Lullaby Play"
+      },
+      "lullaby_pause": {
+        "name": "Lullaby Pause"
+      },
+      "lullaby_stop": {
+        "name": "Lullaby Stop"
+      },
+      "lullaby_next": {
+        "name": "Lullaby Next"
+      },
+      "lullaby_prev": {
+        "name": "Lullaby Prev"
+      }
+    },
+    "select": {
+      "lullaby_track": {
+        "name": "Lullaby Track"
+      },
+      "play_mode": {
+        "name": "Play Mode"
+      },
+      "212_timer": {
+        "name": "Lullaby Timer"
+      },
+      "211_timer": {
+        "name": "Night Light Timer"
+      }
+    },
+    "binary_sensor": {
+      "lullaby_playing": {
+        "name": "Lullaby Playing"
+      },
+      "motion_detected": {
+        "name": "Motion Detected"
+      },
+      "sound_detected": {
+        "name": "Sound Detected"
+      }
+    },
+    "camera": {
+      "camera": {
+        "name": "Camera"
+      }
+    }
   }
 }
