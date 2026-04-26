@@ -9,7 +9,6 @@ Usage:
 """
 
 import argparse
-import json
 import subprocess
 import sys
 import threading
@@ -54,11 +53,11 @@ def wait_online(ip, timeout=120):
             capture_output=True, timeout=5
         )
         if result.returncode == 0:
-            print(f"  Device online")
+            print("  Device online")
             time.sleep(5)
             return True
         time.sleep(2)
-    print(f"  TIMEOUT - device not responding")
+    print("  TIMEOUT - device not responding")
     return False
 
 
@@ -70,7 +69,7 @@ def test_operation(name, func, ip):
     print(f"{'='*60}")
 
     if not ping_ok:
-        print(f"  Device offline, waiting for recovery...")
+        print("  Device offline, waiting for recovery...")
         if not wait_online(ip):
             return "SKIPPED (device offline)"
 
@@ -81,14 +80,14 @@ def test_operation(name, func, ip):
     except Exception as e:
         print(f"  Exception: {e}")
 
-    print(f"  Monitoring for 30s...")
+    print("  Monitoring for 30s...")
     for i in range(30):
         time.sleep(1)
         if not ping_ok:
             print(f"  !!! DEVICE CRASHED after {i+1}s !!!")
             return "CRASHED"
 
-    print(f"  Device stable after 30s")
+    print("  Device stable after 30s")
     return "OK"
 
 
@@ -98,9 +97,9 @@ def main():
     args = parser.parse_args()
     ip = args.ip
 
-    print(f"Baby Monitor Crash Finder")
+    print("Baby Monitor Crash Finder")
     print(f"Device: {ip}")
-    print(f"Starting ping monitor...")
+    print("Starting ping monitor...")
 
     ping_thread = threading.Thread(target=ping_monitor, args=(ip,), daemon=True)
     ping_thread.start()
@@ -176,7 +175,6 @@ def main():
     # --- TEST 6: REST API get_device (cloud) ---
     def test_api_get_device():
         import asyncio
-        import hashlib
         import aiohttp
 
         TUYA_SIGNING_KEY = (
@@ -256,7 +254,7 @@ def main():
 
     # --- RESULTS ---
     print(f"\n{'='*60}")
-    print(f"RESULTS")
+    print("RESULTS")
     print(f"{'='*60}")
     for name, result in results.items():
         status = "CRASH!" if result == "CRASHED" else result
@@ -266,7 +264,7 @@ def main():
     if crashed:
         print(f"\n  CULPRITS: {', '.join(crashed)}")
     else:
-        print(f"\n  No crashes detected. Issue might be cumulative.")
+        print("\n  No crashes detected. Issue might be cumulative.")
 
     ping_stop.set()
 
