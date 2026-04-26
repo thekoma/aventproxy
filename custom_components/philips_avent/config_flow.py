@@ -13,7 +13,7 @@ from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import PhilipsAventAPI, TuyaAPIError
-from .const import CONF_ECODE, CONF_PARTNER, CONF_SID, CONF_UID, DOMAIN
+from .const import CONF_BRIDGE_PORT, CONF_ECODE, CONF_PARTNER, CONF_SID, CONF_UID, DEFAULT_BRIDGE_PORT, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,6 +41,11 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._password: str = ""
         self._api: PhilipsAventAPI | None = None
         self._session: aiohttp.ClientSession | None = None
+
+    @staticmethod
+    @config_entries.callback
+    def async_get_options_flow(config_entry):
+        return PhilipsAventOptionsFlowHandler(config_entry)
 
     async def async_step_user(self, user_input=None):
         """Step 1: Email + Password."""
@@ -290,4 +295,31 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=STEP_MFA_DATA_SCHEMA,
             errors=errors,
             description_placeholders={"email": self._email},
+        )
+
+
+class PhilipsAventOptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle options flow for Philips Avent."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        self.config_entry = config_entry
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None):
+        """Manage the options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        current_port = self.config_entry.options.get(
+            CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT
+        )
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(CONF_BRIDGE_PORT, default=current_port): vol.All(
+                        int, vol.Range(min=1024, max=65535)
+                    ),
+                }
+            ),
         )

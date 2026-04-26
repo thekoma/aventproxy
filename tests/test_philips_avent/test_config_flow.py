@@ -3,6 +3,7 @@
 import json
 
 from api import TuyaAPIError
+from const import CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT
 
 
 class TestTuyaAPIError:
@@ -50,3 +51,19 @@ class TestLoginResponse:
         options = json.dumps({"group": 1, "mfaCode": "123456"})
         parsed = json.loads(options)
         assert parsed["mfaCode"] == "123456"
+
+
+class TestOptionsFlow:
+    def test_default_bridge_port(self):
+        assert DEFAULT_BRIDGE_PORT == 18554
+
+    def test_bridge_port_from_options(self):
+        options = {"bridge_port": 29000}
+        assert options.get(CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT) == 29000
+
+    def test_bridge_port_fallback(self):
+        options = {}
+        assert options.get(CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT) == 18554
+
+    def test_bridge_port_range_valid(self):
+        assert 1024 <= DEFAULT_BRIDGE_PORT <= 65535
