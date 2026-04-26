@@ -82,3 +82,4 @@ build/
 *.swo
 *~
 .DS_Store
+custom_components/webrtc/
