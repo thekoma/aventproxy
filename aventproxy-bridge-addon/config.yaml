@@ -11,27 +11,21 @@ ports:
   8554/tcp: 8554
 ports_description:
   8554/tcp: "RTSP stream"
-options:
-  signing_key: ""
-  sid: ""
-  ecode: ""
-  partner: ""
-  app_key: ""
-  device_id: ""
-  package_name: ""
-  cameras: []
+options: {}
 schema:
-  signing_key: str
-  sid: str
-  ecode: str
-  partner: str
-  app_key: str
-  device_id: str
-  package_name: str
+  signing_key: str?
+  sid: str?
+  ecode: str?
+  partner: str?
+  app_key: str?
+  device_id: str?
+  package_name: str?
   cameras:
     - camera_id: str
       camera_name: str
 startup: "application"
 boot: "auto"
+environment:
+  WAIT_FOR_CONFIG: "true"
 map:
   - config:rw
