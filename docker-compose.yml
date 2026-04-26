@@ -9,7 +9,7 @@ services:
       - ./custom_components/philips_avent:/config/custom_components/philips_avent:ro
     environment:
       - TZ=Europe/Rome
-      - BRIDGE_PORT=8556
+      - BRIDGE_PORT=18554
 
   aventproxy-bridge:
     build:
@@ -21,7 +21,7 @@ services:
       - ha_config:/config:ro
     environment:
       - WAIT_FOR_CONFIG=true
-      - BRIDGE_PORT=8556
+      - BRIDGE_PORT=18554
     depends_on:
       - homeassistant
 
