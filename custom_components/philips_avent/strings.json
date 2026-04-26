@@ -42,5 +42,18 @@
       "already_configured": "This account is already configured",
       "reauth_successful": "Re-authentication successful"
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Philips Avent Bridge Settings",
+        "data": {
+          "bridge_port": "Bridge RTSP port"
+        },
+        "data_description": {
+          "bridge_port": "Port the WebRTC bridge listens on (default: 18554)"
+        }
+      }
+    }
   }
 }

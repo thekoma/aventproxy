@@ -83,3 +83,5 @@ CONF_PARTNER = "partner_identity"
 CONF_UID = "uid"
 CONF_CAMERA_ID = "camera_id"
 CONF_CAMERA_NAME = "camera_name"
+CONF_BRIDGE_PORT = "bridge_port"
+DEFAULT_BRIDGE_PORT = 18554
