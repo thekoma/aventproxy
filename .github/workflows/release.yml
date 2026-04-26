@@ -56,14 +56,14 @@ jobs:
               VERSION="$BASE"
               PRERELEASE=false
             else
-              LATEST_PRE=$(git tag -l "${BASE}-${TYPE}.*" --sort=-v:refname | head -1)
+              LATEST_PRE=$(git tag -l "${BASE}-${TYPE}*" --sort=-v:refname | head -1)
               if [ -z "$LATEST_PRE" ]; then
                 PRE_NUM=1
               else
                 CURRENT_PRE=$(echo "$LATEST_PRE" | grep -oE '[0-9]+$')
                 PRE_NUM=$((CURRENT_PRE + 1))
               fi
-              VERSION="${BASE}-${TYPE}.${PRE_NUM}"
+              VERSION="${BASE}-${TYPE}${PRE_NUM}"
               PRERELEASE=true
             fi
 
@@ -82,7 +82,7 @@ jobs:
             echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
           else
             VERSION="${GITHUB_REF_NAME}"
-            if echo "$VERSION" | grep -qE '\-(rc|beta|alpha)\.'; then
+            if echo "$VERSION" | grep -qE '\-(rc|beta|alpha)'; then
               PRERELEASE=true
             else
               PRERELEASE=false
