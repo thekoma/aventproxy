@@ -2,7 +2,7 @@
 
 Go binary that connects to Philips Avent baby monitors via Tuya WebRTC signaling and re-publishes the video stream as a local RTSP endpoint.
 
-Originally based on WebRTC/codec utilities from [go2rtc](https://github.com/AlexxIT/go2rtc) by AlexxIT, the bridge has since diverged significantly with Philips Avent-specific functionality.
+Originally forked from [tuya-ipc-terminal](https://github.com/seydx/tuya-ipc-terminal) by seydx, which itself incorporates WebRTC and codec utilities from [go2rtc](https://github.com/AlexxIT/go2rtc) by AlexxIT. The bridge has since diverged significantly with Philips Avent-specific functionality.
 
 ## What it does
 
