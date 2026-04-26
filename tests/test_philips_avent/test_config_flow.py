@@ -55,7 +55,7 @@ class TestLoginResponse:
 
 class TestOptionsFlow:
     def test_default_bridge_port(self):
-        assert DEFAULT_BRIDGE_PORT == 18554
+        assert DEFAULT_BRIDGE_PORT == 38554
 
     def test_bridge_port_from_options(self):
         options = {"bridge_port": 29000}
@@ -63,7 +63,7 @@ class TestOptionsFlow:
 
     def test_bridge_port_fallback(self):
         options = {}
-        assert options.get(CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT) == 18554
+        assert options.get(CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT) == 38554
 
     def test_bridge_port_range_valid(self):
         assert 1024 <= DEFAULT_BRIDGE_PORT <= 65535

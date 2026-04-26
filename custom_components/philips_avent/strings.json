@@ -51,7 +51,7 @@
           "bridge_port": "Bridge RTSP port"
         },
         "data_description": {
-          "bridge_port": "Port the WebRTC bridge listens on (default: 18554)"
+          "bridge_port": "Port the WebRTC bridge listens on (default: 38554)"
         }
       }
     }
