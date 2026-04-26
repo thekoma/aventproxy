@@ -17,11 +17,11 @@ import (
 	pion "github.com/pion/webrtc/v4"
 	"golang.org/x/net/publicsuffix"
 
-	"tuya-ipc-terminal/pkg/core"
-	"tuya-ipc-terminal/pkg/storage"
-	"tuya-ipc-terminal/pkg/tuya"
-	"tuya-ipc-terminal/pkg/utils"
-	"tuya-ipc-terminal/pkg/webrtc"
+	"avent-webrtc-bridge/pkg/core"
+	"avent-webrtc-bridge/pkg/storage"
+	"avent-webrtc-bridge/pkg/tuya"
+	"avent-webrtc-bridge/pkg/utils"
+	"avent-webrtc-bridge/pkg/webrtc"
 
 	"github.com/pion/rtp"
 )

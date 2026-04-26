@@ -16,8 +16,8 @@ import (
 	"golang.org/x/net/publicsuffix"
 	"golang.org/x/term"
 
-	"tuya-ipc-terminal/pkg/storage"
-	"tuya-ipc-terminal/pkg/tuya"
+	"avent-webrtc-bridge/pkg/storage"
+	"avent-webrtc-bridge/pkg/tuya"
 )
 
 var storageManager *storage.StorageManager
@@ -64,8 +64,8 @@ Authentication methods:
   --password Use email/password authentication
 
 Example:
-  tuya-ipc-terminal auth add eu-central user@example.com
-  tuya-ipc-terminal auth add --password eu-central user@example.com`,
+  avent-webrtc-bridge auth add eu-central user@example.com
+  avent-webrtc-bridge auth add --password eu-central user@example.com`,
 		Args: cobra.ExactArgs(2),
 		RunE: runAddUser,
 	}
@@ -141,7 +141,7 @@ func runListUsers(cmd *cobra.Command, args []string) error {
 
 	if len(users) == 0 {
 		fmt.Println("No authenticated users found.")
-		fmt.Println("Use 'tuya-ipc-terminal auth add [region] [email]' to add a user.")
+		fmt.Println("Use 'avent-webrtc-bridge auth add [region] [email]' to add a user.")
 		return nil
 	}
 
@@ -370,7 +370,7 @@ func runTestUser(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		fmt.Printf("✗ Session is invalid: %v\n", err)
 		fmt.Println("Try refreshing the session with:")
-		fmt.Printf("  tuya-ipc-terminal auth refresh %s %s\n", regionName, email)
+		fmt.Printf("  avent-webrtc-bridge auth refresh %s %s\n", regionName, email)
 		return nil
 	}
 
@@ -393,8 +393,8 @@ func runShowRegions(cmd *cobra.Command, args []string) error {
 	fmt.Println(strings.Repeat("-", 70))
 	fmt.Printf("Total: %d regions available\n", len(AvailableRegions))
 	fmt.Println("\nUsage examples:")
-	fmt.Println("  tuya-ipc-terminal auth add eu-central user@example.com")
-	fmt.Println("  tuya-ipc-terminal auth add --password us-west user@example.com")
+	fmt.Println("  avent-webrtc-bridge auth add eu-central user@example.com")
+	fmt.Println("  avent-webrtc-bridge auth add --password us-west user@example.com")
 
 	return nil
 }
@@ -458,11 +458,11 @@ func runShowCountryCodes(cmd *cobra.Command, args []string) error {
 
 	if search == "" {
 		fmt.Println("\nTip: Use filters to find countries faster:")
-		fmt.Println("  tuya-ipc-terminal auth show-country-codes --search germany")
+		fmt.Println("  avent-webrtc-bridge auth show-country-codes --search germany")
 	}
 
 	fmt.Println("\nUsage in authentication:")
-	fmt.Println("  tuya-ipc-terminal auth add --password eu-central user@example.com")
+	fmt.Println("  avent-webrtc-bridge auth add --password eu-central user@example.com")
 	fmt.Println("  (You'll be prompted to select your country code)")
 
 	return nil

@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"tuya-ipc-terminal/pkg/core"
-	"tuya-ipc-terminal/pkg/storage"
-	"tuya-ipc-terminal/pkg/tuya"
+	"avent-webrtc-bridge/pkg/core"
+	"avent-webrtc-bridge/pkg/storage"
+	"avent-webrtc-bridge/pkg/tuya"
 )
 
 type RTSPServer struct {

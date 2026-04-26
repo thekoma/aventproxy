@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"tuya-ipc-terminal/pkg/utils"
+	"avent-webrtc-bridge/pkg/utils"
 
 	"github.com/pion/ice/v4"
 	"github.com/pion/sdp/v3"

@@ -10,10 +10,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"tuya-ipc-terminal/pkg/core"
-	"tuya-ipc-terminal/pkg/rtsp"
-	"tuya-ipc-terminal/pkg/storage"
-	"tuya-ipc-terminal/pkg/tuya"
+	"avent-webrtc-bridge/pkg/core"
+	"avent-webrtc-bridge/pkg/rtsp"
+	"avent-webrtc-bridge/pkg/storage"
+	"avent-webrtc-bridge/pkg/tuya"
 )
 
 var storageManager *storage.StorageManager
@@ -30,7 +30,7 @@ func NewDirectCmd() *cobra.Command {
 Bypasses the Smart Life web portal authentication entirely.
 
 Example:
-  tuya-ipc-terminal direct \
+  avent-webrtc-bridge direct \
     --signing-key "pkg_cert_emb_secret" \
     --sid "eu..." \
     --app-key "wx..." \

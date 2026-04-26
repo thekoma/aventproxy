@@ -43,7 +43,7 @@ if [ "$NUM_CAMERAS" = "0" ] || [ "$NUM_CAMERAS" = "null" ]; then
 fi
 
 # For now, use the first camera. Multi-camera: would need multiple bridge instances or
-# modify tuya-ipc-terminal to accept multiple cameras.
+# modify avent-webrtc-bridge to accept multiple cameras.
 CAMERA_ID=$(jq -r '.cameras[0].camera_id' "$CONFIG_PATH")
 CAMERA_NAME=$(jq -r '.cameras[0].camera_name // "camera"' "$CONFIG_PATH")
 
@@ -69,7 +69,7 @@ CONFIG_HASH=$(md5sum "$CONFIG_PATH" | cut -d' ' -f1)
     done
 ) &
 
-exec tuya-ipc-terminal direct \
+exec avent-webrtc-bridge direct \
     --signing-key "$SIGNING_KEY" \
     --sid "$SID" \
     --ecode "$ECODE" \

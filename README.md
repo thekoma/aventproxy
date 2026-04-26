@@ -120,9 +120,13 @@ PYTHONPATH=. pytest tests/test_philips_avent/ -v
 ### Running the bridge manually
 
 ```bash
-cd tuya-ipc-terminal && go build -o tuya-ipc-terminal .
-./tuya-ipc-terminal direct --help
+cd avent-webrtc-bridge && go build -o avent-webrtc-bridge .
+./avent-webrtc-bridge direct --help
 ```
+
+## Acknowledgments
+
+The WebRTC bridge (`avent-webrtc-bridge/`) incorporates WebRTC and codec utilities from [go2rtc](https://github.com/AlexxIT/go2rtc) by AlexxIT. The bridge has since diverged significantly with Philips Avent-specific features including RTP timestamp rebasing, SPS/PPS injection, RTSP backchannel audio, and MQTT-based WebRTC signaling via the Tuya Mobile SDK.
 
 ## License
 

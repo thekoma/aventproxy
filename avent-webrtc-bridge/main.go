@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"tuya-ipc-terminal/cmd"
-	"tuya-ipc-terminal/pkg/core"
+	"avent-webrtc-bridge/cmd"
+	"avent-webrtc-bridge/pkg/core"
 )
 
 const VERSION = "0.0.6"

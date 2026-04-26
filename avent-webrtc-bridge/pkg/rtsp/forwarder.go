@@ -6,8 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"tuya-ipc-terminal/pkg/core"
-	"tuya-ipc-terminal/pkg/utils"
+	"avent-webrtc-bridge/pkg/core"
+	"avent-webrtc-bridge/pkg/utils"
 
 	"github.com/pion/rtp"
 )

@@ -1,6 +1,6 @@
 package auth
 
-import "tuya-ipc-terminal/pkg/tuya"
+import "avent-webrtc-bridge/pkg/tuya"
 
 type CountryCode struct {
 	A         string `json:"a"`         // ISO country code (e.g., "DE")

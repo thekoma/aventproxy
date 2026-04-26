@@ -10,9 +10,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"tuya-ipc-terminal/pkg/core"
-	"tuya-ipc-terminal/pkg/rtsp"
-	"tuya-ipc-terminal/pkg/storage"
+	"avent-webrtc-bridge/pkg/core"
+	"avent-webrtc-bridge/pkg/rtsp"
+	"avent-webrtc-bridge/pkg/storage"
 )
 
 var storageManager *storage.StorageManager
@@ -95,7 +95,7 @@ func runStartServer(cmd *cobra.Command, args []string) error {
 	if len(users) == 0 {
 		core.Logger.Warn().Msg("No authenticated users found.")
 		core.Logger.Warn().Msg("Please add users first:")
-		core.Logger.Warn().Msg("  tuya-ipc-terminal auth add [region] [email]")
+		core.Logger.Warn().Msg("  avent-webrtc-bridge auth add [region] [email]")
 		return errors.New("no authenticated users")
 	}
 
@@ -108,7 +108,7 @@ func runStartServer(cmd *cobra.Command, args []string) error {
 	if len(cameras) == 0 {
 		core.Logger.Warn().Msg("No cameras found.")
 		core.Logger.Warn().Msg("Please refresh camera discovery:")
-		core.Logger.Warn().Msg("  tuya-ipc-terminal cameras refresh")
+		core.Logger.Warn().Msg("  avent-webrtc-bridge cameras refresh")
 		return errors.New("no cameras found")
 	}
 
@@ -194,7 +194,7 @@ func runListEndpoints(cmd *cobra.Command, args []string) error {
 
 	if len(cameras) == 0 {
 		fmt.Println("No cameras found.")
-		fmt.Println("Run 'tuya-ipc-terminal cameras refresh' to discover cameras.")
+		fmt.Println("Run 'avent-webrtc-bridge cameras refresh' to discover cameras.")
 		return nil
 	}
 

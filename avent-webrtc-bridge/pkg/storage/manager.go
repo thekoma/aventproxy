@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"tuya-ipc-terminal/pkg/tuya"
+	"avent-webrtc-bridge/pkg/tuya"
 )
 
 type UserSession struct {
