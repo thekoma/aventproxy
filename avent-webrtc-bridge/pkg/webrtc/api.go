@@ -5,8 +5,8 @@ package webrtc
 import (
 	"net"
 
-	"tuya-ipc-terminal/pkg/utils"
-	"tuya-ipc-terminal/pkg/xnet"
+	"avent-webrtc-bridge/pkg/utils"
+	"avent-webrtc-bridge/pkg/xnet"
 
 	"github.com/pion/ice/v4"
 	"github.com/pion/interceptor"

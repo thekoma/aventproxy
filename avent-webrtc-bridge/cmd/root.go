@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"os"
 
-	"tuya-ipc-terminal/cmd/auth"
-	"tuya-ipc-terminal/cmd/cameras"
-	"tuya-ipc-terminal/cmd/direct"
-	"tuya-ipc-terminal/cmd/rtsp"
-	"tuya-ipc-terminal/pkg/storage"
+	"avent-webrtc-bridge/cmd/auth"
+	"avent-webrtc-bridge/cmd/cameras"
+	"avent-webrtc-bridge/cmd/direct"
+	"avent-webrtc-bridge/cmd/rtsp"
+	"avent-webrtc-bridge/pkg/storage"
 
 	"github.com/spf13/cobra"
 )
@@ -18,7 +18,7 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "tuya-ipc-terminal",
+	Use:   "avent-webrtc-bridge",
 	Short: "Tuya Smart Camera RTSP Bridge",
 	Long: `A CLI tool to connect Tuya Smart Cameras to RTSP clients.
 
@@ -28,10 +28,10 @@ This tool allows you to:
 - Provide RTSP endpoints for your cameras
 
 Examples:
-  tuya-ipc-terminal auth list
-  tuya-ipc-terminal auth add eu-central user@example.com
-  tuya-ipc-terminal cameras refresh
-  tuya-ipc-terminal rtsp start --port 8554`,
+  avent-webrtc-bridge auth list
+  avent-webrtc-bridge auth add eu-central user@example.com
+  avent-webrtc-bridge cameras refresh
+  avent-webrtc-bridge rtsp start --port 8554`,
 }
 
 func Execute(version string) error {

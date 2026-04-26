@@ -3,7 +3,7 @@
 package webrtc
 
 import (
-	"tuya-ipc-terminal/pkg/utils"
+	"avent-webrtc-bridge/pkg/utils"
 
 	"github.com/pion/sdp/v3"
 	pion "github.com/pion/webrtc/v4"

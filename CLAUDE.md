@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Home Assistant custom integration for Philips Avent SCD973/SCD923 baby monitors. Reverse-engineered Tuya Mobile SDK API provides local video streaming, temperature monitoring, night light control, lullaby playback, and motion/sound alerts. The project has three main parts:
 
 1. **HA integration** (`custom_components/philips_avent/`) — Python, talks to Tuya cloud API with HMAC-SHA256 signed requests
-2. **WebRTC-to-RTSP bridge** (`tuya-ipc-terminal/`) — Go binary, converts Tuya WebRTC streams to RTSP on port 8554
+2. **WebRTC-to-RTSP bridge** (`avent-webrtc-bridge/`) — Go binary, converts Tuya WebRTC streams to RTSP on port 8554
 3. **HA add-on** (`aventproxy-bridge-addon/`) — Docker container packaging the Go bridge for HA add-on store
 
 ## Commands
@@ -23,7 +23,7 @@ Dependencies for tests: `pip install pytest pycryptodome aiohttp voluptuous`
 
 ### Go bridge
 ```bash
-cd tuya-ipc-terminal && go build -o tuya-ipc-terminal . && ./tuya-ipc-terminal --help
+cd avent-webrtc-bridge && go build -o avent-webrtc-bridge . && ./avent-webrtc-bridge --help
 ```
 
 ### Docker
@@ -62,7 +62,7 @@ The monitor exposes functionality through numbered DPS codes (e.g., 138=night li
 
 ### Bridge lifecycle
 
-The HA integration writes bridge credentials to a JSON config file. The bridge container (`run.sh`) watches this file, extracts credentials with jq, and (re)starts `tuya-ipc-terminal direct` when config changes.
+The HA integration writes bridge credentials to a JSON config file. The bridge container (`run.sh`) watches this file, extracts credentials with jq, and (re)starts `avent-webrtc-bridge direct` when config changes.
 
 ## CI
 

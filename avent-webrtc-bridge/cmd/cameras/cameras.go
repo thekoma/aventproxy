@@ -12,8 +12,8 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/net/publicsuffix"
 
-	"tuya-ipc-terminal/pkg/storage"
-	"tuya-ipc-terminal/pkg/tuya"
+	"avent-webrtc-bridge/pkg/storage"
+	"avent-webrtc-bridge/pkg/tuya"
 )
 
 var storageManager *storage.StorageManager
@@ -90,7 +90,7 @@ func runListCameras(cmd *cobra.Command, args []string) error {
 			fmt.Printf("No cameras found for user: %s\n", userFilter)
 		} else {
 			fmt.Println("No cameras found.")
-			fmt.Println("Use 'tuya-ipc-terminal cameras refresh' to discover cameras.")
+			fmt.Println("Use 'avent-webrtc-bridge cameras refresh' to discover cameras.")
 		}
 		return nil
 	}
@@ -124,7 +124,7 @@ func runRefreshCameras(cmd *cobra.Command, args []string) error {
 
 	if len(users) == 0 {
 		fmt.Println("No authenticated users found.")
-		fmt.Println("Use 'tuya-ipc-terminal auth add' to add users first.")
+		fmt.Println("Use 'avent-webrtc-bridge auth add' to add users first.")
 		return nil
 	}
 

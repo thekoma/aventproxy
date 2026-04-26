@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"tuya-ipc-terminal/pkg/core"
-	"tuya-ipc-terminal/pkg/tuya"
+	"avent-webrtc-bridge/pkg/core"
+	"avent-webrtc-bridge/pkg/tuya"
 )
 
 var mqttBackoffDelays = []time.Duration{2 * time.Second, 5 * time.Second, 15 * time.Second, 30 * time.Second}

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"tuya-ipc-terminal/pkg/core"
-	"tuya-ipc-terminal/pkg/utils"
+	"avent-webrtc-bridge/pkg/core"
+	"avent-webrtc-bridge/pkg/utils"
 )
 
 type MQTTCameraClient struct {
