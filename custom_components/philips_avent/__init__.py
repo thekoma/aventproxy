@@ -14,13 +14,43 @@ from homeassistant.core import HomeAssistant
 from .api import PhilipsAventAPI
 from .coordinator import PhilipsAventCoordinator
 from .const import (
-    CONF_ECODE, CONF_PARTNER, CONF_SID, DOMAIN,
+    CONF_BRIDGE_PORT, CONF_ECODE, CONF_PARTNER, CONF_SID, DEFAULT_BRIDGE_PORT, DOMAIN,
     TUYA_APP_KEY, TUYA_PACKAGE_NAME, TUYA_SIGNING_KEY,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.CAMERA, Platform.SENSOR, Platform.SWITCH, Platform.NUMBER, Platform.BUTTON, Platform.SELECT, Platform.BINARY_SENSOR]
+
+
+async def _write_bridge_config(hass: HomeAssistant, entry: ConfigEntry, api: PhilipsAventAPI, cameras: list) -> None:
+    """Write bridge config JSON for the add-on."""
+    bridge_port = entry.options.get(CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT)
+    bridge_config = {
+        "signing_key": TUYA_SIGNING_KEY,
+        "sid": entry.data[CONF_SID],
+        "ecode": entry.data.get(CONF_ECODE, ""),
+        "partner": entry.data.get(CONF_PARTNER, ""),
+        "app_key": TUYA_APP_KEY,
+        "device_id": api.device_id,
+        "package_name": TUYA_PACKAGE_NAME,
+        "bridge_port": bridge_port,
+        "cameras": [
+            {"camera_id": cam.get("deviceId", cam.get("devId")),
+             "camera_name": cam.get("deviceName", cam.get("name", "camera"))}
+            for cam in cameras
+        ],
+    }
+    bridge_path = Path(hass.config.path("philips_avent_bridge.json"))
+    await hass.async_add_executor_job(
+        bridge_path.write_text, json.dumps(bridge_config, indent=2)
+    )
+    _LOGGER.info("Bridge config written to %s (port: %d)", bridge_path, bridge_port)
+
+
+async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload integration when options change."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -75,28 +105,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "config": entry.data,
     }
 
-    # Write bridge config for the add-on
-    bridge_config = {
-        "signing_key": TUYA_SIGNING_KEY,
-        "sid": entry.data[CONF_SID],
-        "ecode": entry.data.get(CONF_ECODE, ""),
-        "partner": entry.data.get(CONF_PARTNER, ""),
-        "app_key": TUYA_APP_KEY,
-        "device_id": api.device_id,
-        "package_name": TUYA_PACKAGE_NAME,
-        "cameras": [
-            {"camera_id": cam.get("deviceId", cam.get("devId")),
-             "camera_name": cam.get("deviceName", cam.get("name", "camera"))}
-            for cam in cameras
-        ],
-    }
-    bridge_path = Path(hass.config.path("philips_avent_bridge.json"))
-    await hass.async_add_executor_job(
-        bridge_path.write_text, json.dumps(bridge_config, indent=2)
-    )
-    _LOGGER.info("Bridge config written to %s", bridge_path)
+    await _write_bridge_config(hass, entry, api, cameras)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
 
     return True
 
