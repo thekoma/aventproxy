@@ -45,7 +45,7 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @staticmethod
     @config_entries.callback
     def async_get_options_flow(config_entry):
-        return PhilipsAventOptionsFlowHandler(config_entry)
+        return PhilipsAventOptionsFlowHandler()
 
     async def async_step_user(self, user_input=None):
         """Step 1: Email + Password."""
@@ -300,9 +300,6 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 class PhilipsAventOptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options flow for Philips Avent."""
-
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self.config_entry = config_entry
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None):
         """Manage the options."""
