@@ -1,9 +1,7 @@
 """Tests for the Tuya API signing algorithm."""
 
 import hashlib
-import hmac
 
-import pytest
 
 # Import the signing internals
 from api import _sign, _swap, PhilipsAventAPI

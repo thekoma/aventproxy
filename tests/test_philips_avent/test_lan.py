@@ -1,9 +1,6 @@
 """Tests for TuyaLANClient."""
 
-import asyncio
-from unittest.mock import MagicMock, patch, AsyncMock
 
-import pytest
 
 
 class FakeDevice:
