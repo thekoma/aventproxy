@@ -7,10 +7,7 @@ url: "https://github.com/thekoma/aventproxy"
 arch:
   - amd64
   - aarch64
-ports:
-  8554/tcp: 8554
-ports_description:
-  8554/tcp: "RTSP stream"
+host_network: true
 options:
   cameras: []
 schema:

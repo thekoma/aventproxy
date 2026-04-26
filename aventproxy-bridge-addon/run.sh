@@ -50,7 +50,7 @@ CAMERA_NAME=$(jq -r '.cameras[0].camera_name // "camera"' "$CONFIG_PATH")
 echo "=============================="
 echo "Philips Avent WebRTC Bridge"
 echo "=============================="
-PORT="${BRIDGE_PORT:-8554}"
+PORT=$(jq -r '.bridge_port // 18554' "$CONFIG_PATH")
 
 echo "Camera: $CAMERA_NAME ($CAMERA_ID)"
 echo "RTSP:   rtsp://localhost:$PORT/$CAMERA_NAME"
