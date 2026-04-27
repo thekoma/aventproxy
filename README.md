@@ -138,4 +138,4 @@ MIT — See [LICENSE](LICENSE)
 
 ## Disclaimer
 
-This project is not affiliated with, endorsed by, or connected to Koninklijke Philips N.V. or any of its subsidiaries. "Philips" and "AVENT" are registered trademarks of Koninklijke Philips N.V. The Philips AVENT logo and branding are used solely for identification purposes to help users recognize which device this integration supports. All API access uses the owner's own credentials and the same protocol as the official app.
+This project is not affiliated with, endorsed by, or connected to Koninklijke Philips N.V., Tuya Inc., or any of their subsidiaries. "Philips" and "AVENT" are registered trademarks of Koninklijke Philips N.V. The Philips AVENT logo and branding are used solely for identification purposes to help users recognize which device this integration supports. All API access uses the owner's own credentials and the same protocol as the official app.
