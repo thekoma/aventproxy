@@ -1,5 +1,9 @@
 # Philips Avent Baby Monitor — Home Assistant Integration
 
+<p align="center">
+  <img src="custom_components/philips_avent/brand/logo.png" alt="Philips AVENT" width="300">
+</p>
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/thekoma/aventproxy/actions/workflows/ci.yml/badge.svg)](https://github.com/thekoma/aventproxy/actions/workflows/ci.yml)
 [![HACS](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
@@ -134,4 +138,4 @@ MIT — See [LICENSE](LICENSE)
 
 ## Disclaimer
 
-This project is not affiliated with Philips or Tuya. It enables consumers to use their own devices with open home automation platforms. All API access uses the owner's own credentials and the same protocol as the official app.
+This project is not affiliated with, endorsed by, or connected to Koninklijke Philips N.V. or any of its subsidiaries. "Philips" and "AVENT" are registered trademarks of Koninklijke Philips N.V. The Philips AVENT logo and branding are used solely for identification purposes to help users recognize which device this integration supports. All API access uses the owner's own credentials and the same protocol as the official app.
