@@ -3,24 +3,25 @@
 profile aventproxy_bridge flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 
-  network inet stream,
-  network inet dgram,
-  network inet6 stream,
-  network inet6 dgram,
-  network inet raw,
+  file,
+  signal,
+  network,
 
-  /config/** r,
+  /init rix,
+  /bin/** ix,
+  /usr/bin/** ix,
+  /usr/local/bin/** ix,
+  /usr/lib/bashio/** ix,
+  /etc/s6/** rix,
+  /run/s6/** rwix,
+  /etc/services.d/** rwix,
+  /etc/cont-init.d/** rwix,
+  /etc/cont-finish.d/** rwix,
+  /run/** rwk,
+  /tmp/** rw,
   /data/** rw,
+  /config/** rw,
 
   /run.sh ix,
   /usr/local/bin/avent-webrtc-bridge ix,
-  /usr/bin/jq ix,
-  /bin/** ix,
-  /usr/bin/** ix,
-
-  /proc/sys/net/** r,
-  /sys/kernel/mm/** r,
-
-  /tmp/** rw,
-  /run/** rw,
 }
