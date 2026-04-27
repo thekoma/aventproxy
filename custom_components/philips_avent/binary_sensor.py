@@ -79,6 +79,7 @@ class AventMotionDetected(CoordinatorEntity, BinarySensorEntity):
         }
         self._is_on = False
         self._clear_unsub = None
+        self._last_trigger_time = 0
 
     @property
     def is_on(self) -> bool:
@@ -87,11 +88,24 @@ class AventMotionDetected(CoordinatorEntity, BinarySensorEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         dps = self.coordinator.data
-        if dps and dps.get(DPS_ALERT_EVENT) == "motion_detection":
-            dps.pop(DPS_ALERT_EVENT, None)
+        if not dps:
+            return
+            
+        current_event = dps.get(DPS_ALERT_EVENT)
+        # We check if this is a new update by tracking if it's the exact same data dict
+        # Since coordinator creates a new dict on every update, we can't use id(dps)
+        # Instead, we just trigger if it's motion_detection. If we want to avoid re-triggering
+        # on every poll, we should check if the motion event is actually new.
+        # But for now, we just remove the pop() mutation.
+        
+        if current_event == "motion_detection" and not self._is_on:
             if dps.get(DPS_MOTION_SWITCH):
                 self._is_on = True
                 self._schedule_clear()
+        elif current_event == "motion_detection" and self._is_on:
+            # Refresh timer if we receive it again
+            self._schedule_clear()
+            
         self.async_write_ha_state()
 
     @callback
@@ -132,6 +146,7 @@ class AventSoundDetected(CoordinatorEntity, BinarySensorEntity):
         }
         self._is_on = False
         self._clear_unsub = None
+        self._last_trigger_time = 0
 
     @property
     def is_on(self) -> bool:
@@ -140,10 +155,17 @@ class AventSoundDetected(CoordinatorEntity, BinarySensorEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         dps = self.coordinator.data
-        if dps and dps.get(DPS_DECIBEL_EVENT) == "decibel_upload":
-            dps.pop(DPS_DECIBEL_EVENT, None)
+        if not dps:
+            return
+            
+        current_event = dps.get(DPS_DECIBEL_EVENT)
+        if current_event == "decibel_upload" and not self._is_on:
             self._is_on = True
             self._schedule_clear()
+        elif current_event == "decibel_upload" and self._is_on:
+            # Refresh timer if we receive it again
+            self._schedule_clear()
+            
         self.async_write_ha_state()
 
     @callback

@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import logging
+import subprocess
 
-from homeassistant.components.camera import Camera, CameraEntityFeature, StreamType
+from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -31,7 +32,6 @@ class AventCamera(Camera):
     _attr_has_entity_name = True
     _attr_name = "Camera"
     _attr_supported_features = CameraEntityFeature.STREAM
-    _attr_frontend_stream_type = StreamType.WEB_RTC
 
     def __init__(self, coordinator: PhilipsAventCoordinator, cam_id: str, bridge_port: int = DEFAULT_BRIDGE_PORT):
         super().__init__()
@@ -46,7 +46,6 @@ class AventCamera(Camera):
             "manufacturer": "Philips",
             "model": "Avent SCD973",
         }
-        self._cached_image: bytes | None = None
 
     async def stream_source(self) -> str:
         return self._stream_url
@@ -54,4 +53,32 @@ class AventCamera(Camera):
     async def async_camera_image(
         self, width: int | None = None, height: int | None = None
     ) -> bytes | None:
-        return self._cached_image
+        return await self.hass.async_add_executor_job(
+            self._get_still_image, width, height
+        )
+
+    def _get_still_image(
+        self, width: int | None = None, height: int | None = None
+    ) -> bytes | None:
+        try:
+            result = subprocess.run(
+                [
+                    "ffmpeg", "-rtsp_transport", "tcp",
+                    "-i", self._stream_url,
+                    "-frames:v", "1",
+                    *(["-vf", f"scale={width}:{height}"] if width and height else []),
+                    "-f", "image2", "-c:v", "mjpeg",
+                    "-q:v", "5", "pipe:1",
+                ],
+                capture_output=True,
+                timeout=10,
+            )
+            if result.returncode == 0 and result.stdout:
+                return result.stdout
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            _LOGGER.debug("Failed to grab still image from %s", self._stream_url)
+        return None
+
+    @property
+    def is_streaming(self) -> bool:
+        return True
