@@ -88,7 +88,6 @@ class AventMotionDetected(CoordinatorEntity, BinarySensorEntity):
     def _handle_coordinator_update(self) -> None:
         dps = self.coordinator.data
         if dps and dps.get(DPS_ALERT_EVENT) == "motion_detection":
-            dps.pop(DPS_ALERT_EVENT, None)
             if dps.get(DPS_MOTION_SWITCH):
                 self._is_on = True
                 self._schedule_clear()
@@ -141,7 +140,6 @@ class AventSoundDetected(CoordinatorEntity, BinarySensorEntity):
     def _handle_coordinator_update(self) -> None:
         dps = self.coordinator.data
         if dps and dps.get(DPS_DECIBEL_EVENT) == "decibel_upload":
-            dps.pop(DPS_DECIBEL_EVENT, None)
             self._is_on = True
             self._schedule_clear()
         self.async_write_ha_state()
