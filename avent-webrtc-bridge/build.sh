@@ -35,7 +35,7 @@ VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
 BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 GO_VERSION=$(go version | awk '{print $3}')
 
-print_header "TUYA IPC TERMINAL BUILD"
+print_header "AVENT WEBRTC BRIDGE BUILD"
 
 # Get dependencies
 print_section "Getting dependencies..."
@@ -48,13 +48,13 @@ go list ./...
 # Build for current platform
 print_section "Building binary..."
 LDFLAGS="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}"
-go build -ldflags "${LDFLAGS}" -o tuya-ipc-terminal .
+go build -ldflags "${LDFLAGS}" -o avent-webrtc-bridge .
 
-print_color $GREEN "✓ Build complete: ./tuya-ipc-terminal"
+print_color $GREEN "✓ Build complete: ./avent-webrtc-bridge"
 
 # Show build info
 if command -v ls >/dev/null 2>&1; then
-    SIZE=$(ls -lh tuya-ipc-terminal | awk '{print $5}')
+    SIZE=$(ls -lh avent-webrtc-bridge | awk '{print $5}')
     print_color $GREEN "✓ Binary size: ${SIZE}"
 fi
 
@@ -66,28 +66,28 @@ print_color $GREEN "✓ Go version: ${GO_VERSION}"
 print_header "COMMAND REFERENCE"
 
 print_section "Authentication Commands"
-echo "  ./tuya-ipc-terminal auth list                                   # List all authenticated users"
-echo "  ./tuya-ipc-terminal auth add [region] [email]                   # Add new user (QR code)"
-echo "  ./tuya-ipc-terminal auth add --password [region] [email]        # Add user (email/password)"
-echo "  ./tuya-ipc-terminal auth remove [region] [email]                # Remove user authentication"
-echo "  ./tuya-ipc-terminal auth refresh [region] [email]               # Refresh user session"
-echo "  ./tuya-ipc-terminal auth test [region] [email]                  # Test session validity"
-echo "  ./tuya-ipc-terminal auth show-regions                           # Show available regions"
-echo "  ./tuya-ipc-terminal auth show-country-codes                     # Show country codes"
-echo "  ./tuya-ipc-terminal auth show-country-codes --search germany    # Search countries"
+echo "  ./avent-webrtc-bridge auth list                                   # List all authenticated users"
+echo "  ./avent-webrtc-bridge auth add [region] [email]                   # Add new user (QR code)"
+echo "  ./avent-webrtc-bridge auth add --password [region] [email]        # Add user (email/password)"
+echo "  ./avent-webrtc-bridge auth remove [region] [email]                # Remove user authentication"
+echo "  ./avent-webrtc-bridge auth refresh [region] [email]               # Refresh user session"
+echo "  ./avent-webrtc-bridge auth test [region] [email]                  # Test session validity"
+echo "  ./avent-webrtc-bridge auth show-regions                           # Show available regions"
+echo "  ./avent-webrtc-bridge auth show-country-codes                     # Show country codes"
+echo "  ./avent-webrtc-bridge auth show-country-codes --search germany    # Search countries"
 
 print_section "Camera Management Commands"
-echo "  ./tuya-ipc-terminal cameras list                       # List all cameras"
-echo "  ./tuya-ipc-terminal cameras refresh                    # Refresh camera list"
-echo "  ./tuya-ipc-terminal cameras info [camera-id]           # Show camera details"
-echo "  ./tuya-ipc-terminal cameras shared                     # List shared cameras"
+echo "  ./avent-webrtc-bridge cameras list                       # List all cameras"
+echo "  ./avent-webrtc-bridge cameras refresh                    # Refresh camera list"
+echo "  ./avent-webrtc-bridge cameras info [camera-id]           # Show camera details"
+echo "  ./avent-webrtc-bridge cameras shared                     # List shared cameras"
 
 print_section "RTSP Server Commands"
-echo "  ./tuya-ipc-terminal rtsp start --port 8554             # Start RTSP server"
-echo "  ./tuya-ipc-terminal rtsp stop                          # Stop RTSP server"
-echo "  ./tuya-ipc-terminal rtsp status                        # Show server status"
-echo "  ./tuya-ipc-terminal rtsp list-endpoints                # List available streams"
-echo "  ./tuya-ipc-terminal rtsp restart                       # Restart RTSP server"
+echo "  ./avent-webrtc-bridge rtsp start --port 8554             # Start RTSP server"
+echo "  ./avent-webrtc-bridge rtsp stop                          # Stop RTSP server"
+echo "  ./avent-webrtc-bridge rtsp status                        # Show server status"
+echo "  ./avent-webrtc-bridge rtsp list-endpoints                # List available streams"
+echo "  ./avent-webrtc-bridge rtsp restart                       # Restart RTSP server"
 
 print_section "Available Regions"
 echo "  eu-central    Central Europe     (protect-eu.ismartlife.me)"
@@ -104,21 +104,21 @@ echo "  Password      Use email and password with country code selection"
 print_header "QUICK START GUIDE"
 
 print_color $CYAN "Step 1: Authenticate"
-echo "  ./tuya-ipc-terminal auth add eu-central user@example.com"
+echo "  ./avent-webrtc-bridge auth add eu-central user@example.com"
 echo "  # Choose authentication method when prompted"
 echo ""
 
 print_color $CYAN "Step 2: List Available Regions & Country Codes (if needed)"
-echo "  ./tuya-ipc-terminal auth show-regions"
-echo "  ./tuya-ipc-terminal auth show-country-codes --search germany"
+echo "  ./avent-webrtc-bridge auth show-regions"
+echo "  ./avent-webrtc-bridge auth show-country-codes --search germany"
 echo ""
 
 print_color $CYAN "Step 3: Refresh Camera List"
-echo "  ./tuya-ipc-terminal cameras refresh"
+echo "  ./avent-webrtc-bridge cameras refresh"
 echo ""
 
 print_color $CYAN "Step 4: Start RTSP Server"
-echo "  ./tuya-ipc-terminal rtsp start --port 8554"
+echo "  ./avent-webrtc-bridge rtsp start --port 8554"
 echo ""
 
 print_color $CYAN "Step 5: Access Camera Streams"
@@ -135,35 +135,35 @@ print_header "USEFUL EXAMPLES"
 
 print_color $PURPLE "Authentication Examples:"
 echo "  # QR Code authentication (default)"
-echo "  ./tuya-ipc-terminal auth add eu-central john@example.com"
+echo "  ./avent-webrtc-bridge auth add eu-central john@example.com"
 echo ""
 echo "  # Password authentication"
-echo "  ./tuya-ipc-terminal auth add --password us-west sarah@example.com"
+echo "  ./avent-webrtc-bridge auth add --password us-west sarah@example.com"
 echo ""
 echo "  # Test if session is still valid"
-echo "  ./tuya-ipc-terminal auth test eu-central john@example.com"
+echo "  ./avent-webrtc-bridge auth test eu-central john@example.com"
 echo ""
 
 print_color $PURPLE "Camera Management Examples:"
 echo "  # List all cameras with details"
-echo "  ./tuya-ipc-terminal cameras list"
+echo "  ./avent-webrtc-bridge cameras list"
 echo ""
 echo "  # Get specific camera information"
-echo "  ./tuya-ipc-terminal cameras info bf123456789abcdef"
+echo "  ./avent-webrtc-bridge cameras info bf123456789abcdef"
 echo ""
 echo "  # Refresh camera list after adding new cameras"
-echo "  ./tuya-ipc-terminal cameras refresh"
+echo "  ./avent-webrtc-bridge cameras refresh"
 echo ""
 
 print_color $PURPLE "RTSP Server Examples:"
 echo "  # Start server on custom port"
-echo "  ./tuya-ipc-terminal rtsp start --port 9554"
+echo "  ./avent-webrtc-bridge rtsp start --port 9554"
 echo ""
 echo "  # Check what streams are available"
-echo "  ./tuya-ipc-terminal rtsp list-endpoints"
+echo "  ./avent-webrtc-bridge rtsp list-endpoints"
 echo ""
 echo "  # Monitor server status"
-echo "  ./tuya-ipc-terminal rtsp status"
+echo "  ./avent-webrtc-bridge rtsp status"
 
 print_header "TROUBLESHOOTING"
 
@@ -172,31 +172,31 @@ echo ""
 echo "❌ Authentication fails:"
 echo "   → Check region is correct for your account"
 echo "   → Verify email address is correct"
-echo "   → Try refreshing: ./tuya-ipc-terminal auth refresh [region] [email]"
+echo "   → Try refreshing: ./avent-webrtc-bridge auth refresh [region] [email]"
 echo "   → Only Tuya accounts work, not Smart Life accounts"
 echo ""
 
 echo "❌ No cameras found:"
-echo "   → Run: ./tuya-ipc-terminal cameras refresh"
+echo "   → Run: ./avent-webrtc-bridge cameras refresh"
 echo "   → Check if cameras are online in Tuya Smart app"
-echo "   → Verify authentication: ./tuya-ipc-terminal auth test [region] [email]"
+echo "   → Verify authentication: ./avent-webrtc-bridge auth test [region] [email]"
 echo ""
 
 echo "❌ RTSP stream not working:"
-echo "   → Check server status: ./tuya-ipc-terminal rtsp status"
-echo "   → Verify endpoints: ./tuya-ipc-terminal rtsp list-endpoints"
-echo "   → Try restarting: ./tuya-ipc-terminal rtsp restart"
+echo "   → Check server status: ./avent-webrtc-bridge rtsp status"
+echo "   → Verify endpoints: ./avent-webrtc-bridge rtsp list-endpoints"
+echo "   → Try restarting: ./avent-webrtc-bridge rtsp restart"
 echo ""
 
 echo "❌ Country code not found during password login:"
-echo "   → Search by name: ./tuya-ipc-terminal auth show-country-codes --search [country]"
-echo "   → View all codes: ./tuya-ipc-terminal auth show-country-codes"
+echo "   → Search by name: ./avent-webrtc-bridge auth show-country-codes --search [country]"
+echo "   → View all codes: ./avent-webrtc-bridge auth show-country-codes"
 echo ""
 
 print_color $GREEN "✅ For more help, run any command with --help"
-print_color $GREEN "✅ Example: ./tuya-ipc-terminal auth --help"
+print_color $GREEN "✅ Example: ./avent-webrtc-bridge auth --help"
 
 print_header "BUILD COMPLETE"
-print_color $GREEN "🎉 tuya-ipc-terminal is ready to use!"
-print_color $CYAN "Start with: ./tuya-ipc-terminal auth add [region] [email]"
+print_color $GREEN "🎉 avent-webrtc-bridge is ready to use!"
+print_color $CYAN "Start with: ./avent-webrtc-bridge auth add [region] [email]"
 echo ""

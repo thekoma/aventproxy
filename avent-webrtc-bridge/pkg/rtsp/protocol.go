@@ -41,7 +41,7 @@ func sendRTSPResponse(conn net.Conn, statusCode int, status string, headers map[
 
 	// Status line
 	fmt.Fprintf(&response, "RTSP/1.0 %d %s\r\n", statusCode, status)
-	fmt.Fprintf(&response, "Server: TuyaIPCTerminal/1.0\r\n")
+	fmt.Fprintf(&response, "Server: AventWebRTCBridge/1.0\r\n")
 	fmt.Fprintf(&response, "Date: %s\r\n", time.Now().UTC().Format("Mon, 02 Jan 2006 15:04:05 GMT"))
 
 	// Add custom headers
