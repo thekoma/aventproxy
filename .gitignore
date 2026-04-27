@@ -83,3 +83,6 @@ build/
 *~
 .DS_Store
 custom_components/webrtc/
+
+# Git worktrees
+.worktrees/
