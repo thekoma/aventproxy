@@ -47,6 +47,11 @@ async def _write_bridge_config(hass: HomeAssistant, entry: ConfigEntry, api: Phi
     )
     _LOGGER.info("Bridge config written to %s (port: %d)", bridge_path, bridge_port)
 
+    legacy_path = Path(hass.config.path("philips_avent_bridge.json"))
+    if await hass.async_add_executor_job(legacy_path.exists):
+        await hass.async_add_executor_job(legacy_path.unlink)
+        _LOGGER.info("Removed legacy bridge config %s", legacy_path)
+
 
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload integration when options change."""
