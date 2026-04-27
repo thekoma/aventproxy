@@ -2,21 +2,32 @@
 set -e
 
 # Try HA integration config first (auto-configured), then add-on options
-BRIDGE_CONFIG="/config/philips_avent_bridge.json"
+# Supports both legacy single file and new per-entry files
+BRIDGE_CONFIG_GLOB="/config/philips_avent_bridge_*.json"
+BRIDGE_CONFIG_LEGACY="/config/philips_avent_bridge.json"
 ADDON_CONFIG="/data/options.json"
+
+find_bridge_config() {
+    for f in $BRIDGE_CONFIG_GLOB; do
+        [ -f "$f" ] && echo "$f" && return 0
+    done
+    [ -f "$BRIDGE_CONFIG_LEGACY" ] && echo "$BRIDGE_CONFIG_LEGACY" && return 0
+    return 1
+}
 
 if [ "${WAIT_FOR_CONFIG:-false}" = "true" ]; then
     echo "Waiting for bridge config from HA integration..."
-    while [ ! -f "$BRIDGE_CONFIG" ] && [ ! -f "$ADDON_CONFIG" ]; do
+    while ! find_bridge_config >/dev/null 2>&1 && [ ! -f "$ADDON_CONFIG" ]; do
         sleep 5
     done
     echo "Config found!"
 fi
 
-if [ -f "$BRIDGE_CONFIG" ]; then
-    echo "Using bridge config from HA integration"
-    CONFIG_PATH="$BRIDGE_CONFIG"
-else
+FOUND_CONFIG=$(find_bridge_config 2>/dev/null)
+if [ -n "$FOUND_CONFIG" ]; then
+    echo "Using bridge config from HA integration: $FOUND_CONFIG"
+    CONFIG_PATH="$FOUND_CONFIG"
+elif [ -f "$ADDON_CONFIG" ]; then
     echo "Using add-on options config"
     CONFIG_PATH="$ADDON_CONFIG"
 fi
