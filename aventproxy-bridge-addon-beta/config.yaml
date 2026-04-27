@@ -7,7 +7,10 @@ url: "https://github.com/thekoma/aventproxy"
 arch:
   - amd64
   - aarch64
+homeassistant: "2024.1.0"
+stage: experimental
 host_network: true
+apparmor: true
 options:
   cameras: []
 schema:
