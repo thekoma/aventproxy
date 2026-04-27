@@ -41,7 +41,7 @@ async def _write_bridge_config(hass: HomeAssistant, entry: ConfigEntry, api: Phi
             for cam in cameras
         ],
     }
-    bridge_path = Path(hass.config.path("philips_avent_bridge.json"))
+    bridge_path = Path(hass.config.path(f"philips_avent_bridge_{entry.entry_id}.json"))
     await hass.async_add_executor_job(
         bridge_path.write_text, json.dumps(bridge_config, indent=2)
     )
