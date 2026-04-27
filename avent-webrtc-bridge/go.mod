@@ -5,7 +5,7 @@ go 1.26.2
 require (
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/google/uuid v1.6.0
-	github.com/mattn/go-isatty v0.0.21
+	github.com/mattn/go-isatty v0.0.22
 	github.com/mdp/qrterminal v1.0.1
 	github.com/pion/ice/v4 v4.2.5
 	github.com/pion/interceptor v0.1.44
