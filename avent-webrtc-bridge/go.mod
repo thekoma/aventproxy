@@ -15,8 +15,8 @@ require (
 	github.com/pion/webrtc/v4 v4.2.13
 	github.com/rs/zerolog v1.35.1
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/net v0.53.0
-	golang.org/x/term v0.42.0
+	golang.org/x/net v0.55.0
+	golang.org/x/term v0.43.0
 )
 
 require (
@@ -35,9 +35,9 @@ require (
 	github.com/pion/turn/v5 v5.0.4 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
-	golang.org/x/crypto v0.50.0 // indirect
+	golang.org/x/crypto v0.51.0 // indirect
 	golang.org/x/sync v0.17.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	rsc.io/qr v0.2.0 // indirect
 )
