@@ -244,17 +244,7 @@ func (sm *StorageManager) GetAllCameras() ([]CameraInfo, error) {
 }
 
 func (sm *StorageManager) GenerateRTSPPath(deviceName, deviceID string) string {
-	// Clean device name for URL safety
-	safeName := strings.ReplaceAll(deviceName, " ", "_")
-	safeName = strings.ReplaceAll(safeName, "/", "_")
-	safeName = strings.ReplaceAll(safeName, "\\", "_")
-
-	// If name is empty or too generic, use device ID
-	if safeName == "" || safeName == "_" {
-		safeName = deviceID
-	}
-
-	return fmt.Sprintf("/%s", safeName)
+	return SanitizeRTSPPath(deviceName, deviceID)
 }
 
 func (sm *StorageManager) ValidateUserSession(region, email string) (bool, error) {

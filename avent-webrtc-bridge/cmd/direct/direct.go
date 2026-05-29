@@ -14,6 +14,7 @@ import (
 	"avent-webrtc-bridge/pkg/rtsp"
 	"avent-webrtc-bridge/pkg/storage"
 	"avent-webrtc-bridge/pkg/tuya"
+	"avent-webrtc-bridge/pkg/utils"
 )
 
 var storageManager *storage.StorageManager
@@ -76,10 +77,7 @@ func runDirect(cmd *cobra.Command, args []string) error {
 	cameraName, _ := cmd.Flags().GetString("camera-name")
 	port, _ := cmd.Flags().GetInt("port")
 
-	if cameraName == "" {
-		cameraName = cameraID
-	}
-	rtspPath := "/" + strings.ReplaceAll(cameraName, " ", "_")
+	rtspPath := storage.SanitizeRTSPPath(cameraName, cameraID)
 
 	client := tuya.NewMobileSDKClient(signingKey, sid, appKey, deviceID, chKey)
 	client.Ecode = ecode
@@ -97,7 +95,7 @@ func runDirect(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get user info: %v", err)
 	}
-	core.Logger.Info().Msgf("User: %s (%s)", userInfo.Nickname, userInfo.Email)
+	core.Logger.Info().Msgf("User: %s (%s)", userInfo.Nickname, utils.MaskEmail(userInfo.Email))
 	core.Logger.Info().Msgf("MQTT domain: %s", userInfo.Domain.MobileMqttsUrl)
 	client.UID = userInfo.ID
 
@@ -143,8 +141,8 @@ func runDirect(cmd *cobra.Command, args []string) error {
 	}
 
 	core.Logger.Info().Msgf("RTSP endpoints:")
-	core.Logger.Info().Msgf("  HD: rtsp://localhost:%d/%s", port, rtspPath)
-	core.Logger.Info().Msgf("  SD: rtsp://localhost:%d/%s/sd", port, rtspPath)
+	core.Logger.Info().Msgf("  HD: rtsp://localhost:%d%s", port, rtspPath)
+	core.Logger.Info().Msgf("  SD: rtsp://localhost:%d%s/sd", port, rtspPath)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
