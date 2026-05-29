@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 
 from homeassistant.components.camera import Camera, CameraEntityFeature
+from homeassistant.components.ffmpeg import async_get_image as ffmpeg_get_image
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -48,3 +49,23 @@ class AventCamera(Camera):
 
     async def stream_source(self) -> str:
         return self._stream_url
+
+    async def async_camera_image(
+        self,
+        width: int | None = None,
+        height: int | None = None,
+    ) -> bytes | None:
+        """Pull a single JPEG frame from the live RTSP stream.
+
+        Required by the `camera.snapshot` service. Without this override the
+        base class raises NotImplementedError. The helper runs ffmpeg under
+        the hood; it shares the running bridge stream so it adds no extra
+        load on the camera itself.
+        """
+        try:
+            return await ffmpeg_get_image(
+                self.hass, self._stream_url, width=width, height=height
+            )
+        except Exception:
+            _LOGGER.exception("ffmpeg snapshot failed for %s", self._stream_url)
+            return None
