@@ -169,6 +169,10 @@ cd avent-webrtc-bridge && go build -o avent-webrtc-bridge .
 ./avent-webrtc-bridge direct --help
 ```
 
+## Reporting issues
+
+Found a bug or an entity that behaves oddly? See [`docs/reporting-issues.md`](docs/reporting-issues.md). It's a parent-friendly, three-click walkthrough for downloading the diagnostics dump that lets us triage your device without asking for packet captures.
+
 ## Acknowledgments
 
 The WebRTC bridge (`avent-webrtc-bridge/`) is forked from [tuya-ipc-terminal](https://github.com/seydx/tuya-ipc-terminal) by seydx, which itself uses WebRTC and codec utilities from [go2rtc](https://github.com/AlexxIT/go2rtc) by AlexxIT. The bridge has since diverged significantly with Philips Avent-specific features including RTP timestamp rebasing, SPS/PPS injection, RTSP backchannel audio, and MQTT-based WebRTC signaling via the Tuya Mobile SDK.
