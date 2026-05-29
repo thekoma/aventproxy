@@ -85,3 +85,21 @@ CONF_CAMERA_ID = "camera_id"
 CONF_CAMERA_NAME = "camera_name"
 CONF_BRIDGE_PORT = "bridge_port"
 DEFAULT_BRIDGE_PORT = 38554
+
+
+def sanitize_rtsp_path(name: str, cam_id: str) -> str:
+    """Convert a camera display name into an RTSP path component.
+
+    Spaces, forward slashes and backslashes are replaced with underscores.
+    If the result is empty or consists only of an underscore, falls back to
+    the camera id. Returns the path component WITHOUT a leading slash; the
+    caller composes the URL.
+
+    Mirrors `pkg/storage/path.go::SanitizeRTSPPath` in the Go bridge. The two
+    helpers MUST stay in sync — they determine whether the integration's RTSP
+    URL matches the path the bridge serves.
+    """
+    safe = name.replace(" ", "_").replace("/", "_").replace("\\", "_")
+    if safe == "" or safe == "_":
+        safe = cam_id
+    return safe

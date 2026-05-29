@@ -8,7 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT, DOMAIN
+from .const import CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT, DOMAIN, sanitize_rtsp_path
 from .coordinator import PhilipsAventCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ class AventCamera(Camera):
         self.coordinator = coordinator
         self._cam_id = cam_id
         self._attr_unique_id = f"{cam_id}_camera"
-        safe_name = coordinator.camera_name.replace(" ", "_")
+        safe_name = sanitize_rtsp_path(coordinator.camera_name, cam_id)
         self._stream_url = f"rtsp://localhost:{bridge_port}/{safe_name}"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, cam_id)},

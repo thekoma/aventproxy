@@ -86,3 +86,6 @@ custom_components/webrtc/
 
 # Git worktrees
 .worktrees/
+
+# uv package manager
+uv.lock
