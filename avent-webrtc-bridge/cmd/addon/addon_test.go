@@ -19,7 +19,7 @@ func TestLoadConfig_ValidTwoCameras(t *testing.T) {
 	  "package_name": "pkg",
 	  "bridge_port": 38554,
 	  "cameras": [
-	    {"camera_id": "abc123", "camera_name": "Erik"},
+	    {"camera_id": "abc123", "camera_name": "Erik", "product_id": "selj2idknqhjnids"},
 	    {"camera_id": "def456", "camera_name": "Anna"}
 	  ]
 	}`
@@ -43,8 +43,15 @@ func TestLoadConfig_ValidTwoCameras(t *testing.T) {
 	if cfg.Cameras[0].ID != "abc123" || cfg.Cameras[0].Name != "Erik" {
 		t.Errorf("camera[0] = %+v", cfg.Cameras[0])
 	}
+	if cfg.Cameras[0].ProductID != "selj2idknqhjnids" {
+		t.Errorf("camera[0].ProductID = %q, want selj2idknqhjnids", cfg.Cameras[0].ProductID)
+	}
 	if cfg.Cameras[1].ID != "def456" || cfg.Cameras[1].Name != "Anna" {
 		t.Errorf("camera[1] = %+v", cfg.Cameras[1])
+	}
+	// Cameras without product_id should parse as empty string (no regression for SCD973).
+	if cfg.Cameras[1].ProductID != "" {
+		t.Errorf("camera[1].ProductID = %q, want empty string", cfg.Cameras[1].ProductID)
 	}
 }
 
@@ -225,5 +232,22 @@ func TestAssignPaths_SkipsMissingID(t *testing.T) {
 	}
 	if out[0].ID != "abc123" {
 		t.Errorf("kept the wrong entry: %+v", out)
+	}
+}
+
+func TestAssignPaths_PreservesProductID(t *testing.T) {
+	cams := []Camera{
+		{ID: "abc123", Name: "Erik", ProductID: "selj2idknqhjnids"},
+		{ID: "def456", Name: "Anna", ProductID: ""},
+	}
+	out := assignPaths(cams)
+	if len(out) != 2 {
+		t.Fatalf("got %d, want 2", len(out))
+	}
+	if out[0].ProductID != "selj2idknqhjnids" {
+		t.Errorf("out[0].ProductID = %q, want selj2idknqhjnids", out[0].ProductID)
+	}
+	if out[1].ProductID != "" {
+		t.Errorf("out[1].ProductID = %q, want empty string (SCD973 no-regression)", out[1].ProductID)
 	}
 }

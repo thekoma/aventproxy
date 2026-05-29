@@ -137,6 +137,7 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         cameras.append({
                             "id": cam.get("devId") or cam.get("deviceId"),
                             "name": cam.get("name") or cam.get("deviceName", "camera"),
+                            "product_id": cam.get("productId") or cam.get("productKey") or "",
                         })
                 except Exception:
                     _LOGGER.warning("Camera discovery during setup failed")
