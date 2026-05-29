@@ -1,0 +1,85 @@
+name: Device support / compatibility report
+description: Tell us about a Philips Avent monitor model that isn't in the confirmed-working list — even if it mostly works.
+title: "device: "
+labels:
+  - device-support
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this when your model isn't on the confirmed-working list (currently: SCD973, SCD971, SCD923, SCD951, SCD643/26) OR when it is but you want to flag a partial-support quirk. For a clean bug ("X is broken on a known-working model"), use the **Bug report** template instead.
+
+        I need the same diagnostics dump from the [reporting guide](https://github.com/thekoma/aventproxy/blob/main/docs/reporting-issues.md) — it tells me which DPS codes your model actually emits, which is the difference between "we ship support tomorrow" and "we wait for more reporters".
+
+  - type: input
+    id: model
+    attributes:
+      label: Monitor model (exact)
+      description: Including the regional suffix if present (e.g. `SCD643/26`).
+      placeholder: e.g. SCD850, SCD630/05
+    validations:
+      required: true
+
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version
+      description: Visible in the official Philips Avent app — device settings → about. Fine to skip if you can't find it.
+      placeholder: e.g. 2.0.1
+    validations:
+      required: false
+
+  - type: input
+    id: integration_version
+    attributes:
+      label: Integration version you tested with
+      placeholder: e.g. 2026.5.2
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: works
+    attributes:
+      label: What works on this model
+      description: Check the entities that behave correctly.
+      options:
+        - label: Login + config flow finished successfully
+        - label: Camera entity (live video plays in HA)
+        - label: camera.snapshot service works
+        - label: Temperature sensor reads a real value
+        - label: Wi-Fi signal sensor reads a sensible value (not stuck at a constant)
+        - label: Night light switch + brightness
+        - label: Lullaby playback (play / pause / next / prev / volume)
+        - label: Motion Alert switch toggles
+        - label: Sound Alert switch toggles
+        - label: binary_sensor.<cam>_motion_detected fires when motion is in view
+        - label: binary_sensor.<cam>_sound_detected fires on loud noise
+        - label: Privacy mode switch
+
+  - type: textarea
+    id: doesnt_work
+    attributes:
+      label: What doesn't work / behaves weirdly
+      placeholder: |
+        - Temperature shows 0 °C constantly
+        - Lullaby track picker is empty
+        - Snapshot returns a black frame
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics dump
+      description: |
+        Drag-and-drop the `config_entry-philips_avent-….json` directly into this text box. Without it I can't tell which DPS codes your model emits.
+      placeholder: |
+        Drop the JSON file here.
+    validations:
+      required: true
+
+  - type: textarea
+    id: forum_or_links
+    attributes:
+      label: Related forum posts / context
+      description: If you've already discussed this on the [HA community thread](https://community.home-assistant.io/t/641344) or elsewhere, drop links.
