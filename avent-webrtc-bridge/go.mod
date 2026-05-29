@@ -7,7 +7,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/mattn/go-isatty v0.0.22
 	github.com/mdp/qrterminal v1.0.1
-	github.com/pion/ice/v4 v4.2.5
+	github.com/pion/ice/v4 v4.2.6
 	github.com/pion/interceptor v0.1.45
 	github.com/pion/rtp v1.10.2
 	github.com/pion/sdp/v3 v3.0.18
