@@ -20,6 +20,8 @@ Home Assistant integration for Philips Avent SCD973/SCD923 baby monitors, provid
 | 🎵 Lullabies | Buttons + Number | Play/pause/stop/next/prev + volume |
 | 🏃 Motion Alert | Switch | Motion detection on/off |
 | 🔊 Sound Alert | Switch | Sound detection on/off |
+| 🏃 Motion Detected | Binary Sensor | Fires when motion is detected (auto-clears after 30s) |
+| 🔊 Sound Detected | Binary Sensor | Fires when sound is detected (auto-clears after 30s) |
 | 🔒 Privacy Mode | Switch | Camera on/off |
 
 ## Installation
@@ -55,6 +57,41 @@ Or manually:
 4. Enter the code — done!
 
 The integration discovers your cameras automatically and creates all entities. The bridge add-on starts streaming.
+
+### Automations
+
+The integration exposes `binary_sensor.<camera>_sound_detected` and `binary_sensor.<camera>_motion_detected` that turn on for ~30 seconds when the monitor reports an event. They are the trigger points for any automation.
+
+Note: detection must be enabled on the device side via the `🔊 Sound Alert` / `🏃 Motion Alert` switches — otherwise the monitor never sends the event.
+
+```yaml
+# Mobile notification when sound is detected
+automation:
+  - alias: "Baby crying alert"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.baby_monitor_sound_detected
+        to: "on"
+    action:
+      - service: notify.mobile_app_my_phone
+        data:
+          title: "Sound detected in nursery"
+          message: "Baby may be awake"
+
+# Pop up the camera feed on a dashboard when motion is detected
+  - alias: "Show baby cam on motion"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.baby_monitor_motion_detected
+        to: "on"
+    action:
+      - service: browser_mod.popup
+        data:
+          content:
+            type: picture-entity
+            entity: camera.baby_monitor
+            camera_view: live
+```
 
 ## How It Works
 
