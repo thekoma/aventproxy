@@ -112,7 +112,7 @@ The integration uses the same Tuya Mobile SDK API as the official Philips Avent 
 │  ┌────────────────────────┐  │
 │  │  Bridge Add-on         │  │   Camera
 │  │  (WebRTC → RTSP)       │◄─┼──► via STUN/TURN
-│  │  :8554                 │  │   (1080p H.264)
+│  │  :38554                │  │   (1080p H.264)
 │  └────────────────────────┘  │
 │                              │
 │  ┌────────────────────────┐  │
