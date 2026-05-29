@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"avent-webrtc-bridge/pkg/core"
+	"avent-webrtc-bridge/pkg/storage"
 )
 
 // BridgeConfig is the JSON shape written by the HA integration
@@ -36,6 +39,50 @@ func loadConfig(path string) (BridgeConfig, error) {
 		return cfg, fmt.Errorf("parse %s: %w", path, err)
 	}
 	return cfg, nil
+}
+
+// CameraWithPath pairs a Camera with the RTSP path it will be served on.
+type CameraWithPath struct {
+	Camera
+	Path string
+}
+
+// assignPaths sanitizes each camera's name into an RTSP path and filters out
+// invalid entries. Behavior:
+//   - skip entries with empty camera_id (warn);
+//   - skip later entries that repeat a previously-seen camera_id (warn) — a single
+//     physical device must not be registered twice;
+//   - when two distinct cameras sanitize to the same path, the second one gets
+//     a suffix derived from up to 6 characters of its camera_id (warn).
+func assignPaths(cams []Camera) []CameraWithPath {
+	out := make([]CameraWithPath, 0, len(cams))
+	seenIDs := make(map[string]bool, len(cams))
+	seenPaths := make(map[string]bool, len(cams))
+	for _, cam := range cams {
+		if cam.ID == "" {
+			core.Logger.Warn().Msgf("Camera config invalid: missing camera_id, skipping name=%q", cam.Name)
+			continue
+		}
+		if seenIDs[cam.ID] {
+			core.Logger.Warn().Msgf("Duplicate camera_id %q, skipping repeated entry name=%q", cam.ID, cam.Name)
+			continue
+		}
+		seenIDs[cam.ID] = true
+
+		path := storage.SanitizeRTSPPath(cam.Name, cam.ID)
+		if seenPaths[path] {
+			suffix := cam.ID
+			if len(suffix) > 6 {
+				suffix = suffix[:6]
+			}
+			collided := path + "_" + suffix
+			core.Logger.Warn().Msgf("Path collision on %s, falling back to %s", path, collided)
+			path = collided
+		}
+		seenPaths[path] = true
+		out = append(out, CameraWithPath{Camera: cam, Path: path})
+	}
+	return out
 }
 
 func validateConfig(cfg BridgeConfig) error {

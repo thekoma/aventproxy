@@ -115,3 +115,84 @@ func TestValidateConfig_RejectsMissingPartner(t *testing.T) {
 		t.Fatal("want error for missing partner")
 	}
 }
+
+func TestAssignPaths_NoCollision(t *testing.T) {
+	cams := []Camera{
+		{ID: "abc123", Name: "Erik"},
+		{ID: "def456", Name: "Anna"},
+	}
+	out := assignPaths(cams)
+	if len(out) != 2 {
+		t.Fatalf("got %d, want 2", len(out))
+	}
+	if out[0].Path != "/Erik" {
+		t.Errorf("out[0].Path = %q, want /Erik", out[0].Path)
+	}
+	if out[1].Path != "/Anna" {
+		t.Errorf("out[1].Path = %q, want /Anna", out[1].Path)
+	}
+}
+
+func TestAssignPaths_CollidingNames(t *testing.T) {
+	cams := []Camera{
+		{ID: "abc123", Name: "Baby"},
+		{ID: "def456", Name: "Baby"},
+	}
+	out := assignPaths(cams)
+	if len(out) != 2 {
+		t.Fatalf("got %d, want 2", len(out))
+	}
+	if out[0].Path != "/Baby" {
+		t.Errorf("first kept as-is: got %q", out[0].Path)
+	}
+	if out[1].Path != "/Baby_def456" {
+		t.Errorf("second got suffix: got %q, want /Baby_def456", out[1].Path)
+	}
+}
+
+func TestAssignPaths_ShortIDCollision(t *testing.T) {
+	cams := []Camera{
+		{ID: "ab", Name: "X"},
+		{ID: "cd", Name: "X"},
+	}
+	out := assignPaths(cams)
+	if len(out) != 2 {
+		t.Fatalf("got %d, want 2", len(out))
+	}
+	if out[1].Path != "/X_cd" {
+		t.Errorf("got %q, want /X_cd (short id used in full)", out[1].Path)
+	}
+}
+
+func TestAssignPaths_DuplicateCameraID(t *testing.T) {
+	// Different names per duplicate to make the "first entry wins" contract explicit.
+	cams := []Camera{
+		{ID: "abc123", Name: "Erik"},
+		{ID: "abc123", Name: "Renamed Erik"},
+		{ID: "def456", Name: "Anna"},
+	}
+	out := assignPaths(cams)
+	if len(out) != 2 {
+		t.Fatalf("got %d, want 2 (the second 'abc123' should be skipped)", len(out))
+	}
+	if out[0].ID != "abc123" || out[0].Name != "Erik" {
+		t.Errorf("first occurrence should win, got %+v", out[0])
+	}
+	if out[1].ID != "def456" {
+		t.Errorf("third entry should follow: %+v", out[1])
+	}
+}
+
+func TestAssignPaths_SkipsMissingID(t *testing.T) {
+	cams := []Camera{
+		{ID: "", Name: "Ghost"},
+		{ID: "abc123", Name: "Erik"},
+	}
+	out := assignPaths(cams)
+	if len(out) != 1 {
+		t.Fatalf("got %d, want 1 (entry with empty ID should be skipped)", len(out))
+	}
+	if out[0].ID != "abc123" {
+		t.Errorf("kept the wrong entry: %+v", out)
+	}
+}
