@@ -34,8 +34,9 @@ type BridgeConfig struct {
 
 // Camera is one entry under "cameras" in the JSON.
 type Camera struct {
-	ID   string `json:"camera_id"`
-	Name string `json:"camera_name"`
+	ID        string `json:"camera_id"`
+	Name      string `json:"camera_name"`
+	ProductID string `json:"product_id"`
 }
 
 func loadConfig(path string) (BridgeConfig, error) {
@@ -214,6 +215,7 @@ func runAddon(cmd *cobra.Command, args []string) error {
 			DeviceID:   c.ID,
 			DeviceName: c.Name,
 			Category:   "sp",
+			ProductID:  c.ProductID,
 			RTSPPath:   c.Path,
 			UserKey:    userKey,
 		})
