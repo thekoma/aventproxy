@@ -1,0 +1,42 @@
+name: Feature request
+description: Suggest a new capability or improvement.
+title: "feat: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before opening, check the [HA community thread](https://community.home-assistant.io/t/641344) for related discussion. For "does my model work?" please use the **Device support** template instead.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What would you like to see?
+      description: One or two sentences describing the capability.
+      placeholder: |
+        Expose the camera's privacy-mode schedule (the per-weekday on/off times in the official app) as a HA entity so I can override it from automations.
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why do you want this — what problem does it solve for you?
+      description: Use cases beat abstract requests. The clearer the scenario, the easier it is to weigh against scope.
+      placeholder: |
+        I want the camera to be on whenever a child sleep-detection automation says the baby is in the crib, regardless of the schedule the partner set up in the official app.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds you tried
+      description: Optional. Lets me see whether existing entities + templates already cover this.
+
+  - type: textarea
+    id: anything_else
+    attributes:
+      label: Anything else
+      description: Optional. Screenshots, references, related forum threads.

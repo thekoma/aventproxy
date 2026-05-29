@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: How to report — three-click guide
+    url: https://github.com/thekoma/aventproxy/blob/main/docs/reporting-issues.md
+    about: How to download a diagnostics dump (and optionally a debug log) from Home Assistant. Read this before opening a bug.
+  - name: Home Assistant community thread
+    url: https://community.home-assistant.io/t/philips-avent-scd921-connected-videophone-accessing-rtsp-stream-user-password-unknown/641344
+    about: General discussion, setup help, and "does my model work?" before filing an issue. Useful if you just want to chat with other users.
+  - name: Renovate Dependency Dashboard
+    url: https://github.com/thekoma/aventproxy/issues/4
+    about: Automated tracker for dependency updates. Don't open new issues for those — Renovate manages them.

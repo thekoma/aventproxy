@@ -1,0 +1,120 @@
+name: Bug report
+description: Something doesn't work as expected — sensor wrong, video broken, missing alert, etc.
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. To triage this efficiently I need a **diagnostics dump** from your Home Assistant. It's three clicks in the HA UI, and credentials are auto-redacted before download — see [`docs/reporting-issues.md`](https://github.com/thekoma/aventproxy/blob/main/docs/reporting-issues.md) for the full walkthrough.
+
+        Without that dump, I usually can't tell what's actually happening on your device.
+
+  - type: checkboxes
+    id: read_guide
+    attributes:
+      label: Confirmation
+      options:
+        - label: I've read the [reporting guide](https://github.com/thekoma/aventproxy/blob/main/docs/reporting-issues.md) and I'm attaching the diagnostics dump below.
+          required: true
+
+  - type: dropdown
+    id: model
+    attributes:
+      label: Monitor model
+      description: Look on the back of the parent unit or the camera. If your exact model isn't listed, pick "Other".
+      options:
+        - SCD973
+        - SCD971
+        - SCD951
+        - SCD923
+        - SCD921
+        - SCD643 / SCD643/26
+        - Other (specify below)
+    validations:
+      required: true
+
+  - type: input
+    id: model_other
+    attributes:
+      label: If "Other", what model?
+      placeholder: e.g. SCD850
+    validations:
+      required: false
+
+  - type: input
+    id: integration_version
+    attributes:
+      label: Integration version
+      description: Settings → Devices & Services → Philips Avent Baby Monitor → click the integration → "Version" near the top.
+      placeholder: e.g. 2026.5.2
+    validations:
+      required: true
+
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant Core version
+      description: Settings → About.
+      placeholder: e.g. 2026.5.3
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened
+      description: One or two sentences. Be specific about which entity / which feature.
+      placeholder: |
+        binary_sensor.babycam_motion_detected never turns on even when I walk in front of the camera.
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_expected
+    attributes:
+      label: What you expected
+      placeholder: |
+        I expected the motion_detected binary sensor to turn on for ~30 seconds when motion is in view, like the SCD973 demo videos show.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: |
+        Smaller is better. If the bug is "a thing doesn't fire when I trigger it", describe what you do to trigger it (walk in front, clap loudly, etc.).
+      placeholder: |
+        1. Make sure the "Motion Alert" switch is on.
+        2. Walk slowly in front of the camera for 5-10 seconds.
+        3. Check binary_sensor.babycam_motion_detected — it stays off.
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics dump
+      description: |
+        Drag-and-drop the `config_entry-philips_avent-….json` file directly into this text box (GitHub uploads it and inserts a link). If you genuinely cannot generate one, write one sentence explaining why — but please try first.
+      placeholder: |
+        Drop the JSON file here.
+    validations:
+      required: true
+
+  - type: textarea
+    id: debug_log
+    attributes:
+      label: Debug log (optional, very helpful for event-based bugs)
+      description: |
+        If the bug is something that should happen at a specific moment (motion, sound, button press), capture a short debug log following step 2 of the [reporting guide](https://github.com/thekoma/aventproxy/blob/main/docs/reporting-issues.md#step-2--capture-a-short-debug-log) and attach it here.
+      placeholder: |
+        Drop the home-assistant_philips_avent_…log file here.
+
+  - type: textarea
+    id: anything_else
+    attributes:
+      label: Anything else
+      description: Screenshots, links to forum posts, related issues. Optional.
