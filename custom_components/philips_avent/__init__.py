@@ -17,6 +17,7 @@ from .const import (
     CONF_BRIDGE_PORT, CONF_ECODE, CONF_PARTNER, CONF_SID, DEFAULT_BRIDGE_PORT, DOMAIN,
     TUYA_APP_KEY, TUYA_PACKAGE_NAME, TUYA_SIGNING_KEY,
 )
+from .payload import build_cameras_payload
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,11 +36,7 @@ async def _write_bridge_config(hass: HomeAssistant, entry: ConfigEntry, api: Phi
         "device_id": api.device_id,
         "package_name": TUYA_PACKAGE_NAME,
         "bridge_port": bridge_port,
-        "cameras": [
-            {"camera_id": cam.get("deviceId", cam.get("devId")),
-             "camera_name": cam.get("deviceName", cam.get("name", "camera"))}
-            for cam in cameras
-        ],
+        "cameras": build_cameras_payload(cameras),
     }
     bridge_path = Path(hass.config.path(f"philips_avent_bridge_{entry.entry_id}.json"))
     await hass.async_add_executor_job(
@@ -71,8 +68,44 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             cameras.append({
                 "deviceId": cam["id"],
                 "deviceName": cam["name"],
+                "productId": cam.get("product_id", ""),
             })
         _LOGGER.info("Using %d cameras from config entry", len(cameras))
+
+        # Backfill productId for entries created before this field was tracked.
+        # Guard on key presence in the stored entry, NOT on the in-memory value,
+        # so post-fix entries with a genuinely empty productId (e.g. a device
+        # that does not expose one) don't trigger a cloud call on every restart.
+        if any("product_id" not in cam for cam in stored_cameras):
+            patched = 0
+            try:
+                discovered = await api.discover_cameras()
+                by_id = {(d.get("devId") or d.get("deviceId")): d for d in discovered}
+                for cam in cameras:
+                    if not cam.get("productId"):
+                        disc = by_id.get(cam.get("deviceId"))
+                        if disc:
+                            new_id = disc.get("productId") or disc.get("productKey") or ""
+                            if new_id:
+                                cam["productId"] = new_id
+                                patched += 1
+                if patched:
+                    updated_stored_cameras = [
+                        {**stored_cam, "product_id": cam.get("productId", "")}
+                        for stored_cam, cam in zip(stored_cameras, cameras)
+                    ]
+                    hass.config_entries.async_update_entry(
+                        entry,
+                        data={**entry.data, "cameras": updated_stored_cameras},
+                    )
+                    _LOGGER.info("Backfilled productId for %d camera(s) and persisted to config entry", patched)
+                else:
+                    _LOGGER.info("Backfill ran but no productId was recovered from Tuya discovery")
+            except Exception:
+                _LOGGER.warning(
+                    "Could not backfill productId from Tuya API; SCD951 cameras may fail "
+                    "to stream until HA restarts or the integration is reconfigured"
+                )
     else:
         # Fallback: re-discover via API
         try:
