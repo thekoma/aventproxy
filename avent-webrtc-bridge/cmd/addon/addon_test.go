@@ -164,6 +164,37 @@ func TestAssignPaths_ShortIDCollision(t *testing.T) {
 	}
 }
 
+func TestAssignPaths_CascadingFallback(t *testing.T) {
+	// Three cameras sharing the same name AND the same first 6 chars of camera_id.
+	// The naive single-step fallback would produce three identical "/Baby_abcdef"
+	// paths; the loop must extend the suffix with a counter to keep them unique.
+	cams := []Camera{
+		{ID: "abcdef01", Name: "Baby"},
+		{ID: "abcdef02", Name: "Baby"},
+		{ID: "abcdef03", Name: "Baby"},
+	}
+	out := assignPaths(cams)
+	if len(out) != 3 {
+		t.Fatalf("got %d, want 3", len(out))
+	}
+	paths := map[string]bool{}
+	for _, c := range out {
+		if paths[c.Path] {
+			t.Fatalf("duplicate fallback path %q in %+v", c.Path, out)
+		}
+		paths[c.Path] = true
+	}
+	if out[0].Path != "/Baby" {
+		t.Errorf("first kept as base: got %q", out[0].Path)
+	}
+	if out[1].Path != "/Baby_abcdef" {
+		t.Errorf("second got single-suffix: got %q, want /Baby_abcdef", out[1].Path)
+	}
+	if out[2].Path != "/Baby_abcdef_2" {
+		t.Errorf("third got counter suffix: got %q, want /Baby_abcdef_2", out[2].Path)
+	}
+}
+
 func TestAssignPaths_DuplicateCameraID(t *testing.T) {
 	// Different names per duplicate to make the "first entry wins" contract explicit.
 	cams := []Camera{

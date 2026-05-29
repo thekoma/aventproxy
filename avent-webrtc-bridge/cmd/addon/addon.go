@@ -15,6 +15,7 @@ import (
 	"avent-webrtc-bridge/pkg/rtsp"
 	"avent-webrtc-bridge/pkg/storage"
 	"avent-webrtc-bridge/pkg/tuya"
+	"avent-webrtc-bridge/pkg/utils"
 )
 
 // BridgeConfig is the JSON shape written by the HA integration
@@ -77,15 +78,20 @@ func assignPaths(cams []Camera) []CameraWithPath {
 		}
 		seenIDs[cam.ID] = true
 
-		path := storage.SanitizeRTSPPath(cam.Name, cam.ID)
+		basePath := storage.SanitizeRTSPPath(cam.Name, cam.ID)
+		path := basePath
 		if seenPaths[path] {
 			suffix := cam.ID
 			if len(suffix) > 6 {
 				suffix = suffix[:6]
 			}
-			collided := path + "_" + suffix
-			core.Logger.Warn().Msgf("Path collision on %s, falling back to %s", path, collided)
-			path = collided
+			path = basePath + "_" + suffix
+			i := 2
+			for seenPaths[path] {
+				path = fmt.Sprintf("%s_%s_%d", basePath, suffix, i)
+				i++
+			}
+			core.Logger.Warn().Msgf("Path collision on %s, falling back to %s", basePath, path)
 		}
 		seenPaths[path] = true
 		out = append(out, CameraWithPath{Camera: cam, Path: path})
@@ -171,7 +177,7 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("get user info: %w", err)
 	}
-	core.Logger.Info().Msgf("User: %s (%s)", userInfo.Nickname, userInfo.Email)
+	core.Logger.Info().Msgf("User: %s (%s)", userInfo.Nickname, utils.MaskEmail(userInfo.Email))
 	client.UID = userInfo.ID
 
 	userKey := "addon_" + strings.ReplaceAll(strings.ReplaceAll(userInfo.Email, "@", "_at_"), ".", "_")
