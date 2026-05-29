@@ -76,10 +76,7 @@ func runDirect(cmd *cobra.Command, args []string) error {
 	cameraName, _ := cmd.Flags().GetString("camera-name")
 	port, _ := cmd.Flags().GetInt("port")
 
-	if cameraName == "" {
-		cameraName = cameraID
-	}
-	rtspPath := "/" + strings.ReplaceAll(cameraName, " ", "_")
+	rtspPath := storage.SanitizeRTSPPath(cameraName, cameraID)
 
 	client := tuya.NewMobileSDKClient(signingKey, sid, appKey, deviceID, chKey)
 	client.Ecode = ecode
