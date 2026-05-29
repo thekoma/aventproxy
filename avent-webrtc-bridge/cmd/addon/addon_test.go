@@ -47,3 +47,71 @@ func TestLoadConfig_ValidTwoCameras(t *testing.T) {
 		t.Errorf("camera[1] = %+v", cfg.Cameras[1])
 	}
 }
+
+func TestLoadConfig_MalformedJSON(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "bridge.json")
+	if err := os.WriteFile(p, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadConfig(p); err == nil {
+		t.Fatal("want error for malformed JSON, got nil")
+	}
+}
+
+func TestLoadConfig_MissingFile(t *testing.T) {
+	if _, err := loadConfig("/nonexistent/path.json"); err == nil {
+		t.Fatal("want error for missing file, got nil")
+	}
+}
+
+func TestValidateConfig_RejectsMissingCreds(t *testing.T) {
+	cfg := BridgeConfig{Cameras: []Camera{{ID: "abc", Name: "Erik"}}}
+	if err := validateConfig(cfg); err == nil {
+		t.Fatal("want error for missing signing_key")
+	}
+}
+
+func TestValidateConfig_RejectsEmptyCameras(t *testing.T) {
+	cfg := BridgeConfig{
+		SigningKey: "sk", SID: "S", AppKey: "AK", DeviceID: "D",
+		Ecode: "E", Partner: "P",
+		Cameras: []Camera{},
+	}
+	if err := validateConfig(cfg); err == nil {
+		t.Fatal("want error for empty cameras")
+	}
+}
+
+func TestValidateConfig_AcceptsMinimal(t *testing.T) {
+	cfg := BridgeConfig{
+		SigningKey: "sk", SID: "S", AppKey: "AK", DeviceID: "D",
+		Ecode: "E", Partner: "P",
+		Cameras: []Camera{{ID: "abc", Name: "Erik"}},
+	}
+	if err := validateConfig(cfg); err != nil {
+		t.Fatalf("validateConfig: unexpected error %v", err)
+	}
+}
+
+func TestValidateConfig_RejectsMissingEcode(t *testing.T) {
+	cfg := BridgeConfig{
+		SigningKey: "sk", SID: "S", AppKey: "AK", DeviceID: "D",
+		Partner: "P",
+		Cameras: []Camera{{ID: "abc", Name: "Erik"}},
+	}
+	if err := validateConfig(cfg); err == nil {
+		t.Fatal("want error for missing ecode")
+	}
+}
+
+func TestValidateConfig_RejectsMissingPartner(t *testing.T) {
+	cfg := BridgeConfig{
+		SigningKey: "sk", SID: "S", AppKey: "AK", DeviceID: "D",
+		Ecode: "E",
+		Cameras: []Camera{{ID: "abc", Name: "Erik"}},
+	}
+	if err := validateConfig(cfg); err == nil {
+		t.Fatal("want error for missing partner")
+	}
+}

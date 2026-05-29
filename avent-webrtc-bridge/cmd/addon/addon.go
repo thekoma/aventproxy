@@ -37,3 +37,28 @@ func loadConfig(path string) (BridgeConfig, error) {
 	}
 	return cfg, nil
 }
+
+func validateConfig(cfg BridgeConfig) error {
+	if cfg.SigningKey == "" {
+		return fmt.Errorf("signing_key is required")
+	}
+	if cfg.SID == "" {
+		return fmt.Errorf("sid is required")
+	}
+	if cfg.AppKey == "" {
+		return fmt.Errorf("app_key is required")
+	}
+	if cfg.DeviceID == "" {
+		return fmt.Errorf("device_id is required")
+	}
+	if cfg.Ecode == "" {
+		return fmt.Errorf("ecode is required")
+	}
+	if cfg.Partner == "" {
+		return fmt.Errorf("partner is required")
+	}
+	if len(cfg.Cameras) == 0 {
+		return fmt.Errorf("cameras list is empty: nothing to serve")
+	}
+	return nil
+}
