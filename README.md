@@ -24,6 +24,8 @@ Home Assistant integration for Philips Avent SCD973/SCD923 baby monitors, provid
 | 🔊 Sound Detected | Binary Sensor | Fires when sound is detected (auto-clears after 30s) |
 | 🔒 Privacy Mode | Switch | Camera on/off |
 
+Multiple monitors on one Tuya account are supported: the bridge serves each camera from the same port on a distinct RTSP path derived from the camera's display name.
+
 ## Installation
 
 ### Integration (HACS)
@@ -114,8 +116,10 @@ The integration uses the same Tuya Mobile SDK API as the official Philips Avent 
 │  └────────────────────────┘  │
 │                              │
 │  ┌────────────────────────┐  │
-│  │  Camera Entity         │  │
-│  │  rtsp://...:8554/Name  │  │
+│  │  Camera Entities       │  │
+│  │  rtsp://host:38554/N1  │  │
+│  │  rtsp://host:38554/N2  │  │
+│  │  ...                   │  │
 │  └────────────────────────┘  │
 └─────────────────────────────┘
 ```
