@@ -26,6 +26,21 @@ Home Assistant integration for Philips Avent SCD973/SCD923 baby monitors, provid
 
 Multiple monitors on one Tuya account are supported: the bridge serves each camera from the same port on a distinct RTSP path derived from the camera's display name.
 
+## Supported devices
+
+The integration is model-agnostic (it talks to the Tuya cloud API generically), so other Philips Avent monitors may work even if they are not listed here. Status below reflects what users have actually confirmed:
+
+| Model | Status |
+|-------|--------|
+| SCD973 / SCD923 | ✅ Fully supported (primary development hardware) |
+| SCD951 | ✅ Working (video fix shipped in 2026.5.1) |
+| SCD643/26 | ✅ Working |
+| SCD971 | ✅ Working |
+| SCD921 | ⚠️ Partial: video works but is intermittent; motion/sound detection and WiFi signal behave inconsistently ([#40](https://github.com/thekoma/aventproxy/issues/40)) |
+| SCD953/26 | ❓ Requested, not yet confirmed ([#42](https://github.com/thekoma/aventproxy/issues/42)) |
+
+Got a model that isn't listed, or one that misbehaves? A [diagnostics dump](docs/reporting-issues.md) is the fastest way to get it mapped.
+
 ## Installation
 
 ### Integration (HACS)
