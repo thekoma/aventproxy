@@ -36,6 +36,7 @@
       "invalid_auth": "Invalid email or password",
       "invalid_mfa": "Invalid verification code",
       "cannot_connect": "Cannot connect to Philips Avent servers",
+      "tuya_error": "Login failed. Tuya reported: {error_code}. Enable debug logging and check the log for details, then report this code if the problem persists.",
       "unknown": "Unexpected error"
     },
     "abort": {

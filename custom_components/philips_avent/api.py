@@ -49,6 +49,20 @@ class TuyaAPIError(Exception):
         super().__init__(f"{code}: {message}")
 
 
+def classify_login_error(code: str, *, mfa: bool = False) -> str:
+    """Map a Tuya error code to a config-flow error key.
+
+    Unknown codes return "tuya_error" so the real Tuya code is surfaced to the
+    user (and logs) instead of being masked as a generic connection failure.
+    """
+    if mfa:
+        if "MFA" in code or "CODE" in code:
+            return "invalid_mfa"
+    elif "PASSWD" in code:
+        return "invalid_auth"
+    return "tuya_error"
+
+
 class PhilipsAventAPI:
     """Async Tuya Mobile SDK client."""
 
