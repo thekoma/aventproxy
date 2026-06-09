@@ -2,7 +2,7 @@
 
 import json
 
-from api import TuyaAPIError
+from api import TuyaAPIError, classify_login_error
 from const import CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT
 
 
@@ -25,6 +25,30 @@ class TestTuyaAPIError:
         err = TuyaAPIError("UNKNOWN", "Unknown error")
         assert err.code == "UNKNOWN"
         assert err.message == "Unknown error"
+
+
+class TestClassifyLoginError:
+    def test_password_error_maps_to_invalid_auth(self):
+        assert classify_login_error("USER_PASSWD_WRONG") == "invalid_auth"
+
+    def test_mfa_code_maps_to_invalid_mfa(self):
+        assert classify_login_error("MFA_CODE_INVALID", mfa=True) == "invalid_mfa"
+        assert classify_login_error("WRONG_CODE", mfa=True) == "invalid_mfa"
+
+    def test_unknown_code_surfaces_as_tuya_error(self):
+        # USER_SESSION_INVALID used to be masked as cannot_connect (issue #44).
+        assert classify_login_error("USER_SESSION_INVALID") == "tuya_error"
+        assert classify_login_error("USER_SESSION_INVALID", mfa=True) == "tuya_error"
+        assert classify_login_error("RATE_LIMIT") == "tuya_error"
+
+    def test_password_not_treated_as_mfa(self):
+        # In the MFA step, a PASSWD code is not an MFA problem; surface the code.
+        assert classify_login_error("USER_PASSWD_WRONG", mfa=True) == "tuya_error"
+
+    def test_mfa_keyword_only_applies_in_mfa_step(self):
+        # "MFA_NEED_SEND_CODE" in the user step is handled before classification;
+        # if it ever reaches here without the mfa flag it is surfaced, not masked.
+        assert classify_login_error("MFA_NEED_SEND_CODE") == "tuya_error"
 
 
 class TestLoginResponse:

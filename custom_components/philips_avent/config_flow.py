@@ -5,14 +5,14 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
-import aiohttp
 import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
+from homeassistant.data_entry_flow import AbortFlow
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api import PhilipsAventAPI, TuyaAPIError
+from .api import PhilipsAventAPI, TuyaAPIError, classify_login_error
 from .const import CONF_BRIDGE_PORT, CONF_ECODE, CONF_PARTNER, CONF_SID, CONF_UID, DEFAULT_BRIDGE_PORT, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -40,7 +40,6 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._email: str = ""
         self._password: str = ""
         self._api: PhilipsAventAPI | None = None
-        self._session: aiohttp.ClientSession | None = None
 
     @staticmethod
     @config_entries.callback
@@ -50,13 +49,13 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input=None):
         """Step 1: Email + Password."""
         errors = {}
+        error_code = ""
 
         if user_input is not None:
             self._email = user_input[CONF_EMAIL]
             self._password = user_input[CONF_PASSWORD]
 
-            self._session = aiohttp.ClientSession()
-            self._api = PhilipsAventAPI(self._session)
+            self._api = PhilipsAventAPI(async_get_clientsession(self.hass))
 
             try:
                 # Get RSA token
@@ -87,12 +86,12 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
                 return await self.async_step_mfa()
 
+            except AbortFlow:
+                raise
             except TuyaAPIError as e:
                 _LOGGER.error("Login failed: %s", e)
-                if "PASSWD" in e.code:
-                    errors["base"] = "invalid_auth"
-                else:
-                    errors["base"] = "cannot_connect"
+                errors["base"] = classify_login_error(e.code)
+                error_code = e.code
             except Exception:
                 _LOGGER.exception("Unexpected error")
                 errors["base"] = "unknown"
@@ -101,12 +100,13 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=STEP_USER_DATA_SCHEMA,
             errors=errors,
-            description_placeholders={"app_name": "Philips Avent Baby Monitor+"},
+            description_placeholders={"app_name": "Philips Avent Baby Monitor+", "error_code": error_code},
         )
 
     async def async_step_mfa(self, user_input=None):
         """Step 2: MFA code from email."""
         errors = {}
+        error_code = ""
 
         if user_input is not None:
             mfa_code = user_input["mfa_code"]
@@ -142,9 +142,6 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 except Exception:
                     _LOGGER.warning("Camera discovery during setup failed")
 
-                if self._session:
-                    await self._session.close()
-
                 await self.async_set_unique_id(result["uid"])
                 self._abort_if_unique_id_configured()
 
@@ -161,12 +158,12 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     },
                 )
 
+            except AbortFlow:
+                raise
             except TuyaAPIError as e:
                 _LOGGER.error("MFA login failed: %s", e)
-                if "MFA" in e.code or "CODE" in e.code:
-                    errors["base"] = "invalid_mfa"
-                else:
-                    errors["base"] = "cannot_connect"
+                errors["base"] = classify_login_error(e.code, mfa=True)
+                error_code = e.code
             except Exception:
                 _LOGGER.exception("Unexpected error")
                 errors["base"] = "unknown"
@@ -175,7 +172,7 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="mfa",
             data_schema=STEP_MFA_DATA_SCHEMA,
             errors=errors,
-            description_placeholders={"email": self._email},
+            description_placeholders={"email": self._email, "error_code": error_code},
         )
 
     async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> config_entries.ConfigFlowResult:
@@ -185,6 +182,7 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reauth_confirm(self, user_input: dict[str, Any] | None = None) -> config_entries.ConfigFlowResult:
         """Handle reauth confirmation with new credentials."""
         errors: dict[str, str] = {}
+        error_code = ""
 
         if user_input is not None:
             try:
@@ -223,12 +221,12 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._api = api
                 return await self.async_step_reauth_mfa()
 
+            except AbortFlow:
+                raise
             except TuyaAPIError as e:
                 _LOGGER.error("Reauth login failed: %s", e)
-                if "PASSWD" in e.code:
-                    errors["base"] = "invalid_auth"
-                else:
-                    errors["base"] = "cannot_connect"
+                errors["base"] = classify_login_error(e.code)
+                error_code = e.code
             except Exception:
                 _LOGGER.exception("Unexpected error during reauth")
                 errors["base"] = "unknown"
@@ -240,11 +238,13 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_PASSWORD): str,
             }),
             errors=errors,
+            description_placeholders={"error_code": error_code},
         )
 
     async def async_step_reauth_mfa(self, user_input: dict[str, Any] | None = None) -> config_entries.ConfigFlowResult:
         """Handle MFA during reauthentication."""
         errors: dict[str, str] = {}
+        error_code = ""
 
         if user_input is not None:
             mfa_code = user_input["mfa_code"]
@@ -281,12 +281,12 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await self.hass.config_entries.async_reload(entry.entry_id)
                 return self.async_abort(reason="reauth_successful")
 
+            except AbortFlow:
+                raise
             except TuyaAPIError as e:
                 _LOGGER.error("Reauth MFA failed: %s", e)
-                if "MFA" in e.code or "CODE" in e.code:
-                    errors["base"] = "invalid_mfa"
-                else:
-                    errors["base"] = "cannot_connect"
+                errors["base"] = classify_login_error(e.code, mfa=True)
+                error_code = e.code
             except Exception:
                 _LOGGER.exception("Unexpected error during reauth MFA")
                 errors["base"] = "unknown"
@@ -295,7 +295,7 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="reauth_mfa",
             data_schema=STEP_MFA_DATA_SCHEMA,
             errors=errors,
-            description_placeholders={"email": self._email},
+            description_placeholders={"email": self._email, "error_code": error_code},
         )
 
 
