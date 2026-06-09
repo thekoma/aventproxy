@@ -165,15 +165,29 @@ func (c *MobileSDKClient) Call(action, version string, postData interface{}) (js
 		return nil, err
 	}
 
+	return parseAPIResponse(body)
+}
+
+// parseAPIResponse decodes a Tuya api.json response, surfacing the machine-readable
+// errorCode alongside errorMsg so opaque failures (e.g. "No access") can be diagnosed.
+func parseAPIResponse(body []byte) (json.RawMessage, error) {
 	var result struct {
-		Result   json.RawMessage `json:"result"`
-		Success  bool            `json:"success"`
-		ErrorMsg string          `json:"errorMsg,omitempty"`
+		Result    json.RawMessage `json:"result"`
+		Success   bool            `json:"success"`
+		ErrorCode string          `json:"errorCode,omitempty"`
+		ErrorMsg  string          `json:"errorMsg,omitempty"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("JSON decode error: %v, body: %s", err, string(body[:200]))
+		snippet := body
+		if len(snippet) > 200 {
+			snippet = snippet[:200]
+		}
+		return nil, fmt.Errorf("JSON decode error: %v, body: %s", err, string(snippet))
 	}
 	if !result.Success {
+		if result.ErrorCode != "" {
+			return nil, fmt.Errorf("API error: %s (code: %s)", result.ErrorMsg, result.ErrorCode)
+		}
 		return nil, fmt.Errorf("API error: %s", result.ErrorMsg)
 	}
 	return result.Result, nil
