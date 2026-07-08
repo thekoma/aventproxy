@@ -15,6 +15,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, DPS_ALERT_EVENT, DPS_DECIBEL_EVENT, DPS_LULLABY_STATE, DPS_MOTION_SWITCH
 from .coordinator import PhilipsAventCoordinator
+from .entity import build_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,12 +46,7 @@ class AventLullabyPlaying(CoordinatorEntity, BinarySensorEntity):
         super().__init__(coordinator)
         self._cam_id = cam_id
         self._attr_unique_id = f"{cam_id}_lullaby_playing"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, cam_id)},
-            "name": coordinator.camera_name,
-            "manufacturer": "Philips",
-            "model": "Avent SCD973",
-        }
+        self._attr_device_info = build_device_info(coordinator, cam_id)
 
     @property
     def is_on(self) -> bool | None:
@@ -71,12 +67,7 @@ class AventMotionDetected(CoordinatorEntity, BinarySensorEntity):
         super().__init__(coordinator)
         self._cam_id = cam_id
         self._attr_unique_id = f"{cam_id}_motion_detected"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, cam_id)},
-            "name": coordinator.camera_name,
-            "manufacturer": "Philips",
-            "model": "Avent SCD973",
-        }
+        self._attr_device_info = build_device_info(coordinator, cam_id)
         self._is_on = False
         self._clear_unsub = None
 
@@ -123,12 +114,7 @@ class AventSoundDetected(CoordinatorEntity, BinarySensorEntity):
         super().__init__(coordinator)
         self._cam_id = cam_id
         self._attr_unique_id = f"{cam_id}_sound_detected"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, cam_id)},
-            "name": coordinator.camera_name,
-            "manufacturer": "Philips",
-            "model": "Avent SCD973",
-        }
+        self._attr_device_info = build_device_info(coordinator, cam_id)
         self._is_on = False
         self._clear_unsub = None
 

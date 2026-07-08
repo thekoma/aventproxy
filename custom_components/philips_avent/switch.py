@@ -17,6 +17,7 @@ from .const import (
     DPS_SOUND_SWITCH,
 )
 from .coordinator import PhilipsAventCoordinator
+from .entity import build_device_info
 
 
 async def async_setup_entry(
@@ -47,12 +48,7 @@ class AventSwitch(CoordinatorEntity, SwitchEntity):
         self._attr_name = name
         self._attr_icon = icon
         self._attr_unique_id = f"{cam_id}_{dps_id}"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, cam_id)},
-            "name": coordinator.camera_name,
-            "manufacturer": "Philips",
-            "model": "Avent SCD973",
-        }
+        self._attr_device_info = build_device_info(coordinator, cam_id)
 
     @property
     def is_on(self) -> bool | None:

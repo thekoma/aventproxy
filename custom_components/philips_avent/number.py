@@ -9,6 +9,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, DPS_BRIGHTNESS, DPS_LULLABY_VOLUME
 from .coordinator import PhilipsAventCoordinator
+from .entity import build_device_info
 
 
 async def async_setup_entry(
@@ -42,12 +43,7 @@ class AventNumber(CoordinatorEntity, NumberEntity):
         self._attr_native_step = step
         self._attr_native_unit_of_measurement = unit
         self._attr_unique_id = f"{cam_id}_{dps_id}"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, cam_id)},
-            "name": coordinator.camera_name,
-            "manufacturer": "Philips",
-            "model": "Avent SCD973",
-        }
+        self._attr_device_info = build_device_info(coordinator, cam_id)
 
     @property
     def native_value(self) -> float | None:

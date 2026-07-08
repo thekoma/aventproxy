@@ -17,6 +17,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, DPS_TEMPERATURE
 from .coordinator import PhilipsAventCoordinator
+from .entity import build_device_info
 
 
 async def async_setup_entry(
@@ -41,12 +42,7 @@ class AventTemperatureSensor(CoordinatorEntity, SensorEntity):
         super().__init__(coordinator)
         self._cam_id = cam_id
         self._attr_unique_id = f"{cam_id}_temperature"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, cam_id)},
-            "name": coordinator.camera_name,
-            "manufacturer": "Philips",
-            "model": "Avent SCD973",
-        }
+        self._attr_device_info = build_device_info(coordinator, cam_id)
 
     @property
     def native_value(self) -> float | None:
@@ -69,12 +65,7 @@ class AventWifiSignalSensor(CoordinatorEntity, SensorEntity):
         super().__init__(coordinator)
         self._cam_id = cam_id
         self._attr_unique_id = f"{cam_id}_wifi_signal"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, cam_id)},
-            "name": coordinator.camera_name,
-            "manufacturer": "Philips",
-            "model": "Avent SCD973",
-        }
+        self._attr_device_info = build_device_info(coordinator, cam_id)
 
     @property
     def native_value(self) -> int | None:

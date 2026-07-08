@@ -11,6 +11,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT, DOMAIN, sanitize_rtsp_path
 from .coordinator import PhilipsAventCoordinator
+from .entity import build_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,12 +41,7 @@ class AventCamera(Camera):
         self._attr_unique_id = f"{cam_id}_camera"
         safe_name = sanitize_rtsp_path(coordinator.camera_name, cam_id)
         self._stream_url = f"rtsp://localhost:{bridge_port}/{safe_name}"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, cam_id)},
-            "name": coordinator.camera_name,
-            "manufacturer": "Philips",
-            "model": "Avent SCD973",
-        }
+        self._attr_device_info = build_device_info(coordinator, cam_id)
 
     async def stream_source(self) -> str:
         return self._stream_url

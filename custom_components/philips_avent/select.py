@@ -25,6 +25,7 @@ from .const import (
     TIMER_SECONDS_TO_LABEL,
 )
 from .coordinator import PhilipsAventCoordinator
+from .entity import build_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -63,12 +64,7 @@ class AventLullabySelect(CoordinatorEntity, SelectEntity):
         super().__init__(coordinator)
         self._cam_id = cam_id
         self._attr_unique_id = f"{cam_id}_lullaby_track"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, cam_id)},
-            "name": coordinator.camera_name,
-            "manufacturer": "Philips",
-            "model": "Avent SCD973",
-        }
+        self._attr_device_info = build_device_info(coordinator, cam_id)
 
     @property
     def current_option(self) -> str | None:
@@ -108,12 +104,7 @@ class AventPlayModeSelect(CoordinatorEntity, SelectEntity):
         super().__init__(coordinator)
         self._cam_id = cam_id
         self._attr_unique_id = f"{cam_id}_play_mode"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, cam_id)},
-            "name": coordinator.camera_name,
-            "manufacturer": "Philips",
-            "model": "Avent SCD973",
-        }
+        self._attr_device_info = build_device_info(coordinator, cam_id)
 
     @property
     def current_option(self) -> str | None:
@@ -146,12 +137,7 @@ class AventTimerSelect(CoordinatorEntity, SelectEntity):
         self._attr_name = name
         self._attr_icon = icon
         self._attr_unique_id = f"{cam_id}_{dps_timer}_timer"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, cam_id)},
-            "name": coordinator.camera_name,
-            "manufacturer": "Philips",
-            "model": "Avent SCD973",
-        }
+        self._attr_device_info = build_device_info(coordinator, cam_id)
 
     @property
     def current_option(self) -> str | None:

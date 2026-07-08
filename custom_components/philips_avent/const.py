@@ -20,6 +20,14 @@ TUYA_API_URL = "https://a1.tuyaeu.com/api.json"
 TUYA_MQTT_HOST = "m1.tuyaeu.com"
 TUYA_MQTT_PORT = 8883
 
+# Device model naming (issue #42). The Tuya productId does not distinguish
+# models within the SCD9xx family — the same id ("selj2idknqhjnids") has been
+# reported by both SCD951 and SCD953/26 units — so the displayed model stays
+# generic. Add an entry here only when a productId is confirmed to belong to
+# exactly one model.
+PRODUCT_ID_TO_MODEL: dict[str, str] = {}
+DEFAULT_MODEL = "Avent Baby Monitor"
+
 # DPS codes
 DPS_NIGHT_LIGHT = "138"
 DPS_BRIGHTNESS = "158"

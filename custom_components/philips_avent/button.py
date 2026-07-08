@@ -9,6 +9,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, DPS_LULLABY_CONTROL
 from .coordinator import PhilipsAventCoordinator
+from .entity import build_device_info
 
 
 async def async_setup_entry(
@@ -41,12 +42,7 @@ class AventLullabyButton(CoordinatorEntity, ButtonEntity):
         self._attr_name = f"Lullaby {action.title()}"
         self._attr_icon = icon
         self._attr_unique_id = f"{cam_id}_lullaby_{action}"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, cam_id)},
-            "name": coordinator.camera_name,
-            "manufacturer": "Philips",
-            "model": "Avent SCD973",
-        }
+        self._attr_device_info = build_device_info(coordinator, cam_id)
 
     async def async_press(self) -> None:
         await self.coordinator.set_dps({DPS_LULLABY_CONTROL: self._action})
