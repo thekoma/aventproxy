@@ -105,6 +105,40 @@ func TestHandleBridgeErrorReentrancy(t *testing.T) {
 	waitStreamRemoved(t, server, stream.streamId)
 }
 
+func TestRemoveStreamSkipsReplacementInstance(t *testing.T) {
+	server, oldStream := newTestCameraStream(t)
+	oldStream.active = true
+
+	// Simulate teardown scheduling async remove, then a fast reconnect
+	// registering a new CameraStream under the same streamId.
+	oldStream.stopStreamInternal()
+
+	replacement := NewCameraStream(oldStream.camera, oldStream.resolution, oldStream.user, nil, server)
+	replacement.active = true
+	server.mutex.Lock()
+	server.streams[replacement.streamId] = replacement
+	server.mutex.Unlock()
+
+	// Stale cleanup from the old stream must not delete the replacement.
+	server.removeStream(oldStream)
+
+	server.mutex.RLock()
+	got := server.streams[replacement.streamId]
+	server.mutex.RUnlock()
+	if got != replacement {
+		t.Fatalf("stale removeStream deleted replacement stream")
+	}
+
+	// Cleanup of the live instance still works.
+	server.removeStream(replacement)
+	server.mutex.RLock()
+	_, exists := server.streams[replacement.streamId]
+	server.mutex.RUnlock()
+	if exists {
+		t.Fatal("expected replacement stream to be removed by its own cleanup")
+	}
+}
+
 func TestAddClientRestartsAfterBridgeError(t *testing.T) {
 	_, stream := newTestCameraStream(t)
 	stream.active = true

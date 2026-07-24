@@ -384,13 +384,19 @@ func (s *RTSPServer) getOrCreateStream(camera *storage.CameraInfo, streamResolut
 	return stream, nil
 }
 
-func (s *RTSPServer) removeStream(streamId string) {
+// removeStream deletes stream from the server map only if it is still the
+// registered instance for that streamId. A stale async cleanup must not remove
+// a replacement CameraStream that reconnected under the same id.
+func (s *RTSPServer) removeStream(stream *CameraStream) {
+	if stream == nil {
+		return
+	}
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	if _, exists := s.streams[streamId]; exists {
-		delete(s.streams, streamId)
-		core.Logger.Trace().Msgf("Removed stream %s from server map", streamId)
+	if existing, exists := s.streams[stream.streamId]; exists && existing == stream {
+		delete(s.streams, stream.streamId)
+		core.Logger.Trace().Msgf("Removed stream %s from server map", stream.streamId)
 	}
 }
 
@@ -682,10 +688,11 @@ func (cs *CameraStream) stopStreamInternal() {
 
 	// MQTT client is NOT closed — kept alive for next stream (matches app behavior)
 
-	// Remove from server map in a separate goroutine to avoid potential deadlock
+	// Remove from server map in a separate goroutine to avoid potential deadlock.
+	// Pass the stream pointer so a stale cleanup cannot delete a replacement.
 	go func() {
 		if cs.server != nil {
-			cs.server.removeStream(cs.streamId)
+			cs.server.removeStream(cs)
 		}
 	}()
 }
