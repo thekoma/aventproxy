@@ -77,6 +77,9 @@ type CameraStream struct {
 	active       bool
 	lastActivity time.Time
 
+	// handlingError prevents re-entrant OnError from PeerConnection.Close during teardown.
+	handlingError bool
+
 	// Delayed shutdown
 	shutdownTimer *time.Timer
 	shutdownDelay time.Duration
@@ -84,6 +87,9 @@ type CameraStream struct {
 	// Reference to server for cleanup
 	server   *RTSPServer
 	streamId string
+
+	// startStreamOverride, if set, replaces startStream (tests only).
+	startStreamOverride func()
 }
 
 type ServerConfig struct {
@@ -370,20 +376,7 @@ func (s *RTSPServer) getOrCreateStream(camera *storage.CameraInfo, streamResolut
 		stream.webrtcBridge.SetMQTTClient(mqttClient)
 	}
 
-	stream.webrtcBridge.OnError = func(err error) {
-		if stream.active || stream.connecting {
-			core.Logger.Error().Err(err).Msgf("WebRTC error for camera %s", camera.DeviceName)
-
-			// Only stop if no clients are connected
-			stream.mutex.Lock()
-			clientCount := len(stream.clients)
-			stream.mutex.Unlock()
-
-			if clientCount == 0 {
-				stream.stopStreamInternal()
-			}
-		}
-	}
+	stream.attachBridgeErrorHandler()
 
 	s.streams[streamId] = stream
 
@@ -515,7 +508,11 @@ func (cs *CameraStream) AddClient(client *RTSPClient) {
 	// Start stream if not active and not already connecting
 	if !cs.active && !cs.connecting {
 		cs.connecting = true
-		go cs.startStream()
+		if cs.startStreamOverride != nil {
+			go cs.startStreamOverride()
+		} else {
+			go cs.startStream()
+		}
 	}
 }
 
@@ -577,6 +574,7 @@ func (cs *CameraStream) startStream() {
 
 		// Recreate bridge for retry to get fresh PeerConnection
 		if attempt > 1 {
+			cs.webrtcBridge.OnError = nil
 			cs.webrtcBridge.Stop()
 			cs.webrtcBridge = NewWebRTCBridge(cs.camera, cs.resolution, cs.user, cs.server.storageManager)
 			if cs.server.MobileClient != nil {
@@ -587,17 +585,7 @@ func (cs *CameraStream) startStream() {
 					cs.webrtcBridge.SetMQTTClient(mqttClient)
 				}
 			}
-			cs.webrtcBridge.OnError = func(err error) {
-				if cs.active || cs.connecting {
-					core.Logger.Error().Err(err).Msgf("WebRTC error for camera %s", cs.camera.DeviceName)
-					cs.mutex.Lock()
-					clientCount := len(cs.clients)
-					cs.mutex.Unlock()
-					if clientCount == 0 {
-						cs.stopStreamInternal()
-					}
-				}
-			}
+			cs.attachBridgeErrorHandler()
 		}
 
 		err := cs.webrtcBridge.Start()
@@ -623,6 +611,48 @@ func (cs *CameraStream) stopStream() {
 	cs.stopStreamInternal()
 }
 
+// attachBridgeErrorHandler wires WebRTC OnError to handleBridgeError on the current bridge.
+func (cs *CameraStream) attachBridgeErrorHandler() {
+	if cs.webrtcBridge == nil {
+		return
+	}
+	cs.webrtcBridge.OnError = func(err error) {
+		cs.handleBridgeError(err)
+	}
+}
+
+// handleBridgeError tears down a failed WebRTC session and force-closes RTSP clients
+// so they reconnect against a fresh stream (required for persistent clients like Scrypted).
+func (cs *CameraStream) handleBridgeError(err error) {
+	cs.mutex.Lock()
+	if cs.handlingError || (!cs.active && !cs.connecting) {
+		cs.mutex.Unlock()
+		return
+	}
+	cs.handlingError = true
+
+	core.Logger.Error().Err(err).Msgf("WebRTC error for camera %s", cs.camera.DeviceName)
+
+	clients := make([]*RTSPClient, 0, len(cs.clients))
+	for _, client := range cs.clients {
+		clients = append(clients, client)
+	}
+
+	// Clear OnError before Stop so PeerConnection.Close cannot re-enter this path.
+	if cs.webrtcBridge != nil {
+		cs.webrtcBridge.OnError = nil
+	}
+	cs.stopStreamInternal()
+	cs.handlingError = false
+	cs.mutex.Unlock()
+
+	for _, client := range clients {
+		if client.conn != nil {
+			_ = client.conn.Close()
+		}
+	}
+}
+
 func (cs *CameraStream) stopStreamInternal() {
 	// Check if we should actually stop
 	if !cs.active && !cs.connecting {
@@ -646,6 +676,7 @@ func (cs *CameraStream) stopStreamInternal() {
 
 	// Stop WebRTC bridge (sends SendDisconnect to clean device-side session)
 	if cs.webrtcBridge != nil {
+		cs.webrtcBridge.OnError = nil
 		cs.webrtcBridge.Stop()
 	}
 
