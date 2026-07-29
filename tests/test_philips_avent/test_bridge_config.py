@@ -13,7 +13,12 @@ project convention (see ``conftest.py``): the full path
 
 import json
 
-from payload import build_bridge_config, build_cameras_payload
+from payload import (
+    bridge_config_filename,
+    build_bridge_config,
+    build_cameras_payload,
+    orphan_bridge_configs,
+)
 
 
 class TestBuildCamerasPayloadShape:
@@ -125,3 +130,49 @@ class TestBuildBridgeConfig:
 
     def test_config_is_json_serialisable(self):
         assert json.loads(json.dumps(build_bridge_config(**self.BASE))) == build_bridge_config(**self.BASE)
+
+
+class TestOrphanBridgeConfigs:
+    """Leftover per-entry config files (issue #52).
+
+    Deleting and re-adding the integration mints a new entry id, so the old file
+    stayed in the config directory. The add-on then had two to choose from and
+    could keep using the dead entry's session and camera id, which Tuya answers
+    with "No access".
+    """
+
+    LIVE = "01ABCLIVEENTRY"
+    DEAD = "01XYZDEADENTRY"
+
+    def test_filename_is_named_after_the_entry(self):
+        assert bridge_config_filename(self.LIVE) == f"philips_avent_bridge_{self.LIVE}.json"
+
+    def test_file_of_a_missing_entry_is_an_orphan(self):
+        names = [bridge_config_filename(self.LIVE), bridge_config_filename(self.DEAD)]
+        assert orphan_bridge_configs(names, {self.LIVE}) == [bridge_config_filename(self.DEAD)]
+
+    def test_live_entries_are_kept(self):
+        names = [bridge_config_filename(self.LIVE), bridge_config_filename(self.DEAD)]
+        assert orphan_bridge_configs(names, {self.LIVE, self.DEAD}) == []
+
+    def test_multiple_accounts_keep_their_own_files(self):
+        second = "01SECONDACCOUNT"
+        names = [bridge_config_filename(x) for x in (self.LIVE, second, self.DEAD)]
+        assert orphan_bridge_configs(names, {self.LIVE, second}) == [bridge_config_filename(self.DEAD)]
+
+    def test_unrelated_files_are_never_touched(self):
+        names = [
+            "philips_avent_bridge.json",       # the legacy single-entry file
+            "configuration.yaml",
+            "philips_avent_bridge_.json",      # no entry id in the name
+            "something_philips_avent_bridge_x.json",
+            bridge_config_filename(self.DEAD),
+        ]
+        assert orphan_bridge_configs(names, {self.LIVE}) == [bridge_config_filename(self.DEAD)]
+
+    def test_no_entries_at_all_means_every_file_is_an_orphan(self):
+        names = [bridge_config_filename(self.LIVE), bridge_config_filename(self.DEAD)]
+        assert sorted(orphan_bridge_configs(names, set())) == sorted(names)
+
+    def test_empty_directory(self):
+        assert orphan_bridge_configs([], {self.LIVE}) == []

@@ -5,6 +5,33 @@ loaded by tests without dragging in the full HA stack.
 """
 from __future__ import annotations
 
+BRIDGE_CONFIG_PREFIX = "philips_avent_bridge_"
+BRIDGE_CONFIG_SUFFIX = ".json"
+
+
+def bridge_config_filename(entry_id: str) -> str:
+    """Name of the bridge config file for a config entry."""
+    return f"{BRIDGE_CONFIG_PREFIX}{entry_id}{BRIDGE_CONFIG_SUFFIX}"
+
+
+def orphan_bridge_configs(filenames: list[str], valid_entry_ids: set[str]) -> list[str]:
+    """Pick the bridge config files whose config entry is gone.
+
+    Deleting and re-adding the integration mints a new entry id, so the old
+    file stays in the Home Assistant config directory. The add-on then has two
+    to choose from and can keep streaming the credentials and camera id of the
+    entry that no longer exists (issue #52). Anything that is not named after a
+    live entry is dead weight.
+    """
+    orphans = []
+    for name in filenames:
+        if not name.startswith(BRIDGE_CONFIG_PREFIX) or not name.endswith(BRIDGE_CONFIG_SUFFIX):
+            continue
+        entry_id = name[len(BRIDGE_CONFIG_PREFIX):-len(BRIDGE_CONFIG_SUFFIX)]
+        if entry_id and entry_id not in valid_entry_ids:
+            orphans.append(name)
+    return orphans
+
 
 def build_bridge_config(
     *,

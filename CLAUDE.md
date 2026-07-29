@@ -12,7 +12,10 @@ Home Assistant custom integration for Philips Avent SCD973/SCD923 baby monitors.
    `aventproxy-bridge-addon-beta/` is the same add-on on the beta channel: the release workflow bumps
    the beta `config.yaml` for rc/beta tags and the stable one only for stable tags, so the two cards
    sit at different versions on purpose. A bridge older than the integration can miss config fields
-   (`api_host` landed in 2026.7.0-rc2), so testers must run the Beta card
+   (`api_host` landed in 2026.7.0-rc2), so testers must run the Beta card. Both cards pull the same
+   published image, which is built from `aventproxy-bridge-addon/` only, so the beta folder's
+   `Dockerfile` and `run.sh` are never built. Keep them byte-identical to the stable ones anyway;
+   the beta copy had silently drifted to a pre-multi-entry `run.sh`
 
 ## Commands
 

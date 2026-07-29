@@ -26,7 +26,7 @@ from .const import (
     TUYA_SIGNING_KEY,
 )
 from .coordinator import PhilipsAventCoordinator
-from .payload import build_bridge_config
+from .payload import BRIDGE_CONFIG_PREFIX, bridge_config_filename, build_bridge_config, orphan_bridge_configs
 from .region import DEFAULT_DATA_CENTER, api_host, api_url_for_host
 
 _LOGGER = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ async def _write_bridge_config(hass: HomeAssistant, entry: ConfigEntry, api: Phi
         bridge_port=bridge_port,
         cameras=cameras,
     )
-    bridge_path = Path(hass.config.path(f"philips_avent_bridge_{entry.entry_id}.json"))
+    bridge_path = Path(hass.config.path(bridge_config_filename(entry.entry_id)))
     await hass.async_add_executor_job(
         bridge_path.write_text, json.dumps(bridge_config, indent=2)
     )
@@ -72,6 +72,39 @@ async def _write_bridge_config(hass: HomeAssistant, entry: ConfigEntry, api: Phi
     if await hass.async_add_executor_job(legacy_path.exists):
         await hass.async_add_executor_job(legacy_path.unlink)
         _LOGGER.info("Removed legacy bridge config %s", legacy_path)
+
+    await _remove_orphan_bridge_configs(hass)
+
+
+async def _remove_orphan_bridge_configs(hass: HomeAssistant) -> None:
+    """Delete bridge config files belonging to entries that no longer exist.
+
+    Re-adding the integration mints a new entry id, so the previous file stayed
+    behind and the add-on could keep reading it: old session, old camera id, and
+    a Tuya "No access" on every stream attempt (issue #52). Reinstalling made it
+    worse, since each attempt left one more file.
+    """
+    config_dir = Path(hass.config.path())
+    valid = {entry.entry_id for entry in hass.config_entries.async_entries(DOMAIN)}
+
+    def _prune() -> list[str]:
+        names = [p.name for p in config_dir.glob(f"{BRIDGE_CONFIG_PREFIX}*.json")]
+        removed = []
+        for name in orphan_bridge_configs(names, valid):
+            try:
+                (config_dir / name).unlink()
+            except OSError as err:
+                _LOGGER.warning("Could not remove stale bridge config %s: %s", name, err)
+            else:
+                removed.append(name)
+        return removed
+
+    removed = await hass.async_add_executor_job(_prune)
+    for name in removed:
+        _LOGGER.info(
+            "Removed stale bridge config %s, it belonged to a config entry that no longer exists",
+            name,
+        )
 
 
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -194,3 +227,25 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await data["session"].close()
 
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Delete this entry's bridge config when the integration is removed.
+
+    Without this the file survived the removal, and the add-on could pick it
+    over the file of whatever entry the user created next (issue #52).
+    """
+    bridge_path = Path(hass.config.path(bridge_config_filename(entry.entry_id)))
+
+    def _unlink() -> bool:
+        try:
+            bridge_path.unlink()
+        except FileNotFoundError:
+            return False
+        except OSError as err:
+            _LOGGER.warning("Could not remove bridge config %s: %s", bridge_path, err)
+            return False
+        return True
+
+    if await hass.async_add_executor_job(_unlink):
+        _LOGGER.info("Removed bridge config %s", bridge_path)

@@ -5,12 +5,27 @@ BRIDGE_CONFIG_GLOB="/config/philips_avent_bridge_*.json"
 BRIDGE_CONFIG_LEGACY="/config/philips_avent_bridge.json"
 ADDON_CONFIG="/data/options.json"
 
+# Picks the most recently written config. The integration writes one file per
+# config entry, and a leftover from a deleted entry used to win just by sorting
+# first, which had the bridge streaming an old session and camera id (issue #52).
 find_bridge_config() {
-    for f in $BRIDGE_CONFIG_GLOB; do
-        [ -f "$f" ] && echo "$f" && return 0
-    done
+    newest=$(ls -1t $BRIDGE_CONFIG_GLOB 2>/dev/null | head -1)
+    if [ -n "$newest" ] && [ -f "$newest" ]; then
+        echo "$newest"
+        return 0
+    fi
     [ -f "$BRIDGE_CONFIG_LEGACY" ] && echo "$BRIDGE_CONFIG_LEGACY" && return 0
     return 1
+}
+
+warn_on_extra_configs() {
+    count=$(ls -1 $BRIDGE_CONFIG_GLOB 2>/dev/null | wc -l | tr -d ' ')
+    if [ "${count:-0}" -gt 1 ]; then
+        echo "WARNING: $count bridge config files found in /config, using the newest one:"
+        ls -1t $BRIDGE_CONFIG_GLOB 2>/dev/null | sed 's/^/  /'
+        echo "The integration deletes the others on its next start. If they stay, remove the ones"
+        echo "that do not belong to your current integration entry by hand."
+    fi
 }
 
 if [ "${WAIT_FOR_CONFIG:-false}" = "true" ]; then
@@ -20,6 +35,8 @@ if [ "${WAIT_FOR_CONFIG:-false}" = "true" ]; then
     done
     echo "Config found!"
 fi
+
+warn_on_extra_configs
 
 FOUND_CONFIG=$(find_bridge_config 2>/dev/null)
 if [ -n "$FOUND_CONFIG" ]; then
