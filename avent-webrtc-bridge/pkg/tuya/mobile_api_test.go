@@ -1,6 +1,9 @@
 package tuya
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -83,5 +86,61 @@ func TestNewMobileSDKClientDefaultsToEU(t *testing.T) {
 	c := NewMobileSDKClient("sk", "sid", "ak", "dev", "ch")
 	if c.BaseURL != "https://a1.tuyaeu.com/api.json" {
 		t.Errorf("BaseURL = %q, want the EU host by default", c.BaseURL)
+	}
+}
+
+// captureRequest points a client at a test server and returns the form values
+// of the single call made against it.
+func captureRequest(t *testing.T, call func(c *MobileSDKClient) error) url.Values {
+	t.Helper()
+	var got url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("ParseForm: %v", err)
+		}
+		got = r.PostForm
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"result":{}}`))
+	}))
+	defer srv.Close()
+
+	c := NewMobileSDKClient("sk", "sid", "ak", "dev", "ch")
+	c.BaseURL = srv.URL
+	if err := call(c); err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	return got
+}
+
+func TestP2PPreLinkMatchesTheAppCapture(t *testing.T) {
+	// Action name and payload come from the app capture in WHITEPAPER.md. The
+	// old thing.m.p2p.main.pre.link.get with no devId was rejected, and the
+	// server then refused the WebRTC config with PERMISSION_DENIED (issue #48).
+	form := captureRequest(t, func(c *MobileSDKClient) error {
+		return c.P2PPreLink("bfd705823638458c46rqoi")
+	})
+
+	if got := form.Get("a"); got != "smartlife.m.p2p.main.pre.link.get" {
+		t.Errorf("action = %q, want smartlife.m.p2p.main.pre.link.get", got)
+	}
+	if got := form.Get("postData"); got != `{"devId":"bfd705823638458c46rqoi"}` {
+		t.Errorf("postData = %q, want the devId payload", got)
+	}
+	if form.Get("sign") == "" {
+		t.Error("request must be signed")
+	}
+}
+
+func TestWebRTCConfigRequestShape(t *testing.T) {
+	form := captureRequest(t, func(c *MobileSDKClient) error {
+		_, err := c.GetWebRTCConfig("bfd705823638458c46rqoi")
+		return err
+	})
+
+	if got := form.Get("a"); got != "smartlife.m.rtc.config.get" {
+		t.Errorf("action = %q", got)
+	}
+	if got := form.Get("postData"); got != `{"devId":"bfd705823638458c46rqoi"}` {
+		t.Errorf("postData = %q", got)
 	}
 }

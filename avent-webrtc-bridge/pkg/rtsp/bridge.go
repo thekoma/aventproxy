@@ -111,13 +111,19 @@ func (wb *WebRTCBridge) Start() error {
 		// Mobile SDK path
 		core.Logger.Info().Msg("Using Tuya Mobile SDK API")
 
-		if err := wb.mobileClient.P2PPreLink(); err != nil {
-			core.Logger.Warn().Err(err).Msg("P2P pre-link failed (non-fatal)")
+		if err := wb.mobileClient.P2PPreLink(wb.camera.DeviceID); err != nil {
+			core.Logger.Warn().Err(err).Msgf(
+				"P2P pre-link failed for camera %s (non-fatal, but the WebRTC config may be refused)",
+				wb.camera.DeviceName,
+			)
 		}
 
 		webRTCConfig, err = wb.mobileClient.GetWebRTCConfig(wb.camera.DeviceID)
 		if err != nil {
-			return fmt.Errorf("failed to get WebRTC config: %v", err)
+			return fmt.Errorf(
+				"failed to get WebRTC config for camera %s (id %s): %v",
+				wb.camera.DeviceName, wb.camera.DeviceID, err,
+			)
 		}
 
 		if err := wb.mobileClient.RTCSessionInit(wb.camera.DeviceID); err != nil {
