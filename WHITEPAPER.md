@@ -23,8 +23,13 @@
 10. [Integration Architecture](#10-integration-architecture)
 11. [Failures and Dead Ends](#11-failures-and-dead-ends)
 12. [Phase 6: MQTT Credential Derivation](#12-phase-6-mqtt-credential-derivation)
-13. [Security Considerations](#13-security-considerations)
-14. [Reproducibility Guide](#14-reproducibility-guide)
+13. [Phase 7: LAN Protocol & DPS Push Discovery](#13-phase-7-lan-protocol-dps-push-discovery)
+14. [Phase 8: Streaming Path — WebRTC Signaling and Media](#14-phase-8-streaming-path-webrtc-signaling-and-media)
+15. [Phase 9: Native SDK Analysis (`libThingP2PSDK.so`)](#15-phase-9-native-sdk-analysis-libthingp2psdkso)
+16. [Phase 10: The Local-Signaling Path (Zero-WAN)](#16-phase-10-the-local-signaling-path-zero-wan)
+17. [Completed Architecture](#17-completed-architecture)
+18. [Security Considerations](#18-security-considerations)
+19. [Reproducibility Guide](#19-reproducibility-guide)
 
 ---
 
@@ -84,9 +89,9 @@ The camera exposes the following LAN services:
 
 | Port | Protocol | Purpose |
 |------|----------|---------|
-| 554 | RTSP | Video stream (AES encrypted) |
+| 554 | RTSP | Answers, but gated behind the P2P/KCP tunnel — not a consumable stream (see section 14) |
 | 6000 | Tuya Auth | RTSP credential negotiation |
-| 6668 | Tuya LAN | Native video transport (used by app) |
+| 6668 | Tuya LAN | Tuya localKey control channel (DPS, commands); carries no media |
 | 8686 | Unknown | Discovery/control |
 | 8687 | Unknown | Discovery/control |
 
@@ -98,7 +103,13 @@ The mobile app maintains three persistent connections:
 2. **MQTT/TLS** to `m1.tuyaeu.com:8883` — Real-time signaling, device events
 3. **TCP** to camera `192.168.x.x:6668` — Direct LAN video transport
 
-When streaming, the app authenticates via the cloud, then establishes a direct LAN connection to the camera on port 6668. No WebRTC or P2P relay is used when on the same network.
+When streaming, the app authenticates via the cloud and holds a direct LAN connection to the camera
+on port 6668.
+
+**Later correction (section 14):** port 6668 is the Tuya localKey control channel, not the video
+path. The media is WebRTC: signaling over cloud MQTT, then H.264 over UDP between phone and camera.
+Because the camera advertises a direct-LAN host ICE candidate, the media does stay on the LAN when
+both ends are on it, which is what made this reading look right at the time.
 
 ### Software Stack
 
@@ -138,7 +149,10 @@ TCP connections:
   phone:xxxxx → [2a05:...]:8883 ESTABLISHED   (Tuya MQTT - TLS)
 ```
 
-**Key insight:** Video streams over LAN (port 6668), not cloud. Authentication and signaling go through the cloud. The camera also supports WebRTC (confirmed later via API), which provides an alternative streaming path usable by third-party tools.
+**Key insight:** the video path is local while authentication and signaling go through the cloud.
+The initial reading of this capture put the media on port 6668; section 14 corrects that to WebRTC
+media over UDP, negotiated through cloud MQTT. The conclusion that matters for a third-party client
+holds either way: after login, the frames come from the camera, not from Tuya.
 
 ---
 
@@ -882,7 +896,118 @@ Baby Monitor (LAN, 192.168.85.x)
 
 ---
 
-## 14. Security Considerations
+## 14. Phase 8: Streaming Path — WebRTC Signaling and Media
+
+*This phase was contributed by @leonardpitzu in [issue #51](https://github.com/thekoma/aventproxy/issues/51), from work on the sibling `aventlocal` project. The findings are reproduced here with light edits: section cross-references renumbered, and one note added where the capture and this project's working bridge disagree.*
+
+Authentication (sections 6 to 8) yields API access; this phase documents how the **video itself** is obtained. The camera streams over **WebRTC**, negotiated in two independent phases:
+
+1. **Signaling** — a short SDP **offer/answer + ICE-candidate** exchange. The official app carries it over the **Tuya cloud MQTT** broker. This is the only part that touches the internet.
+2. **Media** — once ICE picks a path, H.264 video flows **peer-to-peer over UDP**. The camera advertises a **direct-LAN host candidate** (e.g. `192.168.0.15:<port>`), so on the same LAN the media never leaves the network.
+
+### Cloud signaling frame format
+
+```
+publish  → /av/moto/<motoId>/u/<deviceId>      # offer + local ICE candidates → camera
+subscribe← /av/u/<uid>                          # answer + camera ICE candidates ← camera
+
+{ "protocol": 302, "pv": "2.2", "t": <ms>,
+  "data": {
+    "header": { "type": "offer|answer|candidate|disconnect",
+                "from": <msid>, "to": <deviceId>, "sub_dev_id": "",
+                "sessionid": <32-hex>, "moto_id": <motoId>, "tid": "", "seq": 0, "rtx": 0 },
+    "msg":    { "mode": "webrtc", "sdp": "...", "auth": <from rtc.config.get>,
+                "token": [<ice servers>], "stream_type": 1 } } }
+```
+
+The publish topic matches this project's bridge exactly (`pkg/tuya/mqttCamera.go`). For the
+subscribe topic the capture reads `msid`; the bridge subscribes with the account `uid` from
+`smartlife.m.user.info.get` and receives answers reliably, so `uid` is the tested value here.
+`msid` is a different derived string (see section 12), which suggests either the app uses one and
+we use the other, or the broker accepts both.
+
+`msg.token` is the **ICE-server list** (`rtc.config.get → p2p_config.ices`), not a string. `auth`, `motoId`, and the ICE servers all come from the `smartlife.m.rtc.config.get` call introduced in section 9.
+
+### Two media modes
+
+| Mode | Codec / transport | Crypto | Consumable by |
+|------|-------------------|--------|---------------|
+| `webrtc` | RTP/H.264 over **DTLS-SRTP** (standard WebRTC) | SRTP keys from the DTLS handshake | any standard stack (`aiortc`, `pion`) |
+| `imm` | Tuya `AES/KCP` custom codec (`m=application 9 tuya 6001`) | AES-128, key shipped plaintext in SDP `a=aes-key` | custom decoder |
+
+Requesting **`mode: webrtc`** yields an ordinary DTLS-SRTP/H.264 stream — no proprietary cipher to reimplement. The `imm` path is documented for completeness but unnecessary.
+
+### Correction: port 554 is not a shortcut
+
+The reconnaissance note (section 3) that 554 carries "AES-encrypted RTSP" was tested to conclusion: the port answers `400 Bad <method>` to every standard RTSP verb and path/auth combination. It is a **P2P/KCP-tunnel-gated** endpoint, not a standalone consumable RTSP server. The real local stream is the WebRTC media leg above, not port 554.
+
+## 15. Phase 9: Native SDK Analysis (`libThingP2PSDK.so`)
+
+The streaming engine is the native P2P SDK (`libThingP2PSDK.so`, ARM64), pulled from the device and analyzed statically (`nm -D`, `strings`, `objdump`).
+
+**Media is off-the-shelf WebRTC — confirmed by symbols:**
+- libsrtp: `srtp_protect`, `srtp_unprotect_aead`
+- mbedTLS DTLS: `mbedtls_ssl_*`, `mbedtls_x509write_crt_*`, `mbedtls_ctr_drbg_seed`
+- `imm_p2p_rtc_sdp_set_dtls_cert_fingerprint`, plus a full SDP builder API: `imm_p2p_rtc_sdp_{add_media,add_video_codec,add_audio_codec,add_candidate,set_aes_key,get_aes_key}`
+
+This is decisive: the `webrtc` mode is genuine DTLS-SRTP that `aiortc` decodes natively; the `imm`/AES-KCP path is the *alternative*, not the default.
+
+**Signaling command surface (string-extracted JSON templates):**
+
+```jsonc
+{"cmd":"connect_v3","args":{"remote_id":"%s","dev_id":"%s","token":%.*s,
+   "trace_id":"%s","timeout_ms":%d,"lan_mode":%d,"preconnect_enable":%d,
+   "connect_session":"%s"}}
+{"cmd":"signaling_result","args":{"code":%d,"remote_id":"%s","signaling":%.*s}}
+{"cmd":"retransmit_signaling","args":{"sessionid":"%s","remote_id":"%s","path":"%s"}}
+```
+
+The cloud-vs-LAN selector inside the SDK is the integer **`lan_mode`** flag on `connect_v3`/`connect_v2`/`connect` — not the `header.path` string (the only `path` literals in the binary are `mqtt` and `relay`). Threads `create signaling lan thread` and `create signaling mqtt worker thread` confirm two distinct signaling transports behind one API.
+
+## 16. Phase 10: The Local-Signaling Path (Zero-WAN)
+
+The official app keeps streaming with the camera's WAN unplugged, so the camera must accept the **same signaling frames over a local channel**. Reverse engineering located the fork but not yet the full live handshake.
+
+**The app's clean cloud/LAN fork (decompiled Java):**
+
+```java
+// P2PMQTTServiceManager.send302MessageThroughMqtt(boolean z, String devId, String json)
+if (z) homeCamera.lan302Publish(devId, body, cb);                 // LAN  branch
+else   homeCamera.publish(devId, pv, localKey, body, 302, cb);    // cloud branch
+```
+
+- The offer **body is byte-identical** for both branches — only the transport differs. This is what makes a drop-in local signaling transport viable.
+- `lan302Publish → lanControl(devId, body, FrameTypeEnum.IPC_LAN_302.type = 32, cb)`.
+- The cloud branch receives the answer via MQTT (`registerCameraP2P302Listener`); the LAN branch via a **separate local push** (`registerHardwareP2P302Listener`).
+
+**Why a naive frametype-32 offer fails (tested):** sending a faithful `IPC_LAN_302` offer over the standard Tuya 3.5 localKey session on **:6668** — correct header, real `auth`, real ICE `token`, 20 s listen — returns only the localKey-layer **ACK** (`retcode=0, paylen=0`) and **no answer**. The binary explains it: `ThingSmartP2PSDK::SendMessageThroughLAN` enumerates local interfaces (`getifaddrs`) and sends over the SDK's **own UDP socket/port**, not as a reply on the opened socket; and the camera only answers *inside* an established `connect_v3` P2P/ICE session (`imm_p2p_ice_session_{create,add_remote_userinfo,add_remote_candidate,get_handshake_info}`), not a one-shot publish.
+
+**The one remaining open problem.** Everything above is static or derived. Not yet captured live: the concrete `lan_mode`/`path` values and the SDK's LAN UDP port the answer returns on. It cannot be observed on an emulator — NAT `10.0.2.x` is not on the camera's L2 LAN, so the app always takes the cloud branch (`z=false`). Closing it requires an **on-LAN Android client with Frida**, with the camera blocked from WAN, hooking `send302MessageThroughMqtt` + native `imm_p2p_rtc_set_signaling` / `SendMessageThroughLAN`.
+
+## 17. Completed Architecture
+
+With the streaming path mapped, the end-to-end local pipeline is:
+
+```
+cloud login + smartlife.m.rtc.config.get   (one-time; motoId, auth, ICE servers, MQTT creds)
+        │
+        ▼
+pluggable signaling transport
+   ├─ CloudMqttSignaling   offer/answer over Tuya MQTT          ✅ implemented
+   └─ LanSignaling         offer/answer over the SDK LAN socket  🚧 pending the section 16 capture
+        │
+        ▼
+aiortc PeerConnection (DTLS-SRTP, H.264)  ← direct-LAN host ICE pair, media stays local
+        │
+        ▼
+RTSP re-publish (ffmpeg/go2rtc)  →  Home Assistant / VLC
+```
+
+The reference implementation lives in the sibling `aventlocal` project; its `SignalingTransport` ABC is the seam that lets `LanSignaling` slot in behind the same interface once the section 16 capture is done, with the media→RTSP pipeline unchanged. Because login + `rtc.config.get` is the *only* remaining cloud touch, caching that config (or serving it locally) removes even that step — yielding true zero-internet operation.
+
+---
+
+## 18. Security Considerations
 
 ### Responsible Disclosure
 
@@ -903,7 +1028,7 @@ This research targets personal devices owned by the researcher. No third-party s
 
 ---
 
-## 15. Reproducibility Guide
+## 19. Reproducibility Guide
 
 ### Requirements
 
