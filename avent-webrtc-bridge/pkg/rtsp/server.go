@@ -80,6 +80,10 @@ type CameraStream struct {
 	// handlingError prevents re-entrant OnError from PeerConnection.Close during teardown.
 	handlingError bool
 
+	// bridgeStarted records that the current bridge has been started once, so a
+	// restart replaces it instead of reusing a stopped one.
+	bridgeStarted bool
+
 	// Delayed shutdown
 	shutdownTimer *time.Timer
 	shutdownDelay time.Duration
@@ -578,22 +582,17 @@ func (cs *CameraStream) startStream() {
 
 		core.Logger.Info().Msgf("Starting stream for camera: %s (attempt %d/2)", cs.camera.DeviceName, attempt)
 
-		// Recreate bridge for retry to get fresh PeerConnection
-		if attempt > 1 {
-			cs.webrtcBridge.OnError = nil
-			cs.webrtcBridge.Stop()
-			cs.webrtcBridge = NewWebRTCBridge(cs.camera, cs.resolution, cs.user, cs.server.storageManager)
-			if cs.server.MobileClient != nil {
-				cs.webrtcBridge.SetMobileClient(cs.server.MobileClient)
-			}
-			if cs.server.mqttManager != nil {
-				if mqttClient, err := cs.server.mqttManager.GetClient(cs.camera.DeviceID); err == nil {
-					cs.webrtcBridge.SetMQTTClient(mqttClient)
-				}
-			}
-			cs.attachBridgeErrorHandler()
+		// A retry always needs a fresh PeerConnection, and so does a first
+		// attempt on a bridge that has already run: Stop() cancels its context
+		// and closes the PeerConnection, and teardown clears OnError. A client
+		// reconnecting before the async removeStream lands (Scrypted does this
+		// in milliseconds) reuses this stream, so without the replacement the
+		// attempt runs against a dead bridge with no error handler attached.
+		if attempt > 1 || cs.bridgeStarted {
+			cs.replaceBridge()
 		}
 
+		cs.bridgeStarted = true
 		err := cs.webrtcBridge.Start()
 		if err == nil {
 			cs.connecting = false
@@ -615,6 +614,34 @@ func (cs *CameraStream) stopStream() {
 	cs.mutex.Lock()
 	defer cs.mutex.Unlock()
 	cs.stopStreamInternal()
+}
+
+// replaceBridge swaps in a fresh WebRTC bridge, rewired to the server's mobile
+// and MQTT clients, with the error handler attached. Callers must hold cs.mutex.
+func (cs *CameraStream) replaceBridge() {
+	if cs.webrtcBridge != nil {
+		cs.webrtcBridge.OnError = nil
+		cs.webrtcBridge.Stop()
+	}
+
+	var storageManager *storage.StorageManager
+	if cs.server != nil {
+		storageManager = cs.server.storageManager
+	}
+	cs.webrtcBridge = NewWebRTCBridge(cs.camera, cs.resolution, cs.user, storageManager)
+
+	if cs.server != nil {
+		if cs.server.MobileClient != nil {
+			cs.webrtcBridge.SetMobileClient(cs.server.MobileClient)
+		}
+		if cs.server.mqttManager != nil {
+			if mqttClient, err := cs.server.mqttManager.GetClient(cs.camera.DeviceID); err == nil {
+				cs.webrtcBridge.SetMQTTClient(mqttClient)
+			}
+		}
+	}
+
+	cs.attachBridgeErrorHandler()
 }
 
 // attachBridgeErrorHandler wires WebRTC OnError to handleBridgeError on the current bridge.

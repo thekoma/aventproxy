@@ -174,3 +174,56 @@ func TestAddClientRestartsAfterBridgeError(t *testing.T) {
 		t.Fatal("expected connecting=true after AddClient on inactive stream")
 	}
 }
+
+func TestReplaceBridgeReattachesErrorHandler(t *testing.T) {
+	// After a teardown the bridge is unusable (Stop cancels its context) and its
+	// OnError has been cleared. A stream reused by a fast reconnect must get a
+	// fresh bridge with the handler attached, otherwise the next WebRTC failure
+	// is never noticed and the stream stays active with dead video (issue #68).
+	_, stream := newTestCameraStream(t)
+	stream.active = true
+
+	first := stream.webrtcBridge
+	if first == nil || first.OnError == nil {
+		t.Fatal("expected a bridge with an error handler on a new stream")
+	}
+
+	stream.handleBridgeError(errors.New("WebRTC connection failed/closed"))
+
+	if first.OnError != nil {
+		t.Error("teardown should clear OnError on the failed bridge")
+	}
+
+	stream.mutex.Lock()
+	stream.replaceBridge()
+	stream.mutex.Unlock()
+
+	if stream.webrtcBridge == first {
+		t.Fatal("expected a replacement bridge, got the stopped one")
+	}
+	if stream.webrtcBridge.OnError == nil {
+		t.Fatal("replacement bridge must have the error handler attached")
+	}
+}
+
+func TestStartStreamReplacesAnAlreadyStartedBridge(t *testing.T) {
+	// Guards the branch condition in startStream: a bridge that has run once is
+	// never restarted in place.
+	_, stream := newTestCameraStream(t)
+
+	stream.mutex.Lock()
+	stream.bridgeStarted = true
+	first := stream.webrtcBridge
+	stream.replaceBridge()
+	stream.mutex.Unlock()
+
+	if stream.webrtcBridge == first {
+		t.Fatal("a started bridge must be replaced, not reused")
+	}
+
+	// A brand new stream has not started its bridge yet, so nothing is thrown away.
+	_, fresh := newTestCameraStream(t)
+	if fresh.bridgeStarted {
+		t.Fatal("a new stream must not be marked as already started")
+	}
+}
