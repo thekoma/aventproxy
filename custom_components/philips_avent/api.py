@@ -33,7 +33,7 @@ def _swap(s: str) -> str:
 
 def _sign(params: dict[str, str]) -> str:
     filtered = {k: v for k, v in params.items() if k in SIGN_PARAM_WHITELIST and v}
-    if "postData" in filtered and filtered["postData"]:
+    if filtered.get("postData"):
         md5 = hashlib.md5(filtered["postData"].encode()).hexdigest()
         filtered["postData"] = _swap(md5)
     param_str = "||".join(f"{k}={filtered[k]}" for k in sorted(filtered))

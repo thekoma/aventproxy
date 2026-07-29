@@ -21,7 +21,7 @@ import zipfile
 
 
 def run(cmd, **kwargs):
-    return subprocess.run(cmd, capture_output=True, text=True, **kwargs)
+    return subprocess.run(cmd, capture_output=True, text=True, **kwargs, check=False)
 
 
 def get_cert_sha256(apk_path):

@@ -33,7 +33,7 @@ def ping_monitor(ip):
         result = subprocess.run(
             ["ping", "-c", "1", "-W", "2", ip],
             capture_output=True, timeout=5
-        )
+        , check=False)
         was_ok = ping_ok
         ping_ok = result.returncode == 0
         if was_ok and not ping_ok:
@@ -51,7 +51,7 @@ def wait_online(ip, timeout=120):
         result = subprocess.run(
             ["ping", "-c", "1", "-W", "2", ip],
             capture_output=True, timeout=5
-        )
+        , check=False)
         if result.returncode == 0:
             print("  Device online")
             time.sleep(5)
@@ -63,7 +63,6 @@ def wait_online(ip, timeout=120):
 
 def test_operation(name, func, ip):
     """Run a single operation and check if device crashes."""
-    global ping_ok
     print(f"\n{'='*60}")
     print(f"TEST: {name}")
     print(f"{'='*60}")
@@ -175,6 +174,7 @@ def main():
     # --- TEST 6: REST API get_device (cloud) ---
     def test_api_get_device():
         import asyncio
+
         import aiohttp
 
         TUYA_SIGNING_KEY = (
@@ -209,6 +209,7 @@ def main():
     # --- TEST 7: REST API get_rssi ---
     def test_api_get_rssi():
         import asyncio
+
         import aiohttp
 
         TUYA_SIGNING_KEY = (

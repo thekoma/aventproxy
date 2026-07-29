@@ -20,7 +20,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from tuya_client import TuyaClient, TuyaAPIError
+from tuya_client import TuyaAPIError, TuyaClient
 
 SIGNING_KEY = os.environ["TUYA_SIGNING_KEY"]
 APP_KEY = os.environ["TUYA_APP_KEY"]

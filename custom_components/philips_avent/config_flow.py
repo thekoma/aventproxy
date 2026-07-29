@@ -6,7 +6,6 @@ from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
-
 from homeassistant import config_entries
 from homeassistant.const import CONF_COUNTRY, CONF_EMAIL, CONF_PASSWORD
 from homeassistant.data_entry_flow import AbortFlow
@@ -15,12 +14,26 @@ from homeassistant.helpers.selector import CountrySelector, CountrySelectorConfi
 
 from .api import PhilipsAventAPI, TuyaAPIError, classify_login_error
 from .const import (
-    CONF_API_HOST, CONF_BRIDGE_HOST, CONF_BRIDGE_PORT, CONF_COUNTRY_CODE, CONF_ECODE, CONF_PARTNER,
-    CONF_SID, CONF_UID, DEFAULT_BRIDGE_HOST, DEFAULT_BRIDGE_PORT, DOMAIN,
+    CONF_API_HOST,
+    CONF_BRIDGE_HOST,
+    CONF_BRIDGE_PORT,
+    CONF_COUNTRY_CODE,
+    CONF_ECODE,
+    CONF_PARTNER,
+    CONF_SID,
+    CONF_UID,
+    DEFAULT_BRIDGE_HOST,
+    DEFAULT_BRIDGE_PORT,
+    DOMAIN,
 )
 from .region import (
-    COUNTRY_ROUTING, api_host, api_url, api_url_for_host, hosts_from_domain,
-    is_wrong_data_center, login_candidates,
+    COUNTRY_ROUTING,
+    api_host,
+    api_url,
+    api_url_for_host,
+    hosts_from_domain,
+    is_wrong_data_center,
+    login_candidates,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -232,13 +245,15 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 cameras = []
                 try:
                     discovered = await self._api.discover_cameras()
-                    for cam in discovered:
-                        cameras.append({
+                    cameras.extend(
+                        {
                             "id": cam.get("devId") or cam.get("deviceId"),
                             "name": cam.get("name") or cam.get("deviceName", "camera"),
                             "product_id": cam.get("productId") or cam.get("productKey") or "",
-                        })
-                except Exception:
+                        }
+                        for cam in discovered
+                    )
+                except Exception:  # noqa: BLE001 - discovery is best effort, the entry is still valid
                     _LOGGER.warning("Camera discovery during setup failed")
 
                 await self.async_set_unique_id(result["uid"])

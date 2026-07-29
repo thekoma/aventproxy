@@ -11,9 +11,10 @@ Example:
     python3 extract_signing_key.py com.philips.ph.babymonitorplus
 """
 
-import frida
 import json
 import sys
+
+import frida
 
 FRIDA_SCRIPT = """
 Java.perform(function() {
@@ -97,10 +98,11 @@ def main():
     else:
         # List Tuya-based apps
         print("Looking for Tuya-based apps...")
-        candidates = []
-        for proc in device.enumerate_processes():
-            if any(x in proc.name.lower() for x in ["baby", "camera", "smart", "tuya"]):
-                candidates.append((proc.pid, proc.name))
+        candidates = [
+            (proc.pid, proc.name)
+            for proc in device.enumerate_processes()
+            if any(x in proc.name.lower() for x in ["baby", "camera", "smart", "tuya"])
+        ]
         if not candidates:
             print("No Tuya apps found running.")
             sys.exit(1)

@@ -12,12 +12,12 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     DOMAIN,
+    DPS_LIGHT_TIMER,
+    DPS_LIGHT_TIMER_SWITCH,
     DPS_LULLABY_CONTROL,
     DPS_LULLABY_MODE,
     DPS_LULLABY_TIMER,
     DPS_LULLABY_TIMER_SWITCH,
-    DPS_LIGHT_TIMER,
-    DPS_LIGHT_TIMER_SWITCH,
     LULLABY_ID_BY_NAME,
     LULLABY_TRACK_MAP,
     LULLABY_TRACKS,
@@ -98,10 +98,10 @@ class AventPlayModeSelect(CoordinatorEntity, SelectEntity):
     _attr_has_entity_name = True
     _attr_name = "Play Mode"
     _attr_icon = "mdi:repeat"
-    _attr_options = list(PLAY_MODE_LABELS.values())
 
     def __init__(self, coordinator: PhilipsAventCoordinator, cam_id: str):
         super().__init__(coordinator)
+        self._attr_options = list(PLAY_MODE_LABELS.values())
         self._cam_id = cam_id
         self._attr_unique_id = f"{cam_id}_play_mode"
         self._attr_device_info = build_device_info(coordinator, cam_id)
@@ -124,13 +124,13 @@ class AventPlayModeSelect(CoordinatorEntity, SelectEntity):
 
 class AventTimerSelect(CoordinatorEntity, SelectEntity):
     _attr_has_entity_name = True
-    _attr_options = list(TIMER_OPTIONS.keys())
 
     def __init__(
         self, coordinator: PhilipsAventCoordinator, cam_id: str,
         name: str, icon: str, dps_timer: str, dps_switch: str,
     ):
         super().__init__(coordinator)
+        self._attr_options = list(TIMER_OPTIONS.keys())
         self._cam_id = cam_id
         self._dps_timer = dps_timer
         self._dps_switch = dps_switch

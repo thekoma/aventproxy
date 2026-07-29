@@ -78,10 +78,9 @@ class AventMotionDetected(CoordinatorEntity, BinarySensorEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         dps = self.coordinator.data
-        if dps and dps.get(DPS_ALERT_EVENT) == "motion_detection":
-            if dps.get(DPS_MOTION_SWITCH):
-                self._is_on = True
-                self._schedule_clear()
+        if dps and dps.get(DPS_ALERT_EVENT) == "motion_detection" and dps.get(DPS_MOTION_SWITCH):
+            self._is_on = True
+            self._schedule_clear()
         self.async_write_ha_state()
 
     @callback

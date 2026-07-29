@@ -10,7 +10,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
-    CONF_BRIDGE_HOST, CONF_BRIDGE_PORT, DEFAULT_BRIDGE_HOST, DEFAULT_BRIDGE_PORT, DOMAIN,
+    CONF_BRIDGE_HOST,
+    CONF_BRIDGE_PORT,
+    DEFAULT_BRIDGE_HOST,
+    DEFAULT_BRIDGE_PORT,
+    DOMAIN,
     build_rtsp_url,
 )
 from .coordinator import PhilipsAventCoordinator

@@ -1,6 +1,7 @@
 """Data update coordinator for Philips Avent."""
 from __future__ import annotations
 
+import contextlib
 import logging
 from datetime import timedelta
 from typing import Any
@@ -86,10 +87,8 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
                     if lullaby_cmd in LULLABY_STATE_MAP:
                         optimistic[DPS_LULLABY_STATE] = LULLABY_STATE_MAP[lullaby_cmd]
                     self.async_set_updated_data({**self.data, **optimistic})
-                try:
+                with contextlib.suppress(TuyaAPIError):
                     await self.api.set_dps(self.camera_id, dps)
-                except TuyaAPIError:
-                    pass
                 return result
         if self.data is not None:
             optimistic = {str(k): v for k, v in dps.items()}

@@ -47,7 +47,7 @@ def _swap_sign_string(s: str) -> str:
 def _compute_sign(params: dict[str, str], signing_key: str) -> str:
     """HMAC-SHA256 signature over filtered, sorted params."""
     filtered = {k: v for k, v in params.items() if k in SIGN_PARAM_WHITELIST and v}
-    if "postData" in filtered and filtered["postData"]:
+    if filtered.get("postData"):
         md5 = hashlib.md5(filtered["postData"].encode()).hexdigest()
         filtered["postData"] = _swap_sign_string(md5)
     param_str = "||".join(f"{k}={filtered[k]}" for k in sorted(filtered))

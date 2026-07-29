@@ -204,11 +204,10 @@ def login_candidates(country: str | None) -> list[tuple[str, str]]:
     if routed:
         calling_code, data_center = routed
         candidates.append((data_center, calling_code))
-        for name in PROBE_ORDER:
-            if name != data_center:
-                candidates.append((name, calling_code))
+        candidates.extend(
+            (name, calling_code) for name in PROBE_ORDER if name != data_center
+        )
     else:
-        for name in PROBE_ORDER:
-            candidates.append((name, FALLBACK_CALLING_CODE[name]))
+        candidates.extend((name, FALLBACK_CALLING_CODE[name]) for name in PROBE_ORDER)
 
     return candidates

@@ -2,17 +2,21 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from collections.abc import Callable
 from typing import Any
 
 import tinytuya
-
 from homeassistant.core import HomeAssistant
 
 from .lan_policy import (
-    data_stale, heartbeat_due, is_connection_error, reconnect_delay, should_reconnect,
+    data_stale,
+    heartbeat_due,
+    is_connection_error,
+    reconnect_delay,
+    should_reconnect,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -51,18 +55,16 @@ class TuyaLANClient:
         self._stop_event.set()
         if self._task and not self._task.done():
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
         self._disconnect()
 
     def _disconnect(self) -> None:
         if self._device:
             try:
                 self._device.close()
-            except Exception:
-                pass
+            except Exception as ex:  # noqa: BLE001 - teardown must not raise, whatever tinytuya throws
+                _LOGGER.debug("Ignoring error while closing the LAN socket: %s", ex)
             self._device = None
         self.connected = False
 
@@ -89,8 +91,8 @@ class TuyaLANClient:
             if d._get_socket(False) is not None:
                 return d
             d.close()
-        except Exception:
-            pass
+        except Exception as ex:  # noqa: BLE001 - tinytuya raises socket, decode and key errors here
+            _LOGGER.debug("Direct LAN connection to %s failed: %s", ip, ex)
         return None
 
     async def _connect(self) -> bool:
@@ -138,7 +140,7 @@ class TuyaLANClient:
         """
         try:
             result = self._device.heartbeat(nowait=False)
-        except Exception as ex:
+        except Exception as ex:  # noqa: BLE001 - any failure here means the socket is unusable
             _LOGGER.debug("LAN heartbeat failed (%s)", ex)
             return False
 
@@ -170,7 +172,7 @@ class TuyaLANClient:
 
             try:
                 data = await self._hass.async_add_executor_job(self._device.receive)
-            except Exception as ex:
+            except Exception as ex:  # noqa: BLE001 - tinytuya raises socket and decode errors alike
                 _LOGGER.debug("LAN receive error (%s), reconnecting", ex)
                 self._disconnect()
                 failures += 1
@@ -242,12 +244,10 @@ class TuyaLANClient:
         try:
             await self._hass.async_add_executor_job(_send)
             return {"success": True}
-        except Exception as ex:
+        except Exception as ex:  # noqa: BLE001 - a failed command falls back to the cloud path
             _LOGGER.warning("LAN set_dps failed: %s", ex)
             return None
 
     async def _interruptible_sleep(self, seconds: float) -> None:
-        try:
+        with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self._stop_event.wait(), timeout=seconds)
-        except asyncio.TimeoutError:
-            pass

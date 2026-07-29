@@ -6,18 +6,26 @@ import logging
 from pathlib import Path
 
 import aiohttp
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
 from .api import PhilipsAventAPI
-from .coordinator import PhilipsAventCoordinator
 from .const import (
-    CONF_API_HOST, CONF_BRIDGE_PORT, CONF_COUNTRY_CODE, CONF_ECODE, CONF_PARTNER, CONF_SID,
-    DEFAULT_BRIDGE_PORT, DOMAIN, TUYA_APP_KEY, TUYA_DEFAULT_COUNTRY_CODE, TUYA_PACKAGE_NAME,
+    CONF_API_HOST,
+    CONF_BRIDGE_PORT,
+    CONF_COUNTRY_CODE,
+    CONF_ECODE,
+    CONF_PARTNER,
+    CONF_SID,
+    DEFAULT_BRIDGE_PORT,
+    DOMAIN,
+    TUYA_APP_KEY,
+    TUYA_DEFAULT_COUNTRY_CODE,
+    TUYA_PACKAGE_NAME,
     TUYA_SIGNING_KEY,
 )
+from .coordinator import PhilipsAventCoordinator
 from .payload import build_bridge_config
 from .region import DEFAULT_DATA_CENTER, api_host, api_url_for_host
 
@@ -85,12 +93,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     cameras = []
     stored_cameras = entry.data.get("cameras", [])
     if stored_cameras:
-        for cam in stored_cameras:
-            cameras.append({
+        cameras.extend(
+            {
                 "deviceId": cam["id"],
                 "deviceName": cam["name"],
                 "productId": cam.get("product_id", ""),
-            })
+            }
+            for cam in stored_cameras
+        )
         _LOGGER.info("Using %d cameras from config entry", len(cameras))
 
         # Backfill productId for entries created before this field was tracked.
@@ -122,7 +132,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     _LOGGER.info("Backfilled productId for %d camera(s) and persisted to config entry", patched)
                 else:
                     _LOGGER.info("Backfill ran but no productId was recovered from Tuya discovery")
-            except Exception:
+            except Exception:  # noqa: BLE001 - setup continues even if the backfill fails
                 _LOGGER.warning(
                     "Could not backfill productId from Tuya API; SCD951 cameras may fail "
                     "to stream until HA restarts or the integration is reconfigured"

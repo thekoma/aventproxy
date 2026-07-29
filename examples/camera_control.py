@@ -55,7 +55,7 @@ def night_light_timer(seconds: int):
     print(f"Night light timer: {seconds // 60}m {seconds % 60}s")
 
 
-def lullaby(action: str, volume: int = None, timer_seconds: int = None):
+def lullaby(action: str, volume: int | None = None, timer_seconds: int | None = None):
     """Control lullaby playback.
 
     action: play, pause, stop, next, prev
@@ -72,8 +72,8 @@ def lullaby(action: str, volume: int = None, timer_seconds: int = None):
           (f" timer={timer_seconds}s" if timer_seconds else ""))
 
 
-def alerts(motion: bool = None, sound: bool = None,
-           motion_sensitivity: str = None, sound_sensitivity: str = None):
+def alerts(motion: bool | None = None, sound: bool | None = None,
+           motion_sensitivity: str | None = None, sound_sensitivity: str | None = None):
     """Configure motion and sound alerts."""
     dps = {}
     if motion is not None:

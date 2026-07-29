@@ -276,7 +276,7 @@ def main():
         else:
             print(f"Unknown test {args.test}")
     else:
-        for num, test_fn in tests.items():
+        for test_fn in tests.values():
             try:
                 test_fn(ip)
             except Exception as e:
