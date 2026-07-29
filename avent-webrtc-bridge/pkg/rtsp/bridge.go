@@ -218,6 +218,17 @@ func (wb *WebRTCBridge) Start() error {
 
 	core.Logger.Info().Msgf("Stream settings - Resolution: %s, Type: %d, HEVC: %v", wb.resolution, wb.streamType, wb.isHEVC)
 
+	// Triage aid for models that answer an offer with a disconnect instead of an
+	// answer (issue #59): what the camera advertises, and what we ask it for. The
+	// signaling mode is fixed at "webrtc"; Tuya's other mode is the proprietary
+	// "imm" AES/KCP transport, which this bridge does not implement. No auth
+	// token or credential is logged.
+	core.Logger.Debug().Msgf(
+		"Camera capabilities for %s: skill=%q ice_servers=%d requesting mode=webrtc stream_type=%d",
+		wb.camera.DeviceName, webRTCConfig.Result.Skill,
+		len(webRTCConfig.Result.P2PConfig.Ices), wb.streamType,
+	)
+
 	// Setup WebRTC peer connection
 	if err := wb.setupPeerConnection(&webRTCConfig.Result); err != nil {
 		return fmt.Errorf("failed to setup peer connection: %v", err)

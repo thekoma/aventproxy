@@ -63,6 +63,10 @@ DPS_FLIP = "102"
 DPS_APP_TALKING = "253"
 DPS_ALERT_EVENT = "250"
 DPS_DECIBEL_EVENT = "141"
+# Alarm record with the snapshot the camera uploaded. The SCD951 and SCD953
+# family reports motion here instead of on DPS 250 (issues #61, #42); see
+# events.py for the payload.
+DPS_ALARM_RECORD = "212"
 
 LULLABY_TRACK_MAP = {
     3542154: ("Baa Baa Black Sheep", "lullabies"),

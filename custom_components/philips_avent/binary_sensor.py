@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -13,9 +14,17 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, DPS_ALERT_EVENT, DPS_DECIBEL_EVENT, DPS_LULLABY_STATE, DPS_MOTION_SWITCH
+from .const import (
+    DOMAIN,
+    DPS_ALARM_RECORD,
+    DPS_ALERT_EVENT,
+    DPS_DECIBEL_EVENT,
+    DPS_LULLABY_STATE,
+    DPS_MOTION_SWITCH,
+)
 from .coordinator import PhilipsAventCoordinator
 from .entity import build_device_info
+from .events import is_new_event, motion_event_timestamp, sound_event_timestamp
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,7 +66,19 @@ class AventLullabyPlaying(CoordinatorEntity, BinarySensorEntity):
 
 
 class AventMotionDetected(CoordinatorEntity, BinarySensorEntity):
-    """Turns on when DPS 250 reports 'motion_detection', auto-clears after timeout."""
+    """Motion alerts, from whichever DPS the monitor reports them on.
+
+    Two mechanisms, because the family differs (issues #40, #42, #59, #61):
+
+    - DPS 250 set to `motion_detection`, used by the SCD973 and SCD923 family.
+      It is an event that the coordinator merges into persistent state, so only a
+      payload that arrived since the last look counts; otherwise every cloud poll
+      replays the last alert (the same defect fixed for sound in #65).
+    - DPS 212, the alarm record the SCD951 and SCD953 family posts instead, which
+      carries its own timestamp. That timestamp is what makes it usable: the value
+      stays in device state, so freshness comes from the stamp rather than from
+      catching the push.
+    """
 
     _attr_has_entity_name = True
     _attr_name = "Motion Detected"
@@ -70,6 +91,8 @@ class AventMotionDetected(CoordinatorEntity, BinarySensorEntity):
         self._attr_device_info = build_device_info(coordinator, cam_id)
         self._is_on = False
         self._clear_unsub = None
+        self._last_lan_update_sequence = coordinator.lan_update_sequence
+        self._last_alarm_timestamp: float | None = None
 
     @property
     def is_on(self) -> bool:
@@ -77,11 +100,40 @@ class AventMotionDetected(CoordinatorEntity, BinarySensorEntity):
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        dps = self.coordinator.data
-        if dps and dps.get(DPS_ALERT_EVENT) == "motion_detection" and dps.get(DPS_MOTION_SWITCH):
+        if self._motion_reported():
             self._is_on = True
             self._schedule_clear()
         self.async_write_ha_state()
+
+    @callback
+    def _motion_reported(self) -> bool:
+        dps = self.coordinator.data or {}
+
+        sequence = self.coordinator.lan_update_sequence
+        fresh_dps = None
+        if sequence != self._last_lan_update_sequence:
+            self._last_lan_update_sequence = sequence
+            fresh_dps = self.coordinator.last_lan_dps
+
+        if (
+            fresh_dps
+            and fresh_dps.get(DPS_ALERT_EVENT) == "motion_detection"
+            and dps.get(DPS_MOTION_SWITCH, True)
+        ):
+            return True
+
+        timestamp = motion_event_timestamp(dps.get(DPS_ALARM_RECORD))
+        if is_new_event(timestamp, self._last_alarm_timestamp, time.time()):
+            self._last_alarm_timestamp = timestamp
+            _LOGGER.debug(
+                "Motion alarm record for %s at %s", self.coordinator.camera_name, timestamp
+            )
+            return True
+
+        # Remember a stale record so it cannot fire later as if it were new.
+        if timestamp is not None and self._last_alarm_timestamp is None:
+            self._last_alarm_timestamp = timestamp
+        return False
 
     @callback
     def _schedule_clear(self) -> None:
@@ -117,6 +169,7 @@ class AventSoundDetected(CoordinatorEntity, BinarySensorEntity):
         self._is_on = False
         self._clear_unsub = None
         self._last_lan_update_sequence = coordinator.lan_update_sequence
+        self._last_alarm_timestamp: float | None = None
 
     @property
     def is_on(self) -> bool:
@@ -124,15 +177,31 @@ class AventSoundDetected(CoordinatorEntity, BinarySensorEntity):
 
     @callback
     def _handle_coordinator_update(self) -> None:
+        if self._sound_reported():
+            self._is_on = True
+            self._schedule_clear()
+        self.async_write_ha_state()
+
+    @callback
+    def _sound_reported(self) -> bool:
         sequence = self.coordinator.lan_update_sequence
         fresh_dps = None
         if sequence != self._last_lan_update_sequence:
             self._last_lan_update_sequence = sequence
             fresh_dps = self.coordinator.last_lan_dps
+
         if fresh_dps and fresh_dps.get(DPS_DECIBEL_EVENT) == "decibel_upload":
-            self._is_on = True
-            self._schedule_clear()
-        self.async_write_ha_state()
+            return True
+
+        dps = self.coordinator.data or {}
+        timestamp = sound_event_timestamp(dps.get(DPS_ALARM_RECORD))
+        if is_new_event(timestamp, self._last_alarm_timestamp, time.time()):
+            self._last_alarm_timestamp = timestamp
+            return True
+
+        if timestamp is not None and self._last_alarm_timestamp is None:
+            self._last_alarm_timestamp = timestamp
+        return False
 
     @callback
     def _schedule_clear(self) -> None:
