@@ -154,10 +154,7 @@ def normalize_api_host(value: str | None) -> str | None:
     """
     if not value:
         return None
-    host = value.strip()
-    for scheme in ("https://", "http://"):
-        if host.startswith(scheme):
-            host = host[len(scheme):]
+    host = value.strip().removeprefix("https://").removeprefix("http://")
     host = host.split("/", 1)[0].strip()
     return host or None
 
