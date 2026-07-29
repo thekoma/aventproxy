@@ -116,6 +116,7 @@ class AventSoundDetected(CoordinatorEntity, BinarySensorEntity):
         self._attr_device_info = build_device_info(coordinator, cam_id)
         self._is_on = False
         self._clear_unsub = None
+        self._last_lan_update_sequence = coordinator.lan_update_sequence
 
     @property
     def is_on(self) -> bool:
@@ -123,8 +124,12 @@ class AventSoundDetected(CoordinatorEntity, BinarySensorEntity):
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        dps = self.coordinator.data
-        if dps and dps.get(DPS_DECIBEL_EVENT) == "decibel_upload":
+        sequence = self.coordinator.lan_update_sequence
+        fresh_dps = None
+        if sequence != self._last_lan_update_sequence:
+            self._last_lan_update_sequence = sequence
+            fresh_dps = self.coordinator.last_lan_dps
+        if fresh_dps and fresh_dps.get(DPS_DECIBEL_EVENT) == "decibel_upload":
             self._is_on = True
             self._schedule_clear()
         self.async_write_ha_state()

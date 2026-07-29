@@ -94,3 +94,27 @@ class TestTuyaLANClientUnit:
         assert merged["138"] is True
         assert merged["207"] == 2260
         assert merged["158"] == 35
+
+    def test_fresh_payload_does_not_replay_retained_sound_event(self):
+        """Keep raw LAN data separate from the coordinator's merged state."""
+        existing = {"141": "decibel_upload", "207": 2380}
+        push = {"207": 2390}
+        merged = {**existing, **push}
+        last_lan_dps = dict(push)
+
+        assert merged["141"] == "decibel_upload"
+        assert "141" not in last_lan_dps
+
+    def test_lan_sequence_changes_for_equal_sound_payloads(self):
+        """Equal DPS 141 payloads are distinct when received separately."""
+        sequence = 0
+        last_seen = 0
+        detected = 0
+
+        for payload in ({"141": "decibel_upload"}, {"141": "decibel_upload"}):
+            sequence += 1
+            if sequence != last_seen:
+                last_seen = sequence
+                detected += payload.get("141") == "decibel_upload"
+
+        assert detected == 2

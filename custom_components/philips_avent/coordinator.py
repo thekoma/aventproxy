@@ -46,6 +46,8 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         self.rssi: int | None = None
         self._local_key = local_key
         self._lan_client: TuyaLANClient | None = None
+        self.last_lan_dps: dict[str, Any] = {}
+        self.lan_update_sequence = 0
 
     async def start_lan(self) -> None:
         if not self._local_key:
@@ -71,6 +73,8 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
     def _on_lan_dps_update(self, dps: dict[str, Any]) -> None:
         if self.data is None:
             return
+        self.last_lan_dps = dict(dps)
+        self.lan_update_sequence += 1
         merged = {**self.data, **dps}
         _LOGGER.debug("LAN push for %s: %s", self.camera_name, dps)
         self.async_set_updated_data(merged)
