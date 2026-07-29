@@ -76,5 +76,10 @@ Release workflow (`release.yml`): version pattern `YEAR.MONTH.INCREMENT`, multi-
 ## Style
 
 - Python 3.11+, ruff with `line-length = 120`, E501 ignored in CI
+- The enforced rule set is pinned in `pyproject.toml` (`[tool.ruff.lint] select`): pycodestyle
+  errors, pyflakes, `I`, `UP`, `SIM`, `PERF`, `PLW`, `RUF`, `EXE`, `BLE`, `S110`. Pinning it keeps a
+  new ruff release from failing CI on untouched code. `BLE001` means a broad `except Exception`
+  needs a `# noqa: BLE001 - <reason>`; the existing ones sit on teardown paths, callback boundaries
+  and tinytuya calls. Scripts under `tools/` and `examples/` are exempt via per-file-ignores
 - Go 1.23, static build (`CGO_ENABLED=0`)
 - Reverse-engineering notes and methodology in `WHITEPAPER.md`
