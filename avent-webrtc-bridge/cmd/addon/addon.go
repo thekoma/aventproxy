@@ -21,7 +21,7 @@ import (
 // BridgeConfig is the JSON shape written by the HA integration
 // in custom_components/philips_avent/__init__.py::_write_bridge_config.
 type BridgeConfig struct {
-	SigningKey   string   `json:"signing_key"`
+	SigningKey  string   `json:"signing_key"`
 	SID         string   `json:"sid"`
 	Ecode       string   `json:"ecode"`
 	Partner     string   `json:"partner"`

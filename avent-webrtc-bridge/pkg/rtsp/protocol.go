@@ -1,6 +1,9 @@
 package rtsp
 
 import (
+	"avent-webrtc-bridge/pkg/core"
+	"avent-webrtc-bridge/pkg/storage"
+	"avent-webrtc-bridge/pkg/tuya"
 	"bufio"
 	"crypto/rand"
 	"encoding/hex"
@@ -13,9 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"avent-webrtc-bridge/pkg/core"
-	"avent-webrtc-bridge/pkg/storage"
-	"avent-webrtc-bridge/pkg/tuya"
 
 	"github.com/pion/rtp"
 )

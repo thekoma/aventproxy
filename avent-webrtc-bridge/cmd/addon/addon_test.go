@@ -117,7 +117,7 @@ func TestValidateConfig_RejectsMissingEcode(t *testing.T) {
 func TestValidateConfig_RejectsMissingPartner(t *testing.T) {
 	cfg := BridgeConfig{
 		SigningKey: "sk", SID: "S", AppKey: "AK", DeviceID: "D",
-		Ecode: "E",
+		Ecode:   "E",
 		Cameras: []Camera{{ID: "abc", Name: "Erik"}},
 	}
 	if err := validateConfig(cfg); err == nil {

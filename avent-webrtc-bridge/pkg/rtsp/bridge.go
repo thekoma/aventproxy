@@ -43,12 +43,12 @@ type WebRTCBridge struct {
 	rtpForwarder   *RTPForwarder
 
 	// State
-	connected       bool
-	ownsClient      bool
-	answerReceived  bool
+	connected         bool
+	ownsClient        bool
+	answerReceived    bool
 	pendingCandidates []pion.ICECandidateInit
-	waiter          utils.Waiter
-	mutex           sync.RWMutex
+	waiter            utils.Waiter
+	mutex             sync.RWMutex
 
 	// Context for cancellation
 	ctx    context.Context

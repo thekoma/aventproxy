@@ -75,7 +75,7 @@ The HA integration writes bridge credentials to a JSON config file. The bridge c
 
 GitHub Actions (`.github/workflows/ci.yml`):
 - Python tests on 3.11, 3.12, 3.13 with ruff lint
-- Go bridge build with Go 1.23
+- Go bridge: `gofmt` check, build and `go test ./...` with Go 1.26
 - Docker add-on build verification
 
 Release workflow (`release.yml`): version pattern `YEAR.MONTH.INCREMENT`, multi-arch (amd64+arm64), pushes to `ghcr.io/thekoma/aventproxy-bridge`.
@@ -88,5 +88,7 @@ Release workflow (`release.yml`): version pattern `YEAR.MONTH.INCREMENT`, multi-
   new ruff release from failing CI on untouched code. `BLE001` means a broad `except Exception`
   needs a `# noqa: BLE001 - <reason>`; the existing ones sit on teardown paths, callback boundaries
   and tinytuya calls. Scripts under `tools/` and `examples/` are exempt via per-file-ignores
-- Go 1.23, static build (`CGO_ENABLED=0`)
+- Go 1.23, static build (`CGO_ENABLED=0`). CI gates `gofmt -l` and runs `go test ./...`, so format
+  before pushing: `docker run --rm -v $PWD:/src -w /src golang:1.26-bookworm gofmt -w .` from
+  `avent-webrtc-bridge/`
 - Reverse-engineering notes and methodology in `WHITEPAPER.md`

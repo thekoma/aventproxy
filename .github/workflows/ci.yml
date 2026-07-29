@@ -39,9 +39,24 @@ jobs:
         with:
           go-version: "1.26"
 
+      - name: Check formatting
+        working-directory: avent-webrtc-bridge
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt would rewrite these files:"
+            echo "$unformatted"
+            echo "Run: docker run --rm -v \$PWD:/src -w /src golang:1.26-bookworm gofmt -w ."
+            exit 1
+          fi
+
       - name: Build bridge
         working-directory: avent-webrtc-bridge
         run: go build -o avent-webrtc-bridge .
+
+      - name: Test
+        working-directory: avent-webrtc-bridge
+        run: go test ./...
 
       - name: Verify binary
         working-directory: avent-webrtc-bridge

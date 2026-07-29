@@ -1,13 +1,13 @@
 package rtsp
 
 import (
+	"avent-webrtc-bridge/pkg/core"
+	"avent-webrtc-bridge/pkg/utils"
 	"fmt"
 	"net"
 	"strings"
 	"sync"
 	"time"
-	"avent-webrtc-bridge/pkg/core"
-	"avent-webrtc-bridge/pkg/utils"
 
 	"github.com/pion/rtp"
 )
@@ -37,12 +37,12 @@ type RTPForwarder struct {
 	ppsPacket *rtp.Packet
 
 	// Timestamp rebasing
-	videoTimeStart  time.Time
-	videoSeqStart   uint16
-	videoTsStarted  bool
-	audioTimeStart  time.Time
-	audioSeqStart   uint16
-	audioTsStarted  bool
+	videoTimeStart time.Time
+	videoSeqStart  uint16
+	videoTsStarted bool
+	audioTimeStart time.Time
+	audioSeqStart  uint16
+	audioTsStarted bool
 
 	OnBackchannelAudio func(*rtp.Packet)
 }

@@ -1,13 +1,13 @@
 package tuya
 
 import (
+	"avent-webrtc-bridge/pkg/core"
+	"avent-webrtc-bridge/pkg/utils"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
-	"avent-webrtc-bridge/pkg/core"
-	"avent-webrtc-bridge/pkg/utils"
 )
 
 type MQTTCameraClient struct {

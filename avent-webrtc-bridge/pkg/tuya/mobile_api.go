@@ -18,19 +18,19 @@ import (
 )
 
 type MobileSDKClient struct {
-	SigningKey       string
-	SID              string
-	AppKey           string
-	DeviceID         string // phone device ID
-	ChKey            string
-	TTID             string
-	BaseURL          string
-	AppVersion       string
-	SDKVersion       string
-	Ecode            string
-	PartnerIdentity  string
-	UID              string
-	PackageName      string
+	SigningKey      string
+	SID             string
+	AppKey          string
+	DeviceID        string // phone device ID
+	ChKey           string
+	TTID            string
+	BaseURL         string
+	AppVersion      string
+	SDKVersion      string
+	Ecode           string
+	PartnerIdentity string
+	UID             string
+	PackageName     string
 }
 
 var signKeyWhitelist = []string{
@@ -67,7 +67,7 @@ func APIBaseURL(host string) string {
 
 func NewMobileSDKClient(signingKey, sid, appKey, deviceID, chKey string) *MobileSDKClient {
 	return &MobileSDKClient{
-		SigningKey:  signingKey,
+		SigningKey: signingKey,
 		SID:        sid,
 		AppKey:     appKey,
 		DeviceID:   deviceID,
@@ -124,28 +124,28 @@ func (c *MobileSDKClient) sign(params map[string]string) string {
 func (c *MobileSDKClient) buildParams(action, version string, postData interface{}) map[string]string {
 	t := fmt.Sprintf("%d", time.Now().Unix())
 	params := map[string]string{
-		"a":                action,
-		"v":                version,
-		"time":             t,
-		"appVersion":       c.AppVersion,
-		"appRnVersion":     "5.92",
-		"channel":          "oem",
-		"chKey":            c.ChKey,
-		"clientId":         c.AppKey,
-		"cp":               "gzip",
+		"a":                 action,
+		"v":                 version,
+		"time":              t,
+		"appVersion":        c.AppVersion,
+		"appRnVersion":      "5.92",
+		"channel":           "oem",
+		"chKey":             c.ChKey,
+		"clientId":          c.AppKey,
+		"cp":                "gzip",
 		"deviceCoreVersion": c.SDKVersion,
-		"deviceId":         c.DeviceID,
-		"et":               "0.0.1",
-		"nd":               "1",
-		"lang":             "en_US",
-		"os":               "Android",
-		"osSystem":         "14",
-		"platform":         "tuya_bridge",
-		"requestId":        uuid.New().String(),
-		"sdkVersion":       c.SDKVersion,
-		"sid":              c.SID,
-		"timeZoneId":       "Europe/Rome",
-		"ttid":             c.TTID,
+		"deviceId":          c.DeviceID,
+		"et":                "0.0.1",
+		"nd":                "1",
+		"lang":              "en_US",
+		"os":                "Android",
+		"osSystem":          "14",
+		"platform":          "tuya_bridge",
+		"requestId":         uuid.New().String(),
+		"sdkVersion":        c.SDKVersion,
+		"sid":               c.SID,
+		"timeZoneId":        "Europe/Rome",
+		"ttid":              c.TTID,
 	}
 
 	if postData != nil {

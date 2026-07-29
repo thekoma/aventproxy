@@ -1,13 +1,13 @@
 package tuya
 
 import (
+	"avent-webrtc-bridge/pkg/core"
+	"avent-webrtc-bridge/pkg/utils"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
-	"avent-webrtc-bridge/pkg/core"
-	"avent-webrtc-bridge/pkg/utils"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
