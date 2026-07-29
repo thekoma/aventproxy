@@ -58,9 +58,11 @@
       "init": {
         "title": "Philips Avent Bridge Settings",
         "data": {
+          "bridge_host": "Bridge host",
           "bridge_port": "Bridge RTSP port"
         },
         "data_description": {
+          "bridge_host": "Where Home Assistant can reach the WebRTC bridge. Leave it as localhost when you use the add-on; set the container name or IP address if you run the bridge yourself, elsewhere.",
           "bridge_port": "Port the WebRTC bridge listens on (default: 38554)"
         }
       }

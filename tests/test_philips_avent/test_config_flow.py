@@ -3,7 +3,7 @@
 import json
 
 from api import TuyaAPIError, classify_login_error
-from const import CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT
+from const import CONF_BRIDGE_HOST, CONF_BRIDGE_PORT, DEFAULT_BRIDGE_HOST, DEFAULT_BRIDGE_PORT
 
 
 class TestTuyaAPIError:
@@ -91,3 +91,13 @@ class TestOptionsFlow:
 
     def test_bridge_port_range_valid(self):
         assert 1024 <= DEFAULT_BRIDGE_PORT <= 65535
+
+    def test_default_bridge_host(self):
+        assert DEFAULT_BRIDGE_HOST == "localhost"
+
+    def test_bridge_host_from_options(self):
+        options = {"bridge_host": "aventproxy-bridge"}
+        assert options.get(CONF_BRIDGE_HOST, DEFAULT_BRIDGE_HOST) == "aventproxy-bridge"
+
+    def test_bridge_host_fallback(self):
+        assert {}.get(CONF_BRIDGE_HOST, DEFAULT_BRIDGE_HOST) == "localhost"

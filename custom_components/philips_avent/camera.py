@@ -9,7 +9,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT, DOMAIN, sanitize_rtsp_path
+from .const import (
+    CONF_BRIDGE_HOST, CONF_BRIDGE_PORT, DEFAULT_BRIDGE_HOST, DEFAULT_BRIDGE_PORT, DOMAIN,
+    build_rtsp_url,
+)
 from .coordinator import PhilipsAventCoordinator
 from .entity import build_device_info
 
@@ -21,9 +24,10 @@ async def async_setup_entry(
 ) -> None:
     data = hass.data[DOMAIN][entry.entry_id]
     bridge_port = entry.options.get(CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT)
+    bridge_host = entry.options.get(CONF_BRIDGE_HOST, DEFAULT_BRIDGE_HOST)
     entities = []
     for cam_id, coordinator in data["coordinators"].items():
-        entities.append(AventCamera(coordinator, cam_id, bridge_port))
+        entities.append(AventCamera(coordinator, cam_id, bridge_port, bridge_host))
     async_add_entities(entities)
 
 
@@ -34,13 +38,20 @@ class AventCamera(Camera):
     _attr_name = "Camera"
     _attr_supported_features = CameraEntityFeature.STREAM
 
-    def __init__(self, coordinator: PhilipsAventCoordinator, cam_id: str, bridge_port: int = DEFAULT_BRIDGE_PORT):
+    def __init__(
+        self,
+        coordinator: PhilipsAventCoordinator,
+        cam_id: str,
+        bridge_port: int = DEFAULT_BRIDGE_PORT,
+        bridge_host: str = DEFAULT_BRIDGE_HOST,
+    ):
         super().__init__()
         self.coordinator = coordinator
         self._cam_id = cam_id
         self._attr_unique_id = f"{cam_id}_camera"
-        safe_name = sanitize_rtsp_path(coordinator.camera_name, cam_id)
-        self._stream_url = f"rtsp://localhost:{bridge_port}/{safe_name}"
+        self._stream_url = build_rtsp_url(
+            bridge_host, bridge_port, coordinator.camera_name, cam_id
+        )
         self._attr_device_info = build_device_info(coordinator, cam_id)
 
     async def stream_source(self) -> str:

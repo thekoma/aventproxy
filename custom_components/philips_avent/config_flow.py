@@ -15,8 +15,8 @@ from homeassistant.helpers.selector import CountrySelector, CountrySelectorConfi
 
 from .api import PhilipsAventAPI, TuyaAPIError, classify_login_error
 from .const import (
-    CONF_API_HOST, CONF_BRIDGE_PORT, CONF_COUNTRY_CODE, CONF_ECODE, CONF_PARTNER, CONF_SID,
-    CONF_UID, DEFAULT_BRIDGE_PORT, DOMAIN,
+    CONF_API_HOST, CONF_BRIDGE_HOST, CONF_BRIDGE_PORT, CONF_COUNTRY_CODE, CONF_ECODE, CONF_PARTNER,
+    CONF_SID, CONF_UID, DEFAULT_BRIDGE_HOST, DEFAULT_BRIDGE_PORT, DOMAIN,
 )
 from .region import (
     COUNTRY_ROUTING, api_host, api_url, api_url_for_host, hosts_from_domain,
@@ -380,11 +380,15 @@ class PhilipsAventOptionsFlowHandler(config_entries.OptionsFlow):
         current_port = self.config_entry.options.get(
             CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT
         )
+        current_host = self.config_entry.options.get(
+            CONF_BRIDGE_HOST, DEFAULT_BRIDGE_HOST
+        )
 
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
+                    vol.Optional(CONF_BRIDGE_HOST, default=current_host): str,
                     vol.Optional(CONF_BRIDGE_PORT, default=current_port): vol.All(
                         int, vol.Range(min=1024, max=65535)
                     ),

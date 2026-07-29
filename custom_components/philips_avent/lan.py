@@ -11,12 +11,14 @@ import tinytuya
 
 from homeassistant.core import HomeAssistant
 
+from .lan_policy import (
+    data_stale, heartbeat_due, is_connection_error, reconnect_delay, should_reconnect,
+)
+
 _LOGGER = logging.getLogger(__name__)
 
 SOCKET_TIMEOUT = 5
-RECONNECT_DELAY = 15
 SCAN_MAXRETRY = 5
-HEARTBEAT_TIMEOUT = 600
 
 
 class TuyaLANClient:
@@ -121,18 +123,48 @@ class TuyaLANClient:
         self._ip = None
         return False
 
+    def _send_heartbeat(self) -> bool:
+        """Ping the device on the persistent socket. Returns False if it is gone.
+
+        tinytuya does not keep persistent sockets alive by itself, so without
+        this the monitor closes the connection after 30-45 seconds of silence
+        (issue #62). Unlike status() and updatedps(), which this firmware either
+        ignores or crashes on, a heartbeat is the plain keep-alive command.
+
+        The response is consumed here (`nowait=False`) so a stray ack cannot turn
+        up in the next receive() and look like a device error. Only a connection
+        error counts as failure: an ack we cannot parse still proves the socket
+        is alive.
+        """
+        try:
+            result = self._device.heartbeat(nowait=False)
+        except Exception as ex:
+            _LOGGER.debug("LAN heartbeat failed (%s)", ex)
+            return False
+
+        if isinstance(result, dict) and is_connection_error(result.get("Err")):
+            _LOGGER.debug("LAN heartbeat unreachable: %s", result.get("Error"))
+            return False
+        return True
+
     async def _run(self) -> None:
         last_data = time.monotonic()
+        last_heartbeat = last_data
+        failures = 0
+        payload_errors = 0
 
         while not self._stop_event.is_set():
             if not self._device:
                 if not await self._connect():
-                    await self._interruptible_sleep(RECONNECT_DELAY)
+                    failures += 1
+                    await self._interruptible_sleep(reconnect_delay(failures))
                     continue
                 last_data = time.monotonic()
+                last_heartbeat = last_data
+                payload_errors = 0
 
-            if time.monotonic() - last_data > HEARTBEAT_TIMEOUT:
-                _LOGGER.debug("LAN heartbeat timeout, reconnecting")
+            if data_stale(time.monotonic(), last_data):
+                _LOGGER.debug("No LAN data within the timeout, reconnecting")
                 self._disconnect()
                 continue
 
@@ -141,25 +173,52 @@ class TuyaLANClient:
             except Exception as ex:
                 _LOGGER.debug("LAN receive error (%s), reconnecting", ex)
                 self._disconnect()
-                await self._interruptible_sleep(RECONNECT_DELAY)
+                failures += 1
+                await self._interruptible_sleep(reconnect_delay(failures))
                 continue
 
-            if not data or not isinstance(data, dict):
-                continue
+            if data and isinstance(data, dict):
+                last_data = time.monotonic()
 
-            last_data = time.monotonic()
+                if "Error" in data or "Err" in data:
+                    payload_errors += 1
+                    err_code = data.get("Err")
+                    if should_reconnect(err_code, payload_errors):
+                        _LOGGER.debug(
+                            "LAN device error: %s, reconnecting",
+                            data.get("Error", err_code),
+                        )
+                        self._disconnect()
+                        failures += 1
+                        await self._interruptible_sleep(reconnect_delay(failures))
+                        continue
+                    _LOGGER.debug(
+                        "Ignoring LAN frame we could not read (%s), connection still up",
+                        data.get("Error", err_code),
+                    )
+                else:
+                    # A real exchange: the connection is healthy.
+                    failures = 0
+                    payload_errors = 0
 
-            if "Error" in data or "Err" in data:
-                _LOGGER.debug("LAN device error: %s, reconnecting", data.get("Error", data.get("Err")))
-                self._disconnect()
-                await self._interruptible_sleep(RECONNECT_DELAY)
-                continue
+                    if data.get("dps"):
+                        try:
+                            self._on_dps_update(data["dps"])
+                        except Exception:
+                            _LOGGER.exception("Error in DPS update callback")
 
-            if data.get("dps"):
-                try:
-                    self._on_dps_update(data["dps"])
-                except Exception:
-                    _LOGGER.exception("Error in DPS update callback")
+            # Keep-alive. Runs after the receive so the two never share the
+            # socket at the same time.
+            now = time.monotonic()
+            if heartbeat_due(now, last_heartbeat):
+                if not await self._hass.async_add_executor_job(self._send_heartbeat):
+                    self._disconnect()
+                    failures += 1
+                    await self._interruptible_sleep(reconnect_delay(failures))
+                    continue
+                last_heartbeat = now
+                last_data = now
+                failures = 0
 
     async def set_dps(self, dps: dict) -> dict | None:
         """Send DPS command via a temporary LAN connection.

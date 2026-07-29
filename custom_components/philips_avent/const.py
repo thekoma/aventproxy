@@ -106,6 +106,8 @@ CONF_CAMERA_ID = "camera_id"
 CONF_CAMERA_NAME = "camera_name"
 CONF_BRIDGE_PORT = "bridge_port"
 DEFAULT_BRIDGE_PORT = 38554
+CONF_BRIDGE_HOST = "bridge_host"
+DEFAULT_BRIDGE_HOST = "localhost"
 
 
 def sanitize_rtsp_path(name: str, cam_id: str) -> str:
@@ -124,3 +126,16 @@ def sanitize_rtsp_path(name: str, cam_id: str) -> str:
     if safe == "" or safe == "_":
         safe = cam_id
     return safe
+
+
+def build_rtsp_url(host: str, port: int, name: str, cam_id: str) -> str:
+    """Build the RTSP URL Home Assistant should pull the stream from.
+
+    The host defaults to localhost, which only holds when the bridge runs
+    alongside Home Assistant (add-on, or same container). A bridge in its own
+    container or on another machine is not reachable there, and the resulting
+    "Connection refused" makes the camera entity flap between Unavailable and
+    Idle, because Home Assistant marks a camera unavailable while its stream
+    cannot be opened (issue #62).
+    """
+    return f"rtsp://{host or DEFAULT_BRIDGE_HOST}:{port}/{sanitize_rtsp_path(name, cam_id)}"

@@ -69,11 +69,17 @@ Or manually:
 [![Add integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=philips_avent)
 
 1. Go to Settings → Integrations → Add Integration → **Philips Avent Baby Monitor**
-2. Enter your email and password (same as the Baby Monitor+ app)
+2. Enter your email and password (same as the Baby Monitor+ app), and check that the country matches the one your Avent account was created in (it is pre-filled from your Home Assistant country)
 3. Check your email for the 6-digit verification code
 4. Enter the code — done!
 
 The integration discovers your cameras automatically and creates all entities. The bridge add-on starts streaming.
+
+The country matters: a Philips/Tuya account lives in one regional server, and the session from one is not valid on another. Getting it wrong shows up as a login that fails right after you type the verification code.
+
+### Running the bridge outside Home Assistant
+
+If you don't run the add-on but host the bridge yourself, in its own container or on another machine, tell the integration where to find it: **Settings → Integrations → Philips Avent → Configure → Bridge host**. It defaults to `localhost`, which is only correct when the bridge shares the network with Home Assistant. A wrong host makes the camera entity flap between `Unavailable` and `Idle`, because Home Assistant marks a camera unavailable while its stream cannot be opened.
 
 ### Automations
 
