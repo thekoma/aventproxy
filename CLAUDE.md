@@ -8,7 +8,11 @@ Home Assistant custom integration for Philips Avent SCD973/SCD923 baby monitors.
 
 1. **HA integration** (`custom_components/philips_avent/`) — Python, talks to Tuya cloud API with HMAC-SHA256 signed requests
 2. **WebRTC-to-RTSP bridge** (`avent-webrtc-bridge/`) — Go binary, converts Tuya WebRTC streams to RTSP on port 8554
-3. **HA add-on** (`aventproxy-bridge-addon/`) — Docker container packaging the Go bridge for HA add-on store
+3. **HA add-on** (`aventproxy-bridge-addon/`) — Docker container packaging the Go bridge for HA add-on store.
+   `aventproxy-bridge-addon-beta/` is the same add-on on the beta channel: the release workflow bumps
+   the beta `config.yaml` for rc/beta tags and the stable one only for stable tags, so the two cards
+   sit at different versions on purpose. A bridge older than the integration can miss config fields
+   (`api_host` landed in 2026.7.0-rc2), so testers must run the Beta card
 
 ## Commands
 
