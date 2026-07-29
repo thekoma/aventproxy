@@ -11,7 +11,9 @@ project convention (see ``conftest.py``): the full path
 — a runtime dependency we deliberately keep out of unit tests.
 """
 
-from payload import build_cameras_payload
+import json
+
+from payload import build_bridge_config, build_cameras_payload
 
 
 class TestBuildCamerasPayloadShape:
@@ -84,3 +86,42 @@ class TestBuildCamerasPayloadPrecedence:
             {"deviceId": "abc", "deviceName": "Cam", "productId": "id-form", "productKey": "key-form"},
         ]
         assert build_cameras_payload(cameras)[0]["product_id"] == "id-form"
+
+
+class TestBuildBridgeConfig:
+    """The JSON contract with ``cmd/addon/addon.go::BridgeConfig``."""
+
+    BASE = {
+        "signing_key": "sk",
+        "sid": "az1661958",
+        "ecode": "E",
+        "partner": "P",
+        "app_key": "AK",
+        "device_id": "D",
+        "package_name": "com.philips.ph.babymonitorplus",
+        "api_host": "a1.tuyaus.com",
+        "bridge_port": 38554,
+        "cameras": [{"deviceId": "abc123", "deviceName": "Erik", "productId": "p1"}],
+    }
+
+    def test_api_host_is_written_for_the_bridge(self):
+        # Without this the add-on would talk to the EU data center whatever the
+        # account's region is (issues #44, #58).
+        config = build_bridge_config(**self.BASE)
+        assert config["api_host"] == "a1.tuyaus.com"
+
+    def test_keys_match_the_go_struct(self):
+        config = build_bridge_config(**self.BASE)
+        assert set(config) == {
+            "signing_key", "sid", "ecode", "partner", "app_key", "device_id",
+            "package_name", "api_host", "bridge_port", "cameras",
+        }
+
+    def test_cameras_use_the_shared_payload_builder(self):
+        config = build_bridge_config(**self.BASE)
+        assert config["cameras"] == [
+            {"camera_id": "abc123", "camera_name": "Erik", "product_id": "p1"},
+        ]
+
+    def test_config_is_json_serialisable(self):
+        assert json.loads(json.dumps(build_bridge_config(**self.BASE))) == build_bridge_config(**self.BASE)

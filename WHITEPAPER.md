@@ -402,21 +402,67 @@ This endpoint is likely intended for "forgot password" or passwordless onboardin
 
 **For the integration, we use the password + MFA flow** (same as the app) to be indistinguishable from normal app traffic. The OTP passwordless flow is documented here as a fallback.
 
+### Data Centers and Account Region
+
+The captures above were all taken with an Italian account, which hides a
+constraint that only shows up outside Europe: **a Tuya account belongs to one
+data center, and a SID issued by one is rejected by the others.**
+
+| Region | API host | Example MQTT host | Countries |
+|--------|----------|-------------------|-----------|
+| Central Europe | `a1.tuyaeu.com` | `m1.tuyaeu.com` | Europe, Middle East, Africa |
+| Western America | `a1.tuyaus.com` | `m1.tuyaus.com` | North and South America |
+| India | `a1.tuyain.com` | `m1.tuyain.com` | India |
+| China | `a1.tuyacn.com` | `m1.tuyacn.com` | China, Hong Kong, Macao, Taiwan |
+
+The vendor app resolves this before any traffic: the country picker on its login
+screen selects both the `countryCode` sent in the login payloads and the host
+the SDK talks to, from a country table bundled in the APK.
+
+Two observations matter for a reimplementation:
+
+- The earlier steps of the login are **not** a reliable region check. Against
+  the wrong data center, `thing.m.user.username.token.get` still returns a
+  token and `thing.m.user.username.mfa.code.get` still emails a code; only the
+  final `thing.m.user.email.password.login` fails, with `USER_SESSION_INVALID`.
+  That asymmetry is what made this look like an MFA bug rather than a routing
+  bug (issues #44, #58).
+- The successful login response is **self-describing**. Its `domain` block
+  carries the account's own endpoints, so nothing downstream has to guess:
+
+```
+"domain": {
+  "mobileApiUrl": "a1.tuyaeu.com",
+  "mobileMqttsUrl": "m1.tuyaeu.com",
+  "regionCode": "EU",
+  ...
+}
+```
+
+The integration therefore maps country to data center for the login attempt,
+then replaces its own guess with `domain.mobileApiUrl` once the login succeeds,
+and hands that host to the bridge in the config JSON (`api_host`). MQTT is never
+hard-coded on either side: the bridge reads `domain.mobileMqttsUrl`.
+
 ### SID Lifecycle
 
 - **Issued at:** login (password + MFA, or OTP)
 - **Expires after:** unknown (estimated weeks/months based on app behavior)
 - **Renewal:** re-trigger the full password + MFA flow
 - **Scope:** full account access (all devices, all APIs)
+- **Bound to:** the data center that issued it (see above)
 
 ### Home Assistant Config Flow
 
 The login maps naturally to a multi-step HA config flow:
 
-1. **Step 1:** User enters email + password
-2. **Step 2 (automatic):** Integration encrypts password, calls login API, triggers MFA
+1. **Step 1:** User enters email + password, and confirms the account country
+   (pre-filled from Home Assistant's own country setting)
+2. **Step 2 (automatic):** Integration resolves the data center, encrypts the
+   password, calls login API, triggers MFA
 3. **Step 3:** User checks email, enters 6-digit MFA code in HA
-4. **Step 4 (automatic):** Integration completes login, stores SID
+4. **Step 4 (automatic):** Integration completes login, stores SID plus the
+   account's API host and country code
 5. **On expiry:** Integration prompts user to re-authenticate (same flow)
 
 ---

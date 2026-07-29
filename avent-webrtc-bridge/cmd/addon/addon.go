@@ -28,6 +28,7 @@ type BridgeConfig struct {
 	AppKey      string   `json:"app_key"`
 	DeviceID    string   `json:"device_id"`
 	PackageName string   `json:"package_name"`
+	APIHost     string   `json:"api_host"`
 	BridgePort  int      `json:"bridge_port"`
 	Cameras     []Camera `json:"cameras"`
 }
@@ -163,11 +164,14 @@ func runAddon(cmd *cobra.Command, args []string) error {
 		port = 38554
 	}
 
+	apiHost := tuya.NormalizeAPIHost(cfg.APIHost)
 	client := tuya.NewMobileSDKClient(cfg.SigningKey, cfg.SID, cfg.AppKey, cfg.DeviceID, "071d81fa")
+	client.BaseURL = tuya.APIBaseURL(apiHost)
 	client.Ecode = cfg.Ecode
 	client.PartnerIdentity = cfg.Partner
 	client.PackageName = cfg.PackageName
 
+	core.Logger.Info().Msgf("Tuya API host: %s", apiHost)
 	core.Logger.Info().Msg("Verifying API access...")
 	if _, err := client.Call("smartlife.p.time.get", "1.0", nil); err != nil {
 		return fmt.Errorf("API verification failed: %w", err)
@@ -192,7 +196,7 @@ func runAddon(cmd *cobra.Command, args []string) error {
 				Nickname: userInfo.Nickname,
 				Domain:   userInfo.Domain,
 			},
-			ServerHost: "a1.tuyaeu.com",
+			ServerHost: apiHost,
 			Region:     "addon",
 			UserEmail:  userInfo.Email,
 		},

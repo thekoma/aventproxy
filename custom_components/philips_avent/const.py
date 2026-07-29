@@ -16,8 +16,19 @@ TUYA_SIGNING_KEY = (
 TUYA_APP_KEY = "wx3at9qprkhskvkcsyhm"
 TUYA_PACKAGE_NAME = "com.philips.ph.babymonitorplus"
 TUYA_CH_KEY = "071d81fa"
+
+# Default data center (Central Europe). A Tuya account is bound to one data
+# center and its session id is rejected by the others, so the real host is
+# resolved per account at login time by `region.py` and persisted in the config
+# entry. These two constants are only the fallback for entries created before
+# that resolution existed (issues #44, #58).
 TUYA_API_URL = "https://a1.tuyaeu.com/api.json"
-TUYA_MQTT_HOST = "m1.tuyaeu.com"
+TUYA_DEFAULT_COUNTRY_CODE = "39"
+
+# MQTT is never addressed by a constant: the login response and
+# `smartlife.m.user.info.get` both return the account's own broker in their
+# `domain` block (`mobileMqttsUrl`, e.g. m1.tuyaeu.com for EU accounts,
+# m1.tuyaus.com for American ones) and the bridge connects to that.
 TUYA_MQTT_PORT = 8883
 
 # Device model naming (issue #42). The Tuya productId does not distinguish
@@ -86,6 +97,8 @@ LULLABY_TRACKS = [name for name, _ in LULLABY_TRACK_MAP.values()]
 LULLABY_ID_BY_NAME = {name: tid for tid, (name, _) in LULLABY_TRACK_MAP.items()}
 
 CONF_SID = "sid"
+CONF_API_HOST = "api_host"
+CONF_COUNTRY_CODE = "country_code"
 CONF_ECODE = "ecode"
 CONF_PARTNER = "partner_identity"
 CONF_UID = "uid"

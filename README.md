@@ -120,8 +120,9 @@ The integration uses the same Tuya Mobile SDK API as the official Philips Avent 
 │                              │
 │  ┌────────────────────────┐  │
 │  │  Custom Integration    │  │   Tuya Cloud
-│  │  (login, sensors,      │◄─┼──► a1.tuyaeu.com
-│  │   lights, lullabies)   │  │   (API calls)
+│  │  (login, sensors,      │◄─┼──► a1.tuya**.com
+│  │   lights, lullabies)   │  │   (API calls, your
+│  │                        │  │    account's region)
 │  └────────────────────────┘  │
 │                              │
 │  ┌────────────────────────┐  │

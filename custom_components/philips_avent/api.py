@@ -12,9 +12,9 @@ from typing import Any
 import aiohttp
 
 try:
-    from .const import TUYA_API_URL, TUYA_APP_KEY, TUYA_CH_KEY, TUYA_SIGNING_KEY
+    from .const import TUYA_API_URL, TUYA_APP_KEY, TUYA_CH_KEY, TUYA_DEFAULT_COUNTRY_CODE, TUYA_SIGNING_KEY
 except ImportError:
-    from const import TUYA_API_URL, TUYA_APP_KEY, TUYA_CH_KEY, TUYA_SIGNING_KEY
+    from const import TUYA_API_URL, TUYA_APP_KEY, TUYA_CH_KEY, TUYA_DEFAULT_COUNTRY_CODE, TUYA_SIGNING_KEY
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,10 +66,21 @@ def classify_login_error(code: str, *, mfa: bool = False) -> str:
 class PhilipsAventAPI:
     """Async Tuya Mobile SDK client."""
 
-    def __init__(self, session: aiohttp.ClientSession, sid: str = ""):
+    def __init__(
+        self,
+        session: aiohttp.ClientSession,
+        sid: str = "",
+        api_url: str | None = None,
+        country_code: str = TUYA_DEFAULT_COUNTRY_CODE,
+    ):
         self._session = session
         self.sid = sid
         self.device_id = uuid.uuid4().hex[:40]
+        # Both depend on which Tuya data center holds the account; the config
+        # flow resolves them at login and persists them in the config entry
+        # (issues #44, #58).
+        self.api_url = api_url or TUYA_API_URL
+        self.country_code = country_code
 
     def _build_params(
         self, action: str, version: str = "1.0", post_data: Any = None
@@ -113,7 +124,7 @@ class PhilipsAventAPI:
         if extra_params:
             params.update(extra_params)
         async with self._session.post(
-            TUYA_API_URL,
+            self.api_url,
             data=params,
             headers={
                 "User-Agent": "Thing-UA=APP/Android/1.8.0/SDK/6.7.0",
@@ -130,16 +141,20 @@ class PhilipsAventAPI:
 
     # -- Login flow --------------------------------------------------------
 
-    async def get_rsa_token(self, email: str, country_code: str = "39") -> dict:
+    async def get_rsa_token(self, email: str, country_code: str | None = None) -> dict:
         return await self._call(
             "thing.m.user.username.token.get",
             "2.0",
-            {"countryCode": country_code, "username": email, "isUid": False},
+            {
+                "countryCode": country_code or self.country_code,
+                "username": email,
+                "isUid": False,
+            },
         )
 
     async def login_password(
         self, email: str, encrypted_password: str, token: str,
-        country_code: str = "39", mfa_code: str = "",
+        country_code: str | None = None, mfa_code: str = "",
     ) -> dict:
         old_sid = self.sid
         self.sid = ""
@@ -148,7 +163,7 @@ class PhilipsAventAPI:
                 "thing.m.user.email.password.login",
                 "3.0",
                 {
-                    "countryCode": country_code,
+                    "countryCode": country_code or self.country_code,
                     "email": email,
                     "passwd": encrypted_password,
                     "token": token,
@@ -162,7 +177,7 @@ class PhilipsAventAPI:
 
     async def trigger_mfa(
         self, email: str, encrypted_password: str, token: str,
-        country_code: str = "39",
+        country_code: str | None = None,
     ) -> dict:
         old_sid = self.sid
         self.sid = ""
@@ -171,7 +186,7 @@ class PhilipsAventAPI:
                 "thing.m.user.username.mfa.code.get",
                 "1.0",
                 {
-                    "countryCode": country_code,
+                    "countryCode": country_code or self.country_code,
                     "username": email,
                     "passwd": encrypted_password,
                     "token": token,

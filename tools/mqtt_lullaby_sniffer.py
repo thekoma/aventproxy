@@ -30,6 +30,8 @@ TUYA_SIGNING_KEY = (
 TUYA_APP_KEY = "wx3at9qprkhskvkcsyhm"
 TUYA_PACKAGE_NAME = "com.philips.ph.babymonitorplus"
 TUYA_CH_KEY = "071d81fa"
+# EU accounts only. The broker for any account is in the `domain` block of
+# the login / smartlife.m.user.info.get response (`mobileMqttsUrl`).
 TUYA_MQTT_HOST = "m1.tuyaeu.com"
 TUYA_MQTT_PORT = 8883
 

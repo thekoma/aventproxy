@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"avent-webrtc-bridge/pkg/tuya"
 )
 
 func TestLoadConfig_ValidTwoCameras(t *testing.T) {
@@ -249,5 +251,71 @@ func TestAssignPaths_PreservesProductID(t *testing.T) {
 	}
 	if out[1].ProductID != "" {
 		t.Errorf("out[1].ProductID = %q, want empty string (SCD973 no-regression)", out[1].ProductID)
+	}
+}
+
+func TestLoadConfig_APIHost(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "bridge.json")
+	body := `{
+	  "signing_key": "sk",
+	  "sid": "S",
+	  "ecode": "E",
+	  "partner": "P",
+	  "app_key": "AK",
+	  "device_id": "D",
+	  "package_name": "pkg",
+	  "api_host": "a1.tuyaus.com",
+	  "bridge_port": 38554,
+	  "cameras": [{"camera_id": "abc123", "camera_name": "Erik"}]
+	}`
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := loadConfig(p)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if cfg.APIHost != "a1.tuyaus.com" {
+		t.Errorf("APIHost = %q, want a1.tuyaus.com", cfg.APIHost)
+	}
+	if got := tuya.APIBaseURL(cfg.APIHost); got != "https://a1.tuyaus.com/api.json" {
+		t.Errorf("base URL = %q", got)
+	}
+}
+
+func TestLoadConfig_APIHostMissingFallsBackToEU(t *testing.T) {
+	// Config files written by older integration versions have no api_host;
+	// those installs were all on the Central Europe data center.
+	dir := t.TempDir()
+	p := filepath.Join(dir, "bridge.json")
+	body := `{
+	  "signing_key": "sk",
+	  "sid": "S",
+	  "ecode": "E",
+	  "partner": "P",
+	  "app_key": "AK",
+	  "device_id": "D",
+	  "package_name": "pkg",
+	  "bridge_port": 38554,
+	  "cameras": [{"camera_id": "abc123", "camera_name": "Erik"}]
+	}`
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := loadConfig(p)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if cfg.APIHost != "" {
+		t.Errorf("APIHost = %q, want empty", cfg.APIHost)
+	}
+	if err := validateConfig(cfg); err != nil {
+		t.Errorf("config without api_host must stay valid: %v", err)
+	}
+	if got := tuya.NormalizeAPIHost(cfg.APIHost); got != "a1.tuyaeu.com" {
+		t.Errorf("fallback host = %q, want a1.tuyaeu.com", got)
 	}
 }

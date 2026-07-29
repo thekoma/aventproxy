@@ -39,6 +39,32 @@ var signKeyWhitelist = []string{
 	"et", "n4h5", "sid", "chKey", "sp",
 }
 
+// DefaultAPIHost is the Central Europe data center, used when the integration
+// did not report a host (config files written before data-center routing).
+const DefaultAPIHost = "a1.tuyaeu.com"
+
+// NormalizeAPIHost reduces a configured value to a bare API host, accepting
+// both "a1.tuyaus.com" and "https://a1.tuyaus.com/api.json".
+func NormalizeAPIHost(host string) string {
+	h := strings.TrimSpace(host)
+	h = strings.TrimPrefix(h, "https://")
+	h = strings.TrimPrefix(h, "http://")
+	if i := strings.Index(h, "/"); i >= 0 {
+		h = h[:i]
+	}
+	if h == "" {
+		return DefaultAPIHost
+	}
+	return h
+}
+
+// APIBaseURL builds the mobile SDK endpoint for a Tuya API host. A Tuya session
+// is only valid in the data center that issued it, so the bridge must talk to
+// the same host the integration logged in against (issues #44, #58).
+func APIBaseURL(host string) string {
+	return fmt.Sprintf("https://%s/api.json", NormalizeAPIHost(host))
+}
+
 func NewMobileSDKClient(signingKey, sid, appKey, deviceID, chKey string) *MobileSDKClient {
 	return &MobileSDKClient{
 		SigningKey:  signingKey,
@@ -47,7 +73,7 @@ func NewMobileSDKClient(signingKey, sid, appKey, deviceID, chKey string) *Mobile
 		DeviceID:   deviceID,
 		ChKey:      chKey,
 		TTID:       fmt.Sprintf("sdk_international@%s", appKey),
-		BaseURL:    "https://a1.tuyaeu.com/api.json",
+		BaseURL:    APIBaseURL(""),
 		AppVersion: "1.8.0",
 		SDKVersion: "6.7.0",
 	}

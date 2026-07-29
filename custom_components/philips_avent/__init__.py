@@ -14,35 +14,51 @@ from homeassistant.core import HomeAssistant
 from .api import PhilipsAventAPI
 from .coordinator import PhilipsAventCoordinator
 from .const import (
-    CONF_BRIDGE_PORT, CONF_ECODE, CONF_PARTNER, CONF_SID, DEFAULT_BRIDGE_PORT, DOMAIN,
-    TUYA_APP_KEY, TUYA_PACKAGE_NAME, TUYA_SIGNING_KEY,
+    CONF_API_HOST, CONF_BRIDGE_PORT, CONF_COUNTRY_CODE, CONF_ECODE, CONF_PARTNER, CONF_SID,
+    DEFAULT_BRIDGE_PORT, DOMAIN, TUYA_APP_KEY, TUYA_DEFAULT_COUNTRY_CODE, TUYA_PACKAGE_NAME,
+    TUYA_SIGNING_KEY,
 )
-from .payload import build_cameras_payload
+from .payload import build_bridge_config
+from .region import DEFAULT_DATA_CENTER, api_host, api_url_for_host
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.CAMERA, Platform.SENSOR, Platform.SWITCH, Platform.NUMBER, Platform.BUTTON, Platform.SELECT, Platform.BINARY_SENSOR]
 
 
+def _entry_api_host(entry: ConfigEntry) -> str:
+    """API host for this account, falling back to Central Europe.
+
+    Entries created before data-center routing existed have no host stored; EU
+    is the right fallback for them because that was the only host the
+    integration ever used (issues #44, #58).
+    """
+    return entry.data.get(CONF_API_HOST) or api_host(DEFAULT_DATA_CENTER)
+
+
 async def _write_bridge_config(hass: HomeAssistant, entry: ConfigEntry, api: PhilipsAventAPI, cameras: list) -> None:
     """Write bridge config JSON for the add-on."""
     bridge_port = entry.options.get(CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT)
-    bridge_config = {
-        "signing_key": TUYA_SIGNING_KEY,
-        "sid": entry.data[CONF_SID],
-        "ecode": entry.data.get(CONF_ECODE, ""),
-        "partner": entry.data.get(CONF_PARTNER, ""),
-        "app_key": TUYA_APP_KEY,
-        "device_id": api.device_id,
-        "package_name": TUYA_PACKAGE_NAME,
-        "bridge_port": bridge_port,
-        "cameras": build_cameras_payload(cameras),
-    }
+    bridge_config = build_bridge_config(
+        signing_key=TUYA_SIGNING_KEY,
+        sid=entry.data[CONF_SID],
+        ecode=entry.data.get(CONF_ECODE, ""),
+        partner=entry.data.get(CONF_PARTNER, ""),
+        app_key=TUYA_APP_KEY,
+        device_id=api.device_id,
+        package_name=TUYA_PACKAGE_NAME,
+        api_host=_entry_api_host(entry),
+        bridge_port=bridge_port,
+        cameras=cameras,
+    )
     bridge_path = Path(hass.config.path(f"philips_avent_bridge_{entry.entry_id}.json"))
     await hass.async_add_executor_job(
         bridge_path.write_text, json.dumps(bridge_config, indent=2)
     )
-    _LOGGER.info("Bridge config written to %s (port: %d)", bridge_path, bridge_port)
+    _LOGGER.info(
+        "Bridge config written to %s (port: %d, api host: %s)",
+        bridge_path, bridge_port, bridge_config["api_host"],
+    )
 
     legacy_path = Path(hass.config.path("philips_avent_bridge.json"))
     if await hass.async_add_executor_job(legacy_path.exists):
@@ -58,7 +74,12 @@ async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> Non
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Philips Avent from a config entry."""
     session = aiohttp.ClientSession()
-    api = PhilipsAventAPI(session, sid=entry.data[CONF_SID])
+    api = PhilipsAventAPI(
+        session,
+        sid=entry.data[CONF_SID],
+        api_url=api_url_for_host(_entry_api_host(entry)),
+        country_code=entry.data.get(CONF_COUNTRY_CODE) or TUYA_DEFAULT_COUNTRY_CODE,
+    )
 
     # Use cameras stored in config entry (discovered during config flow)
     cameras = []

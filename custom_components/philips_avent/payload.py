@@ -6,6 +6,39 @@ loaded by tests without dragging in the full HA stack.
 from __future__ import annotations
 
 
+def build_bridge_config(
+    *,
+    signing_key: str,
+    sid: str,
+    ecode: str,
+    partner: str,
+    app_key: str,
+    device_id: str,
+    package_name: str,
+    api_host: str,
+    bridge_port: int,
+    cameras: list,
+) -> dict:
+    """Build the bridge JSON the add-on reads.
+
+    Mirrors ``BridgeConfig`` in ``cmd/addon/addon.go``; `api_host` carries the
+    data center the account was logged into, because a Tuya session is rejected
+    by any other host (issues #44, #58).
+    """
+    return {
+        "signing_key": signing_key,
+        "sid": sid,
+        "ecode": ecode,
+        "partner": partner,
+        "app_key": app_key,
+        "device_id": device_id,
+        "package_name": package_name,
+        "api_host": api_host,
+        "bridge_port": bridge_port,
+        "cameras": build_cameras_payload(cameras),
+    }
+
+
 def build_cameras_payload(cameras: list) -> list:
     """Build the canonical bridge-JSON cameras list.
 

@@ -48,3 +48,40 @@ func TestParseAPIResponseShortInvalidBody(t *testing.T) {
 		t.Fatal("expected decode error, got nil")
 	}
 }
+
+func TestNormalizeAPIHost(t *testing.T) {
+	cases := map[string]string{
+		"a1.tuyaus.com":                  "a1.tuyaus.com",
+		"https://a1.tuyain.com/api.json": "a1.tuyain.com",
+		"http://a1.tuyacn.com/":          "a1.tuyacn.com",
+		"  a1.tuyaeu.com  ":              "a1.tuyaeu.com",
+		"":                               DefaultAPIHost,
+		"   ":                            DefaultAPIHost,
+	}
+	for in, want := range cases {
+		if got := NormalizeAPIHost(in); got != want {
+			t.Errorf("NormalizeAPIHost(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestAPIBaseURL(t *testing.T) {
+	if got := APIBaseURL("a1.tuyaus.com"); got != "https://a1.tuyaus.com/api.json" {
+		t.Errorf("APIBaseURL = %q", got)
+	}
+	// An empty host keeps the pre-routing behaviour: Central Europe.
+	if got := APIBaseURL(""); got != "https://a1.tuyaeu.com/api.json" {
+		t.Errorf("APIBaseURL(\"\") = %q, want the EU host", got)
+	}
+	// A value already in URL form must not be doubled up.
+	if got := APIBaseURL("https://a1.tuyain.com/api.json"); got != "https://a1.tuyain.com/api.json" {
+		t.Errorf("APIBaseURL(url) = %q", got)
+	}
+}
+
+func TestNewMobileSDKClientDefaultsToEU(t *testing.T) {
+	c := NewMobileSDKClient("sk", "sid", "ak", "dev", "ch")
+	if c.BaseURL != "https://a1.tuyaeu.com/api.json" {
+		t.Errorf("BaseURL = %q, want the EU host by default", c.BaseURL)
+	}
+}
