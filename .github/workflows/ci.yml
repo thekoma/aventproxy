@@ -13,9 +13,9 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -33,9 +33,9 @@ jobs:
   test-go:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.26"
 
@@ -66,7 +66,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test-python, test-go]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Copy bridge source for Docker build
         run: cp -r avent-webrtc-bridge aventproxy-bridge-addon/avent-webrtc-bridge
