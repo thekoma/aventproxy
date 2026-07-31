@@ -45,6 +45,9 @@ This paper documents the complete reverse engineering of the Tuya Mobile SDK API
 - The signing key is **static per APK version** — extract once, use indefinitely
 - The SID is the only rotating credential, renewable via the password + MFA flow
 - All WebRTC/MQTT/RTSP bridge logic is protocol-level and API-agnostic
+- **Local signaling needs no cloud credential at all** (section 16, captured by @leonardpitzu): the
+  camera negotiates a stream over its own TCP 6668 session, with the `localKey` as the only
+  cloud-derived secret and `smartlife.m.rtc.config.get` not required
 
 **Result:** Full autonomous API access from Python/Go, suitable for Home Assistant integration with a config flow identical to the vendor app's login (email → password → MFA code from email).
 
@@ -933,9 +936,15 @@ we use the other, or the broker accepts both.
 | Mode | Codec / transport | Crypto | Consumable by |
 |------|-------------------|--------|---------------|
 | `webrtc` | RTP/H.264 over **DTLS-SRTP** (standard WebRTC) | SRTP keys from the DTLS handshake | any standard stack (`aiortc`, `pion`) |
-| `imm` | Tuya `AES/KCP` custom codec (`m=application 9 tuya 6001`) | AES-128, key shipped plaintext in SDP `a=aes-key` | custom decoder |
+| `imm` | Tuya `AES/KCP` custom codec (`m=application 9 imm 6001`, `a=rtpmap:6001 AES/KCP 330`) | AES-128, key shipped plaintext in SDP `a=aes-key` | custom decoder |
 
-Requesting **`mode: webrtc`** yields an ordinary DTLS-SRTP/H.264 stream — no proprietary cipher to reimplement. The `imm` path is documented for completeness but unnecessary.
+Over the **cloud** path, requesting `mode: webrtc` yields an ordinary DTLS-SRTP/H.264 stream, which is what this project's bridge does and why `pion` decodes it with no proprietary cipher.
+
+### Correction: the LAN path does not offer DTLS-SRTP
+
+The captured local session (section 16) never negotiates DTLS-SRTP. Its offer is `m=application 9 imm 6001` with `a=rtpmap:6001 AES/KCP 330`, and the answer comes back `AES/KCP 3`. The `mode` field is **absent entirely** from a LAN offer: the codec is carried in the m-line instead. So `imm` is not merely an alternative documented for completeness, it is what the local path gives you.
+
+The saving grace is that `a=aes-key:` sits in the SDP in cleartext, so `imm` is decodable without reversing a key schedule. Anyone implementing local streaming should plan for AES/KCP rather than expecting to reuse a standard WebRTC stack.
 
 ### Correction: port 554 is not a shortcut
 
@@ -950,7 +959,7 @@ The streaming engine is the native P2P SDK (`libThingP2PSDK.so`, ARM64), pulled 
 - mbedTLS DTLS: `mbedtls_ssl_*`, `mbedtls_x509write_crt_*`, `mbedtls_ctr_drbg_seed`
 - `imm_p2p_rtc_sdp_set_dtls_cert_fingerprint`, plus a full SDP builder API: `imm_p2p_rtc_sdp_{add_media,add_video_codec,add_audio_codec,add_candidate,set_aes_key,get_aes_key}`
 
-This is decisive: the `webrtc` mode is genuine DTLS-SRTP that `aiortc` decodes natively; the `imm`/AES-KCP path is the *alternative*, not the default.
+This is decisive for the cloud path: the `webrtc` mode is genuine DTLS-SRTP that `aiortc` decodes natively. Note that on the **local** path the choice does not exist, as the captured LAN offer carries no `mode` field and negotiates AES/KCP (sections 14 and 16).
 
 **Signaling command surface (string-extracted JSON templates):**
 
@@ -966,23 +975,66 @@ The cloud-vs-LAN selector inside the SDK is the integer **`lan_mode`** flag on `
 
 ## 16. Phase 10: The Local-Signaling Path (Zero-WAN)
 
-The official app keeps streaming with the camera's WAN unplugged, so the camera must accept the **same signaling frames over a local channel**. Reverse engineering located the fork but not yet the full live handshake.
+*Captured live and contributed by @leonardpitzu in [issue #51](https://github.com/thekoma/aventproxy/issues/51). This section previously described a static, partly wrong reconstruction; the capture replaces it and the corrections are called out below so the earlier reasoning stays traceable.*
 
-**The app's clean cloud/LAN fork (decompiled Java):**
+The official app keeps streaming with the camera's WAN unplugged. The capture that settles how: camera blocked from WAN at the gateway, app streaming throughout, traffic taken **on the access point the camera associates with** and decrypted offline with the device `localKey`.
 
-```java
-// P2PMQTTServiceManager.send302MessageThroughMqtt(boolean z, String devId, String json)
-if (z) homeCamera.lan302Publish(devId, body, cb);                 // LAN  branch
-else   homeCamera.publish(devId, pv, localKey, body, 302, cb);    // cloud branch
+**The headline: local signaling needs no cloud credential.** The offer carries no `auth`, no `mode` and no `stream_type`, and `moto_id` is empty. `smartlife.m.rtc.config.get` is not required to negotiate a stream. The only cloud-derived secret anywhere in the flow is the `localKey`, which is a one-time fetch.
+
+### The wire sequence
+
+All of it on **TCP 6668**, one connection:
+
+| # | Direction | Tuya seq | Cmd | Frame | Payload |
+|---|-----------|----------|-----|-------|---------|
+| 1 | app → cam | 1 | 3 | `SESS_KEY_NEG_START` | `local_nonce[16]` |
+| 2 | cam → app | — | 4 | `SESS_KEY_NEG_RESP` | `remote_nonce[16]` + `hmac[32]` |
+| 3 | app → cam | 2 | 5 | `SESS_KEY_NEG_FINISH` | `hmac_sha256(localKey, remote_nonce)` |
+| 4 | app → cam | 3 | 10 | `DP_QUERY` | primes the session |
+| 5 | cam → app | — | 10 | reply | ~616 B |
+| 6 | app → cam | 4 | 32 | `IPC_LAN_302` — `type: "offer"` | ~1633 B |
+| 7 | cam → app | — | 32 | `IPC_LAN_302` — ACK | 32 B |
+| 8 | cam → app | — | 32 | `IPC_LAN_302` — `type: "answer"` | ~1246 B |
+| 9 | both | 5…14 | 32 | `IPC_LAN_302` — `type: "candidate"` | trickle, both directions |
+| 10 | cam → app | — | 8 | `STATUS` | DPS pushes |
+
+**Offer shape** (values redacted):
+
+```jsonc
+"header": { "from": "<account uid>", "to": "<devId>", "moto_id": "",
+            "path": "lan", "type": "offer", "is_pre": 0,
+            "p2p_skill": 1635, "security_level": 3,
+            "sessionid": "<devId><epoch><8 rand>",
+            "trace_id": "<UUID>_<devId>_<epoch_ms>" }
+"msg": { "sdp": "...", "preconnect": true, "log": {...},
+         "token": [ ...stun/turn... ], "tcp_token": {...} }
 ```
 
-- The offer **body is byte-identical** for both branches — only the transport differs. This is what makes a drop-in local signaling transport viable.
-- `lan302Publish → lanControl(devId, body, FrameTypeEnum.IPC_LAN_302.type = 32, cb)`.
-- The cloud branch receives the answer via MQTT (`registerCameraP2P302Listener`); the LAN branch via a **separate local push** (`registerHardwareP2P302Listener`).
+The answer is the same shape with `p2p_skill: 1123` and `type: "answer"`.
 
-**Why a naive frametype-32 offer fails (tested):** sending a faithful `IPC_LAN_302` offer over the standard Tuya 3.5 localKey session on **:6668** — correct header, real `auth`, real ICE `token`, 20 s listen — returns only the localKey-layer **ACK** (`retcode=0, paylen=0`) and **no answer**. The binary explains it: `ThingSmartP2PSDK::SendMessageThroughLAN` enumerates local interfaces (`getifaddrs`) and sends over the SDK's **own UDP socket/port**, not as a reply on the opened socket; and the camera only answers *inside* an established `connect_v3` P2P/ICE session (`imm_p2p_ice_session_{create,add_remote_userinfo,add_remote_candidate,get_handshake_info}`), not a one-shot publish.
+`token` and `tcp_token` are present but pointed at cloud STUN/TURN and a `tcp4:...:1443` relay that were unreachable for the whole capture. ICE probed them, failed, and settled on the direct LAN host pair: media ran `cam:47154 → phone:50218`, 753 packets, no cloud involvement. So those blocks look carriable-but-ignorable rather than required. Whether the camera rejects an offer that omits them is untested.
 
-**The one remaining open problem.** Everything above is static or derived. Not yet captured live: the concrete `lan_mode`/`path` values and the SDK's LAN UDP port the answer returns on. It cannot be observed on an emulator — NAT `10.0.2.x` is not on the camera's L2 LAN, so the app always takes the cloud branch (`z=false`). Closing it requires an **on-LAN Android client with Frida**, with the camera blocked from WAN, hooking `send302MessageThroughMqtt` + native `imm_p2p_rtc_set_signaling` / `SendMessageThroughLAN`.
+### Correction: why the earlier frametype-32 attempt only got an ACK
+
+The previous version of this section blamed `ThingSmartP2PSDK::SendMessageThroughLAN` for enumerating interfaces with `getifaddrs` and answering on the SDK's own UDP socket. **That does not hold.** Filtering the capture for it: the only TCP between phone and camera is 6668, the phone's only UDP to the camera is the media port pair itself, and the answer comes back on the same 6668 session. There is no LAN UDP signaling port to find.
+
+The decompiled chain agrees, and there is no socket in `libThingP2PSDK.so` at all:
+
+```
+SendMessageThroughLAN(devId, json, len)                      # native → Java, a JNI upcall
+  → P2PMQTTServiceManager.send302MessageThroughMqtt(byLan=true, devId, json)
+  → homeCamera.lan302Publish(devId, json, cb)
+  → ThingSmartDevice.lanControl(devId, json, FrameTypeEnum.IPC_LAN_302.type=32, cb)
+answer ← registerDeviceHardwareResponseListener(FrameTypeEnum.IPC_LAN_302.getType(), ...)
+```
+
+The real reason the earlier attempt failed is simpler: **it published cold.** The camera answers only on a session that has been through `SESS_KEY_NEG 3 → 4 → 5` and then primed with `DP_QUERY(10)`. The 32-byte cmd-32 frames that test saw are exactly the ACK at step 7 above. It stopped one step short rather than being wrong about the frame type.
+
+### Consequences for this project
+
+- **The camera fans cmd-32 frames out to every connected LAN client.** A Home Assistant box holding a tinytuya session was receiving copies of the answer and candidate frames and discarding them. If the integration ever wants the LAN signaling path, the traffic is already being handed to it. This is also the likely identity of the `Unexpected Payload from Device` frames behind [issue #62](https://github.com/thekoma/aventproxy/issues/62): real frames, on a session negotiated at a version that cannot read them.
+- **The camera announces `"version": "3.5"`** in its 6667 discovery broadcast (6699/GCM framing). `lan.py` built a 3.3 session and discarded the announcement until 2026.7.0-rc9, which tries the announced version and falls back to 3.3.
+- **A LAN signaling path would route around `smartlife.m.rtc.config.get` entirely.** That call is what fails with `PERMISSION_DENIED` on [issue #48](https://github.com/thekoma/aventproxy/issues/48) for an account whose session is otherwise fine, and it is also what ties streaming to the regional server holding the account.
 
 ## 17. Completed Architecture
 
@@ -1029,6 +1081,16 @@ This research targets personal devices owned by the researcher. No third-party s
 ---
 
 ## 19. Reproducibility Guide
+
+### Decrypting a local session from a packet capture
+
+*Contributed by @leonardpitzu in [issue #51](https://github.com/thekoma/aventproxy/issues/51). Each of these cost real time, so they are written down rather than rediscovered.*
+
+- **Capture on the access point, not on a neighbouring host.** The AP bridges station-to-station traffic locally, so phone-to-camera frames never reach a third party on the same subnet.
+- **`tinytuya.parse_header` rejects frames larger than `MAX_PAYLOAD_LENGTH`.** The offer is 1633 bytes and trips it, so a naive frame walker silently skips the single most interesting frame and the sequence numbers merely appear to jump from 3 to 5. Pass `header=` into `unpack_message` as well, which otherwise re-parses and re-applies the same ceiling.
+- **For 6699/GCM frames a wrong key does not raise.** `unpack_message` returns `crc_good=False`. Select the key by `crc_good`, not by catching exceptions.
+- **Camera→app frames carry a 4-byte retcode and app→camera frames do not.** So `local_nonce` sits at offset 0 in cmd 3 while `remote_nonce` sits at offset 4 in cmd 4. Get that wrong and you derive a plausible-looking session key that decrypts nothing. Self-test: `RESP[16:48] == hmac_sha256(localKey, local_nonce)`.
+- **Session key, the 3.5 derivation:** `AES(localKey).encrypt(xor(local_nonce, remote_nonce), pad=False, iv=local_nonce[:12])[12:28]`, with GCM AAD being frame bytes `[4:18]`.
 
 ### Requirements
 
