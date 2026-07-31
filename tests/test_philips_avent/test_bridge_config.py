@@ -17,7 +17,9 @@ from payload import (
     bridge_config_filename,
     build_bridge_config,
     build_cameras_payload,
+    dps_delta,
     orphan_bridge_configs,
+    truncated_dps,
 )
 
 
@@ -176,3 +178,40 @@ class TestOrphanBridgeConfigs:
 
     def test_empty_directory(self):
         assert orphan_bridge_configs([], {self.LIVE}) == []
+
+
+class TestDpsDelta:
+    """The debug line that says what a poll changed (issues #42, #61)."""
+
+    def test_only_changed_and_new_keys(self):
+        old = {"207": 2310, "141": "", "212": "same"}
+        new = {"207": 2600, "141": "", "212": "same", "250": "motion_detection"}
+        assert dps_delta(old, new) == {"207": 2600, "250": "motion_detection"}
+
+    def test_no_previous_state_reports_everything(self):
+        assert dps_delta(None, {"207": 2310}) == {"207": 2310}
+        assert dps_delta({}, {"207": 2310}) == {"207": 2310}
+
+    def test_nothing_changed_is_empty(self):
+        assert dps_delta({"207": 2310}, {"207": 2310}) == {}
+        assert dps_delta({"207": 2310}, {}) == {}
+        assert dps_delta({"207": 2310}, None) == {}
+
+    def test_a_value_going_empty_still_counts(self):
+        # An alert DPS clearing is a change worth seeing in the log.
+        assert dps_delta({"141": "decibel_upload"}, {"141": ""}) == {"141": ""}
+
+    def test_long_alarm_record_is_cut_but_readable(self):
+        record = "e" * 900
+        out = dps_delta({}, {"212": record})["212"]
+        assert out.startswith("e" * 300)
+        assert "+600 chars" in out
+        assert len(out) < 400
+
+    def test_short_values_are_untouched(self):
+        assert dps_delta({}, {"201": "play"}) == {"201": "play"}
+
+    def test_truncated_dps_keeps_repeated_pushes(self):
+        # A push repeating a value is still an event worth logging.
+        assert truncated_dps({"141": "decibel_upload"}) == {"141": "decibel_upload"}
+        assert truncated_dps(None) == {}

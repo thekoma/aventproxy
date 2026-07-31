@@ -13,6 +13,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .api import PhilipsAventAPI, TuyaAPIError
 from .const import DPS_LULLABY_CONTROL, DPS_LULLABY_STATE
 from .lan import TuyaLANClient
+from .payload import dps_delta, truncated_dps
 
 LULLABY_STATE_MAP = {"play": "playing", "pause": "stopping", "stop": "stopping"}
 
@@ -76,7 +77,9 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         self.last_lan_dps = dict(dps)
         self.lan_update_sequence += 1
         merged = {**self.data, **dps}
-        _LOGGER.debug("LAN push for %s: %s", self.camera_name, dps)
+        _LOGGER.debug(
+            "LAN push for %s: %s", self.camera_name, truncated_dps(dps)
+        )
         self.async_set_updated_data(merged)
 
     async def set_dps(self, dps: dict) -> dict:
@@ -114,6 +117,9 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
             except TuyaAPIError:
                 pass
             api_dps = device.get("dps", {})
+            changed = dps_delta(self.data, api_dps)
+            if changed:
+                _LOGGER.debug("Cloud poll changed DPS for %s: %s", self.camera_name, changed)
             if self.data:
                 return {**self.data, **api_dps}
             return api_dps
