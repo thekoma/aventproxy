@@ -70,3 +70,50 @@ def reconnect_delay(consecutive_failures: int, delay: float = RECONNECT_DELAY) -
     if consecutive_failures <= 1:
         return 0.0
     return delay
+
+# Protocol version for the local Tuya session. 3.3 is what the integration has
+# always used and what every model connects with today. The SCD953 announces 3.5
+# in its discovery broadcast (capture on #51), and a session negotiated at the
+# wrong version cannot read frames the camera sends, which is the likely source
+# of the "Unexpected Payload from Device" frames on #62. Try what the camera
+# announces, keep 3.3 as the fallback so local control cannot regress.
+PROTOCOL_VERSION_DEFAULT = 3.3
+SUPPORTED_PROTOCOL_VERSIONS = (3.1, 3.2, 3.3, 3.4, 3.5)
+
+
+def parse_protocol_version(value: object) -> float | None:
+    """Read the protocol version out of a discovery broadcast.
+
+    tinytuya reports it as a string such as "3.5". Anything unrecognised gives
+    None, so the caller falls back to the default rather than handing tinytuya a
+    version it cannot speak.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        version = float(value)
+    elif isinstance(value, str) and value.strip():
+        try:
+            version = float(value.strip())
+        except ValueError:
+            return None
+    else:
+        return None
+    return version if version in SUPPORTED_PROTOCOL_VERSIONS else None
+
+
+def version_candidates(
+    announced: float | None, default: float = PROTOCOL_VERSION_DEFAULT
+) -> list[float]:
+    """Protocol versions to try for a local session, best guess first.
+
+    The announced version comes first because the camera should know what it
+    speaks. The default follows as a fallback, since 3.4 and up negotiate a
+    session key and a firmware that refuses can still be reached the old way.
+    """
+    candidates = []
+    if announced is not None:
+        candidates.append(announced)
+    if default not in candidates:
+        candidates.append(default)
+    return candidates

@@ -7,12 +7,15 @@ from lan_policy import (
     LAN_ERR_OFFLINE,
     LAN_ERR_PAYLOAD,
     MAX_PAYLOAD_ERRORS,
+    PROTOCOL_VERSION_DEFAULT,
     RECONNECT_DELAY,
     data_stale,
     heartbeat_due,
     is_connection_error,
+    parse_protocol_version,
     reconnect_delay,
     should_reconnect,
+    version_candidates,
 )
 
 # tinytuya blocks in receive() for up to this long, so a heartbeat can be late
@@ -103,3 +106,36 @@ class TestShouldReconnect:
     def test_error_without_a_code_is_treated_as_unreadable(self):
         assert not should_reconnect(None, 1)
         assert should_reconnect(None, MAX_PAYLOAD_ERRORS)
+
+
+class TestProtocolVersion:
+    """Which local protocol version to speak (#51, #62).
+
+    The SCD953 announces 3.5 in its discovery broadcast while the client always
+    built a 3.3 session, and a session at the wrong version cannot read the
+    frames the camera sends.
+    """
+
+    def test_announced_version_is_read(self):
+        assert parse_protocol_version("3.5") == 3.5
+        assert parse_protocol_version("3.3") == 3.3
+        assert parse_protocol_version(3.4) == 3.4
+
+    def test_unknown_or_junk_values_fall_back(self):
+        for value in ("", "  ", "junk", "9.9", None, True, [], {}):
+            assert parse_protocol_version(value) is None
+
+    def test_announced_version_is_tried_first(self):
+        assert version_candidates(3.5) == [3.5, PROTOCOL_VERSION_DEFAULT]
+
+    def test_default_alone_when_nothing_announced(self):
+        assert version_candidates(None) == [PROTOCOL_VERSION_DEFAULT]
+
+    def test_no_duplicate_when_the_camera_announces_the_default(self):
+        assert version_candidates(PROTOCOL_VERSION_DEFAULT) == [PROTOCOL_VERSION_DEFAULT]
+
+    def test_fallback_is_always_available(self):
+        # Local control must not regress on firmware that refuses the newer
+        # session-key negotiation.
+        for announced in (3.1, 3.4, 3.5, None):
+            assert PROTOCOL_VERSION_DEFAULT in version_candidates(announced)

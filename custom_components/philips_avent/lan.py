@@ -12,11 +12,14 @@ import tinytuya
 from homeassistant.core import HomeAssistant
 
 from .lan_policy import (
+    PROTOCOL_VERSION_DEFAULT,
     data_stale,
     heartbeat_due,
     is_connection_error,
+    parse_protocol_version,
     reconnect_delay,
     should_reconnect,
+    version_candidates,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -41,6 +44,8 @@ class TuyaLANClient:
         self._on_dps_update = on_dps_update
         self._device: tinytuya.Device | None = None
         self._ip: str | None = None
+        self._announced_version: float | None = None
+        self._version: float | None = None
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         self.connected: bool = False
@@ -68,38 +73,62 @@ class TuyaLANClient:
             self._device = None
         self.connected = False
 
-    async def _discover_ip(self) -> str | None:
+    async def _discover_device(self) -> tuple[str | None, float | None]:
+        """Find the monitor on the LAN, keeping the protocol version it announces."""
         def _scan():
             devices = tinytuya.deviceScan(maxretry=SCAN_MAXRETRY)
             for ip, info in devices.items():
                 if info.get("gwId") == self._device_id:
-                    return ip
-            return None
+                    return ip, parse_protocol_version(info.get("version"))
+            return None, None
 
         return await self._hass.async_add_executor_job(_scan)
 
-    def _try_direct_connect(self, ip: str) -> tinytuya.Device | None:
+    def _try_direct_connect(self, ip: str, version: float) -> tinytuya.Device | None:
         """Try connecting directly to a known IP via TCP handshake only.
 
         Don't send status() or updatedps() — this IPC device doesn't
         respond to DP_QUERY and updatedps() crashes the firmware.
+
+        `_get_socket` answers True or a tinytuya error code, and from 3.4 up that
+        covers the session-key negotiation, so the caller learns whether this
+        protocol version actually works on this firmware.
         """
         try:
-            d = tinytuya.Device(self._device_id, ip, self._local_key, version=3.3)
+            d = tinytuya.Device(self._device_id, ip, self._local_key, version=version)
             d.set_socketPersistent(True)
             d.set_socketTimeout(SOCKET_TIMEOUT)
-            if d._get_socket(False) is not None:
+            result = d._get_socket(False)
+            if result is True:
                 return d
+            _LOGGER.debug(
+                "LAN connection to %s at protocol %s refused: %s", ip, version, result
+            )
             d.close()
         except Exception as ex:  # noqa: BLE001 - tinytuya raises socket, decode and key errors here
-            _LOGGER.debug("Direct LAN connection to %s failed: %s", ip, ex)
+            _LOGGER.debug("Direct LAN connection to %s at protocol %s failed: %s", ip, version, ex)
+        return None
+
+    async def _connect_at_any_version(self, ip: str) -> tinytuya.Device | None:
+        """Connect to a known IP, trying the announced protocol then the default."""
+        for version in version_candidates(self._version or self._announced_version):
+            device = await self._hass.async_add_executor_job(
+                self._try_direct_connect, ip, version
+            )
+            if device:
+                if version != self._version:
+                    _LOGGER.info(
+                        "LAN session with %s speaks protocol %s", self._device_id, version
+                    )
+                self._version = version
+                return device
         return None
 
     async def _connect(self) -> bool:
         # Try cached IP first (direct TCP, no broadcast needed)
         if self._ip:
             _LOGGER.debug("Trying direct LAN connection to %s at %s", self._device_id, self._ip)
-            device = await self._hass.async_add_executor_job(self._try_direct_connect, self._ip)
+            device = await self._connect_at_any_version(self._ip)
             if device:
                 self._device = device
                 self.connected = True
@@ -109,12 +138,17 @@ class TuyaLANClient:
 
         # Scan for device IP
         _LOGGER.debug("Scanning LAN for device %s", self._device_id)
-        self._ip = await self._discover_ip()
+        self._ip, announced = await self._discover_device()
+        if announced is not None and announced != self._announced_version:
+            _LOGGER.debug(
+                "Device %s announces protocol %s", self._device_id, announced
+            )
+            self._announced_version = announced
         if not self._ip:
             _LOGGER.warning("Device %s not found on LAN", self._device_id)
             return False
 
-        device = await self._hass.async_add_executor_job(self._try_direct_connect, self._ip)
+        device = await self._connect_at_any_version(self._ip)
         if device:
             self._device = device
             self.connected = True
@@ -233,7 +267,12 @@ class TuyaLANClient:
             return None
 
         def _send():
-            d = tinytuya.Device(self._device_id, self._ip, self._local_key, version=3.3)
+            d = tinytuya.Device(
+                self._device_id,
+                self._ip,
+                self._local_key,
+                version=self._version or PROTOCOL_VERSION_DEFAULT,
+            )
             d.set_socketTimeout(SOCKET_TIMEOUT)
             try:
                 for key, value in dps.items():
