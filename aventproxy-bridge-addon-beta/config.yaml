@@ -22,6 +22,7 @@ schema:
   device_id: str?
   package_name: str?
   api_host: str?
+  talkback: bool?
   cameras:
     - camera_id: str?
       camera_name: str?

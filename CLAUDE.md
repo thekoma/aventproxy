@@ -9,10 +9,13 @@ Home Assistant custom integration for Philips Avent SCD973/SCD923 baby monitors.
 1. **HA integration** (`custom_components/philips_avent/`) — Python, talks to Tuya cloud API with HMAC-SHA256 signed requests
 2. **WebRTC-to-RTSP bridge** (`avent-webrtc-bridge/`) — Go binary, converts Tuya WebRTC streams to RTSP on port 8554
 3. **HA add-on** (`aventproxy-bridge-addon/`) — Docker container packaging the Go bridge for HA add-on store.
-   `aventproxy-bridge-addon-beta/` is the same add-on on the beta channel: the release workflow bumps
-   the beta `config.yaml` for rc/beta tags and the stable one only for stable tags, so the two cards
-   sit at different versions on purpose. A bridge older than the integration can miss config fields
-   (`api_host` landed in 2026.7.0-rc2), so testers must run the Beta card. Both cards pull the same
+   Three cards, one per channel: `aventproxy-bridge-addon/` (stable), `-beta/` (rc and beta) and
+   `-dev/` (builds off main). The release workflow bumps exactly one `config.yaml` per run, chosen by
+   release type, so a dev build never moves the card rc testers follow. The cards therefore sit at
+   different versions on purpose. A dev run publishes a tag and an image but **no GitHub release**,
+   which is what keeps it out of HACS for anyone who merely enabled beta versions. A bridge older
+   than the integration can miss config fields (`api_host` landed in 2026.7.0-rc2, `talkback` in
+   2026.7.0-dev1), so testers must run the card matching their integration channel. Both cards pull the same
    published image, which is built from `aventproxy-bridge-addon/` only, so the beta folder's
    `Dockerfile` and `run.sh` are never built. Keep them byte-identical to the stable ones anyway;
    the beta copy had silently drifted to a pre-multi-entry `run.sh`
@@ -78,7 +81,7 @@ GitHub Actions (`.github/workflows/ci.yml`):
 - Go bridge: `gofmt` check, build and `go test ./...` with Go 1.26
 - Docker add-on build verification
 
-Release workflow (`release.yml`): version pattern `YEAR.MONTH.INCREMENT`, multi-arch (amd64+arm64), pushes to `ghcr.io/thekoma/aventproxy-bridge`.
+Release workflow (`release.yml`): version pattern `YEAR.MONTH.INCREMENT`, multi-arch (amd64+arm64), pushes to `ghcr.io/thekoma/aventproxy-bridge`. Types: `release`, `rc`, `beta`, `dev`. Only `dev` skips the GitHub release step, via the `publish_release` output. Pushes touching `.github/workflows/` need the SSH remote, since the HTTPS token has no `workflow` scope.
 
 ## Style
 

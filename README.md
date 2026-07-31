@@ -70,6 +70,7 @@ Or manually:
 |------|-----------------|
 | Philips Avent WebRTC Bridge (Addon) | You run a stable release of the integration |
 | Philips Avent WebRTC Bridge Beta (Addon) | You run a beta or rc build of the integration |
+| Philips Avent WebRTC Bridge Dev (Addon) | Someone asked you to test a specific fix off main. No release notes, no promises |
 
 Keep both sides on the same version. The two halves talk over a config file whose contents grow with each release, so a stable bridge paired with an rc integration can miss a field it needs. As an example, bridges before 2026.7.0-rc2 do not read `api_host`, so an account outside Europe logs in and then fails to stream.
 

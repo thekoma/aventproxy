@@ -1,0 +1,27 @@
+#include <tunables/global>
+
+profile aventproxy_bridge flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  file,
+  signal,
+  network,
+
+  /init rix,
+  /bin/** ix,
+  /usr/bin/** ix,
+  /usr/local/bin/** ix,
+  /usr/lib/bashio/** ix,
+  /etc/s6/** rix,
+  /run/s6/** rwix,
+  /etc/services.d/** rwix,
+  /etc/cont-init.d/** rwix,
+  /etc/cont-finish.d/** rwix,
+  /run/** rwk,
+  /tmp/** rw,
+  /data/** rw,
+  /config/** rw,
+
+  /run.sh ix,
+  /usr/local/bin/avent-webrtc-bridge ix,
+}
