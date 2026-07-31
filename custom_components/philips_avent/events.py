@@ -10,7 +10,8 @@ stayed off on several models while the Philips app got the notification (issues
   the alarm to DPS 212 instead, as base64 JSON describing the snapshot it
   uploaded:
   `{"v":"4.0","cmd":"ipc_motion","alarm":true,"time":1783686591,"files":[...]}`
-  (from the diagnostics on #61).
+  (from the diagnostics on #61). Its noise alert uses the same shape with
+  `cmd: ipc_bang` (from the diagnostics on #42).
 
 DPS 212 carries its own timestamp, which makes it usable on the cloud poll as
 well: the value sticks around in device state, so freshness comes from the
@@ -23,14 +24,33 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import logging
+
+_LOGGER = logging.getLogger(__name__)
 
 # An event older than this is history, not something to turn a sensor on for.
-# The cloud poll runs every 30 to 120 seconds and DPS 212 keeps the last alarm
-# indefinitely, so without this a restart would replay whatever it finds.
-EVENT_MAX_AGE_SECONDS = 90.0
+# DPS 212 keeps the last alarm indefinitely, so without a cap a restart would
+# replay whatever it finds. The cap has to stay above the slowest cloud poll
+# (POLL_SLOW, 120s, used whenever the LAN client is connected) or a real alarm
+# that lands between two polls is discarded as history, which is half of what
+# kept the sensors quiet on #42. Replay protection does not rest on this number:
+# `is_new_event` also requires a stamp newer than the last one acted on.
+EVENT_MAX_AGE_SECONDS = 180.0
 
 MOTION_COMMANDS = frozenset({"ipc_motion", "ipc_move", "motion"})
-SOUND_COMMANDS = frozenset({"ipc_sound", "ipc_decibel", "sound", "decibel"})
+# `ipc_bang` is what the SCD953 posts for a noise alert, confirmed by the
+# diagnostics on #42. Until it was listed here the sound sensor stayed off while
+# the Philips app notified. A cry is a sound alert on a baby monitor, so
+# `ipc_cry` belongs here too.
+SOUND_COMMANDS = frozenset(
+    {"ipc_bang", "ipc_cry", "ipc_sound", "ipc_decibel", "sound", "decibel"}
+)
+
+KNOWN_COMMANDS = MOTION_COMMANDS | SOUND_COMMANDS
+
+# Alarm commands already reported, so an unmapped one is logged once per run
+# instead of on every poll.
+_seen_unknown_commands: set[str] = set()
 
 
 def decode_event_payload(raw: object) -> dict | None:
@@ -84,11 +104,32 @@ def alarm_event_timestamp(raw: object, commands: frozenset[str]) -> float | None
     payload = decode_event_payload(raw)
     if not payload:
         return None
-    if str(payload.get("cmd", "")).lower() not in commands:
+    command = str(payload.get("cmd", "")).lower()
+    if command not in commands:
+        note_unmapped_command(command)
         return None
     if payload.get("alarm") is False:
         return None
     return event_timestamp(payload)
+
+
+def note_unmapped_command(command: str) -> None:
+    """Log an alarm command no sensor maps to, once per command per run.
+
+    Every family found so far names its alerts differently, and an unmapped one
+    used to vanish without trace: the monitor raised an alarm, the Philips app
+    notified, Home Assistant showed nothing and the log said nothing either
+    (issues #42, #61). Naming it turns the next family into a one-line change
+    instead of decoding a diagnostics dump by hand.
+    """
+    if not command or command in KNOWN_COMMANDS or command in _seen_unknown_commands:
+        return
+    _seen_unknown_commands.add(command)
+    _LOGGER.warning(
+        "Monitor reported alarm command '%s', which no motion or sound sensor maps to yet. "
+        "Please report it at https://github.com/thekoma/aventproxy/issues so it can be added",
+        command,
+    )
 
 
 def motion_event_timestamp(raw: object) -> float | None:

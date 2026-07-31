@@ -155,7 +155,13 @@ class AventMotionDetected(CoordinatorEntity, BinarySensorEntity):
 
 
 class AventSoundDetected(CoordinatorEntity, BinarySensorEntity):
-    """Turns on when DPS 141 reports 'decibel_upload', auto-clears after timeout."""
+    """Sound alerts, from whichever DPS the monitor reports them on.
+
+    Same split as motion: DPS 141 set to `decibel_upload` on the SCD973 and
+    SCD923 family, and the timestamped DPS 212 alarm record on the SCD951 and
+    SCD953 family, which names a noise alert `ipc_bang` (#42). Auto-clears after
+    ALERT_CLEAR_SECONDS.
+    """
 
     _attr_has_entity_name = True
     _attr_name = "Sound Detected"
