@@ -9,9 +9,11 @@ from typing import Any
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util.dt import utcnow
 
 from .api import PhilipsAventAPI, TuyaAPIError
-from .const import DPS_LULLABY_CONTROL, DPS_LULLABY_STATE
+from .const import DPS_ALARM_RECORD, DPS_LULLABY_CONTROL, DPS_LULLABY_STATE
+from .events import poll_should_stay_fast
 from .lan import TuyaLANClient
 from .payload import dps_delta, truncated_dps
 
@@ -21,6 +23,10 @@ _LOGGER = logging.getLogger(__name__)
 
 POLL_FAST = timedelta(seconds=30)
 POLL_SLOW = timedelta(seconds=120)
+
+# RSSI moves slowly and costs a second API call per poll, so it is refreshed on
+# its own schedule rather than on every tick of a fast poll.
+RSSI_INTERVAL = timedelta(minutes=5)
 
 
 class PhilipsAventCoordinator(DataUpdateCoordinator):
@@ -49,6 +55,7 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         self._lan_client: TuyaLANClient | None = None
         self.last_lan_dps: dict[str, Any] = {}
         self.lan_update_sequence = 0
+        self._rssi_refreshed_at = None
 
     async def start_lan(self) -> None:
         if not self._local_key:
@@ -105,17 +112,39 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
             self.async_set_updated_data({**self.data, **optimistic})
         return await self.api.set_dps(self.camera_id, dps)
 
+    async def _refresh_rssi(self) -> None:
+        """Refresh the WiFi signal, at most once per RSSI_INTERVAL."""
+        now = utcnow()
+        if self._rssi_refreshed_at and now - self._rssi_refreshed_at < RSSI_INTERVAL:
+            return
+        self._rssi_refreshed_at = now
+        try:
+            rssi_data = await self.api.get_rssi(self.camera_id)
+        except TuyaAPIError:
+            return
+        self.rssi = rssi_data.get("value")
+
+    @property
+    def alerts_need_the_cloud(self) -> bool:
+        """Whether alerts on this monitor are only visible on the cloud poll.
+
+        The SCD951 and SCD953 family reports alarms in DPS 212 and never pushes
+        that key over the LAN, confirmed on #61 by a test where the sound alert
+        appeared on the next cloud poll with no LAN push at all. DPS 212 is also
+        a single slot holding the newest alarm rather than a queue, so a second
+        alert overwrites the first: whatever the poll misses is gone. A LAN
+        connection is therefore no reason to slow the poll down on these models.
+        """
+        return DPS_ALARM_RECORD in (self.data or {})
+
     async def _async_update_data(self) -> dict:
-        self.update_interval = POLL_SLOW if self.lan_connected else POLL_FAST
+        fast = poll_should_stay_fast(self.lan_connected, self.alerts_need_the_cloud)
+        self.update_interval = POLL_FAST if fast else POLL_SLOW
 
         try:
             device = await self.api.get_device(self.camera_id)
             self.device_info = device
-            try:
-                rssi_data = await self.api.get_rssi(self.camera_id)
-                self.rssi = rssi_data.get("value")
-            except TuyaAPIError:
-                pass
+            await self._refresh_rssi()
             api_dps = device.get("dps", {})
             changed = dps_delta(self.data, api_dps)
             if changed:

@@ -142,6 +142,21 @@ def sound_event_timestamp(raw: object) -> float | None:
     return alarm_event_timestamp(raw, SOUND_COMMANDS)
 
 
+def poll_should_stay_fast(lan_connected: bool, has_alarm_record: bool) -> bool:
+    """Whether the cloud poll must keep its short interval.
+
+    The slow poll exists because a LAN connection normally delivers state
+    changes as they happen. It does not for the families that report alarms in
+    DPS 212: that key never arrives over the LAN, confirmed on #61, and the slot
+    holds only the newest alarm, so a second alert overwrites the first before a
+    slow poll would come round. For those monitors a LAN connection buys nothing
+    where alerts are concerned, and slowing down costs alerts outright.
+    """
+    if not lan_connected:
+        return True
+    return has_alarm_record
+
+
 def is_new_event(
     timestamp: float | None,
     last_seen: float | None,
