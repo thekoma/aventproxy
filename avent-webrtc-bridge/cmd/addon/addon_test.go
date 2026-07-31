@@ -319,3 +319,47 @@ func TestLoadConfig_APIHostMissingFallsBackToEU(t *testing.T) {
 		t.Errorf("fallback host = %q, want a1.tuyaeu.com", got)
 	}
 }
+
+func TestLoadConfig_TalkbackDefaultsToOff(t *testing.T) {
+	// Issue #72: asking the camera for two-way audio stops a playing lullaby, so
+	// a config written without the field must not enable it.
+	dir := t.TempDir()
+	p := filepath.Join(dir, "bridge.json")
+	body := `{
+	  "signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P",
+	  "app_key": "AK", "device_id": "D", "package_name": "pkg",
+	  "api_host": "a1.tuyaeu.com", "bridge_port": 38554,
+	  "cameras": [{"camera_id": "abc123", "camera_name": "Erik"}]
+	}`
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig(p)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if cfg.Talkback {
+		t.Error("talkback must default to false when the key is absent")
+	}
+}
+
+func TestLoadConfig_TalkbackHonoured(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "bridge.json")
+	body := `{
+	  "signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P",
+	  "app_key": "AK", "device_id": "D", "package_name": "pkg",
+	  "api_host": "a1.tuyaeu.com", "talkback": true, "bridge_port": 38554,
+	  "cameras": [{"camera_id": "abc123", "camera_name": "Erik"}]
+	}`
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig(p)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if !cfg.Talkback {
+		t.Error("talkback true in the config must be honoured")
+	}
+}

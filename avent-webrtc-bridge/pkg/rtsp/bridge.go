@@ -59,6 +59,13 @@ type WebRTCBridge struct {
 	audioTrack  *pion.TrackRemote
 	backchannel *pion.TrackLocalStaticRTP
 
+	// Talkback offers the camera two-way audio. Off by default: an offer with
+	// a sendrecv audio direction makes the camera set DPS 253 (app_talking),
+	// take the speaker and stop whatever lullaby is playing, then restart it
+	// with a fresh timer when the stream closes (issue #72). Watching must not
+	// disturb the room, so the caller opts in.
+	Talkback bool
+
 	// Callbacks
 	OnVideoPacket func(packet *rtp.Packet)
 	OnAudioPacket func(packet *rtp.Packet)
@@ -539,8 +546,12 @@ func (wb *WebRTCBridge) createAndSendOffer() error {
 		}
 	})
 
+	audioDirection := utils.DirectionRecvonly
+	if wb.Talkback {
+		audioDirection = utils.DirectionSendRecv
+	}
 	medias := []*utils.Media{
-		{Kind: utils.KindAudio, Direction: utils.DirectionSendRecv},
+		{Kind: utils.KindAudio, Direction: audioDirection},
 		{Kind: utils.KindVideo, Direction: utils.DirectionRecvonly},
 	}
 

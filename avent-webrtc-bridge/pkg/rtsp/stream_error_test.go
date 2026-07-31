@@ -227,3 +227,27 @@ func TestStartStreamReplacesAnAlreadyStartedBridge(t *testing.T) {
 		t.Fatal("a new stream must not be marked as already started")
 	}
 }
+
+func TestTalkbackOffByDefaultOnTheBridge(t *testing.T) {
+	// The audio direction in the offer is what makes the camera set DPS 253 and
+	// stop a playing lullaby (issue #72), so a bridge must not ask for it unless
+	// the server was told to.
+	_, stream := newTestCameraStream(t)
+	if stream.webrtcBridge.Talkback {
+		t.Error("a bridge built from a default server must not request talkback")
+	}
+
+	server, _ := newTestCameraStream(t)
+	server.Talkback = true
+	replacement := NewCameraStream(&storage.CameraInfo{DeviceID: "d", DeviceName: "n"}, "hd", nil, nil, server)
+	if !replacement.webrtcBridge.Talkback {
+		t.Error("a bridge built from a talkback server must request it")
+	}
+
+	replacement.mutex.Lock()
+	replacement.replaceBridge()
+	replacement.mutex.Unlock()
+	if !replacement.webrtcBridge.Talkback {
+		t.Error("a replacement bridge must keep the server's talkback setting")
+	}
+}

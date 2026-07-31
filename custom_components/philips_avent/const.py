@@ -117,6 +117,11 @@ CONF_BRIDGE_PORT = "bridge_port"
 DEFAULT_BRIDGE_PORT = 38554
 CONF_BRIDGE_HOST = "bridge_host"
 DEFAULT_BRIDGE_HOST = "localhost"
+# Two-way audio. Off by default: asking the camera for it makes the monitor stop
+# a playing lullaby and restart it with a fresh timer when the stream closes
+# (issue #72), so listening must not imply talking.
+CONF_TALKBACK = "talkback"
+DEFAULT_TALKBACK = False
 
 
 def sanitize_rtsp_path(name: str, cam_id: str) -> str:

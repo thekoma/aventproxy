@@ -29,6 +29,7 @@ type BridgeConfig struct {
 	DeviceID    string   `json:"device_id"`
 	PackageName string   `json:"package_name"`
 	APIHost     string   `json:"api_host"`
+	Talkback    bool     `json:"talkback"`
 	BridgePort  int      `json:"bridge_port"`
 	Cameras     []Camera `json:"cameras"`
 }
@@ -232,6 +233,10 @@ func runAddon(cmd *cobra.Command, args []string) error {
 
 	server := rtsp.NewRTSPServer(port, storageManager)
 	server.MobileClient = client
+	server.Talkback = cfg.Talkback
+	if cfg.Talkback {
+		core.Logger.Info().Msg("Two-way audio enabled: streams will ask the camera for talkback")
+	}
 	if err := server.Start(); err != nil {
 		return fmt.Errorf("start RTSP server: %w", err)
 	}

@@ -18,7 +18,9 @@ from .const import (
     CONF_ECODE,
     CONF_PARTNER,
     CONF_SID,
+    CONF_TALKBACK,
     DEFAULT_BRIDGE_PORT,
+    DEFAULT_TALKBACK,
     DOMAIN,
     TUYA_APP_KEY,
     TUYA_DEFAULT_COUNTRY_CODE,
@@ -56,6 +58,7 @@ async def _write_bridge_config(hass: HomeAssistant, entry: ConfigEntry, api: Phi
         device_id=api.device_id,
         package_name=TUYA_PACKAGE_NAME,
         api_host=_entry_api_host(entry),
+        talkback=entry.options.get(CONF_TALKBACK, DEFAULT_TALKBACK),
         bridge_port=bridge_port,
         cameras=cameras,
     )

@@ -21,9 +21,11 @@ from .const import (
     CONF_ECODE,
     CONF_PARTNER,
     CONF_SID,
+    CONF_TALKBACK,
     CONF_UID,
     DEFAULT_BRIDGE_HOST,
     DEFAULT_BRIDGE_PORT,
+    DEFAULT_TALKBACK,
     DOMAIN,
 )
 from .region import (
@@ -398,6 +400,9 @@ class PhilipsAventOptionsFlowHandler(config_entries.OptionsFlow):
         current_host = self.config_entry.options.get(
             CONF_BRIDGE_HOST, DEFAULT_BRIDGE_HOST
         )
+        current_talkback = self.config_entry.options.get(
+            CONF_TALKBACK, DEFAULT_TALKBACK
+        )
 
         return self.async_show_form(
             step_id="init",
@@ -407,6 +412,7 @@ class PhilipsAventOptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Optional(CONF_BRIDGE_PORT, default=current_port): vol.All(
                         int, vol.Range(min=1024, max=65535)
                     ),
+                    vol.Optional(CONF_TALKBACK, default=current_talkback): bool,
                 }
             ),
         )

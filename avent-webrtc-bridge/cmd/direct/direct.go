@@ -53,6 +53,7 @@ Example:
 	cmd.Flags().String("camera-id", "", "Camera device ID")
 	cmd.Flags().String("camera-name", "", "Camera display name (used in RTSP path)")
 	cmd.Flags().Int("port", 8554, "RTSP server port")
+	cmd.Flags().Bool("talkback", false, "Ask the camera for two-way audio. Off by default: it makes the camera stop and restart a playing lullaby (issue #72)")
 
 	cmd.MarkFlagRequired("signing-key")
 	cmd.MarkFlagRequired("sid")
@@ -78,6 +79,7 @@ func runDirect(cmd *cobra.Command, args []string) error {
 	cameraID, _ := cmd.Flags().GetString("camera-id")
 	cameraName, _ := cmd.Flags().GetString("camera-name")
 	port, _ := cmd.Flags().GetInt("port")
+	talkback, _ := cmd.Flags().GetBool("talkback")
 
 	rtspPath := storage.SanitizeRTSPPath(cameraName, cameraID)
 
@@ -140,6 +142,7 @@ func runDirect(cmd *cobra.Command, args []string) error {
 
 	server := rtsp.NewRTSPServer(port, storageManager)
 	server.MobileClient = client
+	server.Talkback = talkback
 
 	if err := server.Start(); err != nil {
 		return fmt.Errorf("failed to start RTSP server: %v", err)

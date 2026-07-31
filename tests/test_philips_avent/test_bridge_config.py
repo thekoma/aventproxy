@@ -121,7 +121,7 @@ class TestBuildBridgeConfig:
         config = build_bridge_config(**self.BASE)
         assert set(config) == {
             "signing_key", "sid", "ecode", "partner", "app_key", "device_id",
-            "package_name", "api_host", "bridge_port", "cameras",
+            "package_name", "api_host", "talkback", "bridge_port", "cameras",
         }
 
     def test_cameras_use_the_shared_payload_builder(self):
@@ -215,3 +215,24 @@ class TestDpsDelta:
         # A push repeating a value is still an event worth logging.
         assert truncated_dps({"141": "decibel_upload"}) == {"141": "decibel_upload"}
         assert truncated_dps(None) == {}
+
+
+class TestTalkbackOption:
+    """Two-way audio must be opt-in (issue #72)."""
+
+    BASE = {
+        "signing_key": "sk", "sid": "eu166", "ecode": "E", "partner": "P",
+        "app_key": "AK", "device_id": "D", "package_name": "pkg",
+        "api_host": "a1.tuyaeu.com", "bridge_port": 38554,
+        "cameras": [{"deviceId": "abc", "deviceName": "Erik"}],
+    }
+
+    def test_default_is_off(self):
+        # Watching the camera must not claim the speaker.
+        assert build_bridge_config(**self.BASE)["talkback"] is False
+
+    def test_can_be_turned_on(self):
+        assert build_bridge_config(**self.BASE, talkback=True)["talkback"] is True
+
+    def test_key_is_part_of_the_go_contract(self):
+        assert "talkback" in build_bridge_config(**self.BASE)

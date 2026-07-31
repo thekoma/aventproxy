@@ -42,6 +42,10 @@ type RTSPServer struct {
 	running        bool
 	MobileClient   *tuya.MobileSDKClient
 	mqttManager    *MQTTManager
+
+	// Talkback asks the camera for two-way audio on every stream. Off by
+	// default; see WebRTCBridge.Talkback and issue #72.
+	Talkback bool
 }
 
 type RTSPClient struct {
@@ -497,6 +501,9 @@ func NewCameraStream(camera *storage.CameraInfo, resolution string, user *storag
 	}
 
 	stream.webrtcBridge = NewWebRTCBridge(camera, resolution, user, storageManager)
+	if server != nil {
+		stream.webrtcBridge.Talkback = server.Talkback
+	}
 
 	return stream
 }
@@ -631,6 +638,7 @@ func (cs *CameraStream) replaceBridge() {
 	cs.webrtcBridge = NewWebRTCBridge(cs.camera, cs.resolution, cs.user, storageManager)
 
 	if cs.server != nil {
+		cs.webrtcBridge.Talkback = cs.server.Talkback
 		if cs.server.MobileClient != nil {
 			cs.webrtcBridge.SetMobileClient(cs.server.MobileClient)
 		}

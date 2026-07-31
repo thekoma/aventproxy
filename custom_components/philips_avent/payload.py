@@ -87,12 +87,15 @@ def build_bridge_config(
     api_host: str,
     bridge_port: int,
     cameras: list,
+    talkback: bool = False,
 ) -> dict:
     """Build the bridge JSON the add-on reads.
 
-    Mirrors ``BridgeConfig`` in ``cmd/addon/addon.go``; `api_host` carries the
+    Mirrors ``BridgeConfig`` in ``cmd/addon/addon.go``. `api_host` carries the
     data center the account was logged into, because a Tuya session is rejected
-    by any other host (issues #44, #58).
+    by any other host (issues #44, #58). `talkback` asks the camera for two-way
+    audio, which the monitor answers by stopping a playing lullaby, so it
+    defaults to off (issue #72).
     """
     return {
         "signing_key": signing_key,
@@ -103,6 +106,7 @@ def build_bridge_config(
         "device_id": device_id,
         "package_name": package_name,
         "api_host": api_host,
+        "talkback": talkback,
         "bridge_port": bridge_port,
         "cameras": build_cameras_payload(cameras),
     }
