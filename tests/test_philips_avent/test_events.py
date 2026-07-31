@@ -10,10 +10,12 @@ import json
 
 from events import (
     EVENT_MAX_AGE_SECONDS,
+    LULLABY_SETTLE_SECONDS,
     KNOWN_COMMANDS,
     decode_event_payload,
     event_timestamp,
     is_new_event,
+    lullaby_state_settled,
     motion_event_timestamp,
     poll_should_stay_fast,
     sound_event_timestamp,
@@ -229,3 +231,34 @@ class TestPollInterval:
         # SCD951 and SCD953: 212 never arrives over the LAN and holds only the
         # newest alarm, so a slow poll drops alerts on the floor.
         assert poll_should_stay_fast(lan_connected=True, has_alarm_record=True)
+
+
+class TestLullabySettleWindow:
+    """The spurious pair the camera sends at the end of a viewing session (#72).
+
+    Measured on hardware: `246 'stopping'` followed by `246 'playing'` 270 to
+    290 ms apart, four times in one evening, once leaving the sensor disagreeing
+    with a silent room.
+    """
+
+    def test_a_pair_270ms_apart_never_settles(self):
+        start = 1000.0
+        # 'stopping' arrives and is held; 'playing' replaces it 0.27s later.
+        assert not lullaby_state_settled("stopping", start, start + 0.27)
+
+    def test_a_real_change_settles(self):
+        start = 1000.0
+        assert lullaby_state_settled("playing", start, start + LULLABY_SETTLE_SECONDS)
+        assert lullaby_state_settled("playing", start, start + 5)
+
+    def test_nothing_held_never_settles(self):
+        assert not lullaby_state_settled(None, None, 1000.0)
+        assert not lullaby_state_settled("playing", None, 1000.0)
+        assert not lullaby_state_settled(None, 1000.0, 1005.0)
+
+    def test_window_clears_the_measured_gaps_with_margin(self):
+        # The widest spurious gap seen was 290 ms.
+        assert LULLABY_SETTLE_SECONDS > 0.29 * 4
+
+    def test_window_stays_short_enough_to_feel_immediate(self):
+        assert LULLABY_SETTLE_SECONDS <= 3.0

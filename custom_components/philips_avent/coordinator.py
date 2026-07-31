@@ -3,17 +3,19 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import time
 from datetime import timedelta
 from typing import Any
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util.dt import utcnow
 
 from .api import PhilipsAventAPI, TuyaAPIError
 from .const import DPS_ALARM_RECORD, DPS_LULLABY_CONTROL, DPS_LULLABY_STATE
-from .events import poll_should_stay_fast
+from .events import LULLABY_SETTLE_SECONDS, lullaby_state_settled, poll_should_stay_fast
 from .lan import TuyaLANClient
 from .payload import dps_delta, truncated_dps
 
@@ -55,6 +57,9 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         self._lan_client: TuyaLANClient | None = None
         self.last_lan_dps: dict[str, Any] = {}
         self.lan_update_sequence = 0
+        self._pending_lullaby: str | None = None
+        self._pending_lullaby_since: float | None = None
+        self._lullaby_unsub = None
         self._rssi_refreshed_at = None
 
     async def start_lan(self) -> None:
@@ -69,6 +74,7 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         await self._lan_client.start()
 
     async def stop_lan(self) -> None:
+        self._cancel_pending_lullaby()
         if self._lan_client:
             await self._lan_client.stop()
             self._lan_client = None
@@ -83,11 +89,70 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
             return
         self.last_lan_dps = dict(dps)
         self.lan_update_sequence += 1
-        merged = {**self.data, **dps}
         _LOGGER.debug(
             "LAN push for %s: %s", self.camera_name, truncated_dps(dps)
         )
+
+        dps = self._hold_lullaby_state(dps)
+        merged = {**self.data, **dps}
         self.async_set_updated_data(merged)
+
+    @callback
+    def _hold_lullaby_state(self, dps: dict[str, Any]) -> dict[str, Any]:
+        """Keep a lullaby state out of entity state until it stands still.
+
+        The camera re-announces `stopping` and then `playing` within a third of a
+        second when a viewing session ends, which reached the Lullaby Playing
+        sensor as a flicker (issue #72). Holding the value lets such a pair
+        cancel itself.
+        """
+        if DPS_LULLABY_STATE not in dps:
+            return dps
+
+        value = dps[DPS_LULLABY_STATE]
+        rest = {k: v for k, v in dps.items() if k != DPS_LULLABY_STATE}
+
+        if value == (self.data or {}).get(DPS_LULLABY_STATE):
+            # Already the state on show; nothing to hold or cancel.
+            self._cancel_pending_lullaby()
+            return rest
+
+        self._pending_lullaby = value
+        self._pending_lullaby_since = time.monotonic()
+        if self._lullaby_unsub:
+            self._lullaby_unsub()
+        self._lullaby_unsub = async_call_later(
+            self.hass, LULLABY_SETTLE_SECONDS, self._commit_lullaby_state
+        )
+        _LOGGER.debug(
+            "Holding lullaby state %r for %s until it settles",
+            value, self.camera_name,
+        )
+        return rest
+
+    @callback
+    def _cancel_pending_lullaby(self) -> None:
+        if self._lullaby_unsub:
+            self._lullaby_unsub()
+            self._lullaby_unsub = None
+        self._pending_lullaby = None
+        self._pending_lullaby_since = None
+
+    @callback
+    def _commit_lullaby_state(self, _now=None) -> None:
+        """Apply a held lullaby state once it has stood still."""
+        self._lullaby_unsub = None
+        if not lullaby_state_settled(
+            self._pending_lullaby, self._pending_lullaby_since, time.monotonic()
+        ):
+            return
+        value = self._pending_lullaby
+        self._pending_lullaby = None
+        self._pending_lullaby_since = None
+        if self.data is None or value is None:
+            return
+        _LOGGER.debug("Lullaby state settled at %r for %s", value, self.camera_name)
+        self.async_set_updated_data({**self.data, DPS_LULLABY_STATE: value})
 
     async def set_dps(self, dps: dict) -> dict:
         """Send DPS command via LAN for instant response, plus REST for cloud sync."""

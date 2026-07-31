@@ -176,3 +176,29 @@ def is_new_event(
     if last_seen is not None and timestamp <= last_seen:
         return False
     return timestamp >= now - max_age
+
+# A lullaby state that flips and flips back inside this window is not a state
+# change, it is the camera re-announcing itself when a stream session ends. Real
+# transitions observed on hardware stand alone; the spurious pairs measured on
+# 2026-07-31 were 270 to 290 ms apart (issue #72). Two seconds is comfortably
+# above that and still fast enough that a lullaby started from Home Assistant
+# looks immediate.
+LULLABY_SETTLE_SECONDS = 2.0
+
+
+def lullaby_state_settled(
+    pending: str | None,
+    pending_since: float | None,
+    now: float,
+    settle: float = LULLABY_SETTLE_SECONDS,
+) -> bool:
+    """Whether a held lullaby state has stood still long enough to be believed.
+
+    The camera emits `stopping` immediately followed by `playing` at the end of
+    every viewing session, which reached the binary sensor as a flicker and could
+    leave it disagreeing with the room. Holding a value briefly means such a pair
+    cancels itself and never becomes entity state.
+    """
+    if pending is None or pending_since is None:
+        return False
+    return now - pending_since >= settle
