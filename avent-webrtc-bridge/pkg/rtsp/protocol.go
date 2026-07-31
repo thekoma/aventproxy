@@ -601,7 +601,16 @@ func (s *RTSPServer) generateSDP(camera *storage.CameraInfo, baseURL string) str
 	audioSdp += fmt.Sprintf("a=control:%s/audio\r\n", baseURL)
 	audioSdp += "a=recvonly\r\n"
 
-	finalSdp := sdp + videoSdp + audioSdp + backchannelAudio
+	finalSdp := sdp + videoSdp + audioSdp
+
+	// Only advertise a return channel when talkback is on. Clients set up
+	// whatever the description offers, ffmpeg and Home Assistant both do, and
+	// every session that set one up coincided with the camera flipping DPS 253
+	// (app_talking) and interrupting a playing lullaby (issue #72). Making the
+	// WebRTC offer recvonly was not enough on its own.
+	if s.Talkback {
+		finalSdp += backchannelAudio
+	}
 
 	return finalSdp
 }
