@@ -1030,11 +1030,56 @@ answer ← registerDeviceHardwareResponseListener(FrameTypeEnum.IPC_LAN_302.getT
 
 The real reason the earlier attempt failed is simpler: **it published cold.** The camera answers only on a session that has been through `SESS_KEY_NEG 3 → 4 → 5` and then primed with `DP_QUERY(10)`. The 32-byte cmd-32 frames that test saw are exactly the ACK at step 7 above. It stopped one step short rather than being wrong about the frame type.
 
+### What the local channel does not carry: alert events
+
+A second capture answered the obvious follow-up, whether a correctly negotiated
+local session would also deliver motion and sound alerts. **It does not.** The
+local channel carries the alert *configuration* and none of the alert *events*.
+
+The method matters here, because the first attempt was invalid: with the camera's
+WAN cut, an alarm record referencing an uploaded snapshot cannot be produced at
+all, so a negative result could not distinguish "the LAN never carries it" from
+"no alarm was ever recorded". The controlled run restored WAN, which makes the
+cloud path a ground truth running in parallel with the LAN capture. Same trigger,
+three observers:
+
+| Channel | Saw the event? |
+|---------|----------------|
+| Phone app push notification | yes |
+| LAN `STATUS(8)` on 6668 | no, one frame carrying `248` only |
+| Integration's cloud poll | no, the binary sensor never moved |
+
+Grepping the whole decoded capture for `212`, `250` and `141` returns nothing.
+The DP set the camera answers `DP_QUERY` with says the same:
+
+| Present on the LAN | Absent from the LAN |
+|--------------------|---------------------|
+| `134` motion switch, `139` sound switch | `212` alarm record |
+| `106` / `140` sensitivities | `250` alert event |
+| `237` privacy, `248`, `207` temperature, lullaby DPs | `141` decibel event |
+
+Full LAN `DP_QUERY` key set, for the record:
+
+```
+1 2 5 7 8 10 11 12 13 16 21 101 106 134 138 139 140 158 168 169
+203 207 209 231 233 234 237 239 241 243 244 246 247 248 251 252 253
+```
+
+**Where the alerts do travel is still open.** In the controlled run the app was
+notified while neither the LAN session nor the cloud poll saw anything, which
+points at Tuya's push-notification service rather than device state. That is a
+different mechanism from anything this integration consumes today, and it has not
+been reverse engineered. It matters because polling device state can only ever
+shrink the window: `212` holds one slot, briefly, and nothing guarantees a poll
+lands inside it.
+
 ### Consequences for this project
 
 - **The camera fans cmd-32 frames out to every connected LAN client.** A Home Assistant box holding a tinytuya session was receiving copies of the answer and candidate frames and discarding them. If the integration ever wants the LAN signaling path, the traffic is already being handed to it. This is also the likely identity of the `Unexpected Payload from Device` frames behind [issue #62](https://github.com/thekoma/aventproxy/issues/62): real frames, on a session negotiated at a version that cannot read them.
 - **The camera announces `"version": "3.5"`** in its 6667 discovery broadcast (6699/GCM framing). `lan.py` built a 3.3 session and discarded the announcement until 2026.7.0-rc9, which tries the announced version and falls back to 3.3.
 - **A LAN signaling path would route around `smartlife.m.rtc.config.get` entirely.** That call is what fails with `PERMISSION_DENIED` on [issue #48](https://github.com/thekoma/aventproxy/issues/48) for an account whose session is otherwise fine, and it is also what ties streaming to the regional server holding the account.
+- **The 904 frames have a concrete mechanism.** The camera's `STATUS` pushes arrive as `{"protocol":4,"t":…,"data":{"dps":{…}}}` behind a **15-byte 3.5 version header**. A decoder that only knows 3.1 through 3.4 falls through to hex on them, and tinytuya constructed with `version=3.3` reports them as unparseable, which is exactly the `Unexpected Payload from Device` seen on #62.
+- **Local control is the user-facing prize, not local streaming.** With the camera's WAN cut, streaming kept working while control did not: the app reported the camera offline and switch changes never applied. A correctly negotiated local session should let `set_dps` keep working with no internet, which is a visible win independent of the signaling work.
 
 ## 17. Completed Architecture
 
@@ -1090,6 +1135,7 @@ This research targets personal devices owned by the researcher. No third-party s
 - **`tinytuya.parse_header` rejects frames larger than `MAX_PAYLOAD_LENGTH`.** The offer is 1633 bytes and trips it, so a naive frame walker silently skips the single most interesting frame and the sequence numbers merely appear to jump from 3 to 5. Pass `header=` into `unpack_message` as well, which otherwise re-parses and re-applies the same ceiling.
 - **For 6699/GCM frames a wrong key does not raise.** `unpack_message` returns `crc_good=False`. Select the key by `crc_good`, not by catching exceptions.
 - **Camera→app frames carry a 4-byte retcode and app→camera frames do not.** So `local_nonce` sits at offset 0 in cmd 3 while `remote_nonce` sits at offset 4 in cmd 4. Get that wrong and you derive a plausible-looking session key that decrypts nothing. Self-test: `RESP[16:48] == hmac_sha256(localKey, local_nonce)`.
+- **A working decoder lives in `tools/lan302_decode.py`.** It takes a pcap and a `localKey`, reassembles the TCP streams, replays the `SESS_KEY_NEG` exchange to recover the session key, and pretty-prints every frame with `IPC_LAN_302` flagged.
 - **Session key, the 3.5 derivation:** `AES(localKey).encrypt(xor(local_nonce, remote_nonce), pad=False, iv=local_nonce[:12])[12:28]`, with GCM AAD being frame bytes `[4:18]`.
 
 ### Requirements

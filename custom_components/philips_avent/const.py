@@ -61,11 +61,16 @@ DPS_PRIVACY_MODE = "237"
 DPS_POWER_STATUS = "205"
 DPS_FLIP = "102"
 DPS_APP_TALKING = "253"
+# The three alert DPS below are cloud-only. A decrypted LAN capture (#51) shows
+# the local channel carrying the alert switches and sensitivities but none of
+# these three, so alerts cannot be picked up from the LAN push and always wait
+# for a cloud poll. That is why coordinator.py keeps the fast poll for monitors
+# that report alarms in DPS 212.
 DPS_ALERT_EVENT = "250"
 DPS_DECIBEL_EVENT = "141"
 # Alarm record with the snapshot the camera uploaded. The SCD951 and SCD953
 # family reports motion here instead of on DPS 250 (issues #61, #42); see
-# events.py for the payload.
+# events.py for the payload. One slot holding the newest alarm, not a queue.
 DPS_ALARM_RECORD = "212"
 
 LULLABY_TRACK_MAP = {

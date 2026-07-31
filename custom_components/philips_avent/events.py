@@ -147,10 +147,12 @@ def poll_should_stay_fast(lan_connected: bool, has_alarm_record: bool) -> bool:
 
     The slow poll exists because a LAN connection normally delivers state
     changes as they happen. It does not for the families that report alarms in
-    DPS 212: that key never arrives over the LAN, confirmed on #61, and the slot
-    holds only the newest alarm, so a second alert overwrites the first before a
-    slow poll would come round. For those monitors a LAN connection buys nothing
-    where alerts are concerned, and slowing down costs alerts outright.
+    DPS 212. A decrypted LAN capture on #51 settles why: the local channel
+    carries the alert switches and sensitivities but never the alert events
+    themselves, so 212 cannot arrive that way at all. The slot also holds only
+    the newest alarm, so a second alert overwrites the first before a slow poll
+    would come round. For those monitors a LAN connection buys nothing where
+    alerts are concerned, and slowing down costs alerts outright.
     """
     if not lan_connected:
         return True
