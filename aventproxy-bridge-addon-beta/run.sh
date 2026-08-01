@@ -55,17 +55,48 @@ echo "Philips Avent WebRTC Bridge"
 echo "Config: $CONFIG_PATH"
 echo "=============================="
 
-CONFIG_HASH=$(md5sum "$CONFIG_PATH" | cut -d' ' -f1)
-(
-    while true; do
+# Supervise the bridge here rather than exiting the container when the config
+# changes. The old version killed this script and relied on the supervisor to
+# bring the add-on back; after two Home Assistant restarts in quick succession it
+# did not, and the add-on sat stopped with no video and nothing in the
+# integration log to explain it (issue #73).
+BRIDGE_PID=""
+
+shutdown() {
+    echo "Stopping bridge..."
+    if [ -n "$BRIDGE_PID" ]; then
+        kill "$BRIDGE_PID" 2>/dev/null
+        wait "$BRIDGE_PID" 2>/dev/null
+    fi
+    exit 0
+}
+trap shutdown TERM INT
+
+while true; do
+    CONFIG_HASH=$(md5sum "$CONFIG_PATH" 2>/dev/null | cut -d' ' -f1)
+
+    avent-webrtc-bridge addon --config "$CONFIG_PATH" &
+    BRIDGE_PID=$!
+    echo "Bridge started (pid $BRIDGE_PID)"
+
+    RESTART_REASON=""
+    while kill -0 "$BRIDGE_PID" 2>/dev/null; do
         sleep 10
         NEW_HASH=$(md5sum "$CONFIG_PATH" 2>/dev/null | cut -d' ' -f1)
         if [ -n "$NEW_HASH" ] && [ "$NEW_HASH" != "$CONFIG_HASH" ]; then
             echo "Config changed, restarting bridge..."
-            kill $$
-            exit 0
+            RESTART_REASON="config"
+            kill "$BRIDGE_PID" 2>/dev/null
+            break
         fi
     done
-) &
 
-exec avent-webrtc-bridge addon --config "$CONFIG_PATH"
+    wait "$BRIDGE_PID" 2>/dev/null
+    BRIDGE_EXIT=$?
+    BRIDGE_PID=""
+
+    if [ "$RESTART_REASON" != "config" ]; then
+        echo "Bridge exited with status $BRIDGE_EXIT, restarting in 5s..."
+        sleep 5
+    fi
+done

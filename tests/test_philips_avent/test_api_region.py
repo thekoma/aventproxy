@@ -9,7 +9,7 @@ country code actually sent.
 import asyncio
 import json
 
-from api import PhilipsAventAPI
+from api import PhilipsAventAPI, new_device_id
 from const import TUYA_API_URL, TUYA_DEFAULT_COUNTRY_CODE
 from region import api_url
 
@@ -125,3 +125,40 @@ class TestCountryCodeInLoginCalls:
         except Exception as err:
             assert err.code == "USER_SESSION_INVALID"
         assert api.sid == "eu-old-session"
+
+
+class TestStableDeviceId:
+    """The phone device id must survive a restart (issue #73).
+
+    A fresh one on every start rewrote the bridge config file, which made the
+    add-on restart every time and once left it stopped with no video.
+    """
+
+    def test_generated_when_not_supplied(self):
+        api = PhilipsAventAPI(FakeSession())
+        assert len(api.device_id) == 32
+        assert api.device_id != PhilipsAventAPI(FakeSession()).device_id
+
+    def test_supplied_id_is_kept(self):
+        stored = "a" * 32
+        api = PhilipsAventAPI(FakeSession(), device_id=stored)
+        assert api.device_id == stored
+
+    def test_supplied_id_reaches_the_signed_request(self):
+        stored = "b" * 32
+        session = FakeSession()
+        api = PhilipsAventAPI(session, device_id=stored)
+        run(api.get_user_info())
+        assert session.last["data"]["deviceId"] == stored
+
+    def test_empty_or_none_falls_back_to_a_fresh_one(self):
+        # An entry created before the id was persisted stores nothing.
+        for missing in (None, ""):
+            api = PhilipsAventAPI(FakeSession(), device_id=missing)
+            assert len(api.device_id) == 32
+
+    def test_new_device_id_shape(self):
+        first, second = new_device_id(), new_device_id()
+        assert first != second
+        assert len(first) == 32
+        assert all(c in "0123456789abcdef" for c in first)

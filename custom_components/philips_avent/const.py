@@ -109,6 +109,8 @@ LULLABY_ID_BY_NAME = {name: tid for tid, (name, _) in LULLABY_TRACK_MAP.items()}
 
 CONF_SID = "sid"
 CONF_API_HOST = "api_host"
+# Phone device id, generated once and kept, see api.new_device_id and issue #73.
+CONF_DEVICE_ID = "device_id"
 CONF_COUNTRY_CODE = "country_code"
 CONF_ECODE = "ecode"
 CONF_PARTNER = "partner_identity"

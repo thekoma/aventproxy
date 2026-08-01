@@ -42,6 +42,16 @@ def _sign(params: dict[str, str]) -> str:
     ).hexdigest()
 
 
+def new_device_id() -> str:
+    """A fresh phone device id, in the shape the Tuya SDK uses.
+
+    32 hex characters, which is what this integration has always sent: the old
+    `[:40]` slice suggested a longer value but a uuid4 hex is 32 to begin with,
+    so it never truncated anything.
+    """
+    return uuid.uuid4().hex
+
+
 class TuyaAPIError(Exception):
     def __init__(self, code: str, message: str):
         self.code = code
@@ -72,10 +82,15 @@ class PhilipsAventAPI:
         sid: str = "",
         api_url: str | None = None,
         country_code: str = TUYA_DEFAULT_COUNTRY_CODE,
+        device_id: str | None = None,
     ):
         self._session = session
         self.sid = sid
-        self.device_id = uuid.uuid4().hex[:40]
+        # The phone device id Tuya sees. A real phone keeps one, and so must we:
+        # a fresh value on every Home Assistant restart rewrote the bridge config
+        # file for no reason, which made the add-on restart every time and
+        # sometimes left it stopped (issue #73). The config entry persists it.
+        self.device_id = device_id or new_device_id()
         # Both depend on which Tuya data center holds the account; the config
         # flow resolves them at login and persists them in the config entry
         # (issues #44, #58).

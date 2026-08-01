@@ -72,7 +72,12 @@ The monitor exposes functionality through numbered DPS codes (e.g., 138=night li
 
 ### Bridge lifecycle
 
-The HA integration writes bridge credentials to a JSON config file. The bridge container (`run.sh`) watches this file, extracts credentials with jq, and (re)starts `avent-webrtc-bridge direct` when config changes.
+The HA integration writes bridge credentials to a JSON config file. The bridge container
+(`run.sh`) supervises `avent-webrtc-bridge addon --config <file>`, which parses the JSON itself, and
+restarts that child process when the file's md5 changes or the child exits. It must never exit the
+container on a config change: doing so left the add-on stopped after two Home Assistant restarts in
+quick succession (issue #73). The file only changes when something real changes, because the phone
+device id is persisted in the config entry rather than regenerated per run.
 
 ## CI
 

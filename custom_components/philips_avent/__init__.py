@@ -15,6 +15,7 @@ from .const import (
     CONF_API_HOST,
     CONF_BRIDGE_PORT,
     CONF_COUNTRY_CODE,
+    CONF_DEVICE_ID,
     CONF_ECODE,
     CONF_PARTNER,
     CONF_SID,
@@ -123,7 +124,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         sid=entry.data[CONF_SID],
         api_url=api_url_for_host(_entry_api_host(entry)),
         country_code=entry.data.get(CONF_COUNTRY_CODE) or TUYA_DEFAULT_COUNTRY_CODE,
+        device_id=entry.data.get(CONF_DEVICE_ID),
     )
+    if not entry.data.get(CONF_DEVICE_ID):
+        # Entries created before the id was persisted: keep the one just
+        # generated, so the bridge config stops changing on every restart
+        # (issue #73).
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, CONF_DEVICE_ID: api.device_id}
+        )
+        _LOGGER.info("Stored a stable device id for this account")
 
     # Use cameras stored in config entry (discovered during config flow)
     cameras = []

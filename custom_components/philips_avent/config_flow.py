@@ -18,6 +18,7 @@ from .const import (
     CONF_BRIDGE_HOST,
     CONF_BRIDGE_PORT,
     CONF_COUNTRY_CODE,
+    CONF_DEVICE_ID,
     CONF_ECODE,
     CONF_PARTNER,
     CONF_SID,
@@ -222,11 +223,17 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return result
 
     def _region_data(self) -> dict[str, str]:
-        """Region fields persisted in the config entry for runtime and bridge."""
+        """Fields persisted in the config entry for runtime and bridge.
+
+        The device id belongs here for the same reason as the host: it has to
+        survive a restart, or the bridge config file changes for no reason and
+        the add-on restarts with it (issue #73).
+        """
         return {
             CONF_API_HOST: self._api_host or api_host(self._data_center),
             CONF_COUNTRY_CODE: self._calling_code,
             CONF_COUNTRY: self._country,
+            CONF_DEVICE_ID: self._api.device_id if self._api else "",
         }
 
     async def async_step_mfa(self, user_input=None):
