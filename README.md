@@ -33,11 +33,14 @@ The integration is model-agnostic (it talks to the Tuya cloud API generically), 
 | Model | Status |
 |-------|--------|
 | SCD973 / SCD923 | ✅ Fully supported (primary development hardware) |
-| SCD951 | ✅ Working (video fix shipped in 2026.5.1) |
+| SCD953/26 | ✅ Working, including motion and sound alerts (confirmed in 2026.8.0, [#42](https://github.com/thekoma/aventproxy/issues/42)) |
+| SCD951 | ✅ Working, including motion and sound alerts (confirmed in 2026.8.0, [#61](https://github.com/thekoma/aventproxy/issues/61)) |
 | SCD643/26 | ✅ Working |
 | SCD971 | ✅ Working |
 | SCD921 | ⚠️ Partial: video works but is intermittent; motion/sound detection and WiFi signal behave inconsistently ([#40](https://github.com/thekoma/aventproxy/issues/40)) |
-| SCD953/26 | ❓ Requested, not yet confirmed ([#42](https://github.com/thekoma/aventproxy/issues/42)) |
+| SCD860 | ❓ Requested, not yet confirmed ([#59](https://github.com/thekoma/aventproxy/issues/59)) |
+
+Motion and sound alerts do not travel the same way on every model. The SCD973 and SCD923 report them on DPS 250 and 141, while the SCD951 and SCD953 use a timestamped alarm record on DPS 212 instead. Both shapes are handled since 2026.8.0. If your monitor raises an alert the app notifies you about and Home Assistant stays quiet, the log now names the alert Tuya sent, which usually turns the fix into one line.
 
 Got a model that isn't listed, or one that misbehaves? A [diagnostics dump](docs/reporting-issues.md) is the fastest way to get it mapped.
 
