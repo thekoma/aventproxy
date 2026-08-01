@@ -193,12 +193,14 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
     def alerts_need_the_cloud(self) -> bool:
         """Whether alerts on this monitor are only visible on the cloud poll.
 
-        The SCD951 and SCD953 family reports alarms in DPS 212 and never pushes
-        that key over the LAN, confirmed on #61 by a test where the sound alert
-        appeared on the next cloud poll with no LAN push at all. DPS 212 is also
-        a single slot holding the newest alarm rather than a queue, so a second
-        alert overwrites the first: whatever the poll misses is gone. A LAN
-        connection is therefore no reason to slow the poll down on these models.
+        The SCD951 and SCD953 family reports alarms in DPS 212, and whether that
+        key arrives over the LAN depends on the negotiated protocol version: it
+        never did on 3.3, while on 3.5 an owner measured a motion record pushed
+        and the sensor firing in 1.3 seconds (#61, rc9). Sound on the same
+        monitor still arrived through the poll. DPS 212 is also a single slot
+        holding the newest alarm rather than a queue, so a second alert
+        overwrites the first and whatever the poll misses is gone. The fast poll
+        therefore stays for these models as the floor, not as the mechanism.
         """
         return DPS_ALARM_RECORD in (self.data or {})
 

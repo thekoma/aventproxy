@@ -1065,13 +1065,21 @@ Full LAN `DP_QUERY` key set, for the record:
 203 207 209 231 233 234 237 239 241 243 244 246 247 248 251 252 253
 ```
 
-**Where the alerts do travel is still open.** In the controlled run the app was
-notified while neither the LAN session nor the cloud poll saw anything, which
-points at Tuya's push-notification service rather than device state. That is a
-different mechanism from anything this integration consumes today, and it has not
-been reverse engineered. It matters because polling device state can only ever
-shrink the window: `212` holds one slot, briefly, and nothing guarantees a poll
-lands inside it.
+**Correction from a later test.** The capture above was taken while the observing
+Home Assistant box held a **3.3** session. On a session negotiated at **3.5**,
+`212` *does* arrive as a push: an SCD951 owner on 2026.7.0-rc9 measured a motion
+record pushed with the sensor firing 1.3 s later, against 35 s through the cloud
+poll ([issue #61](https://github.com/thekoma/aventproxy/issues/61)). Both
+observations hold together: `212` is absent from the `DP_QUERY` snapshot, and a
+3.3 session cannot read the frames that carry it, so it looked absent entirely.
+
+Sound on that same monitor still arrived through the poll rather than a push, so
+the picture is not uniform even within one device. Polling remains the floor:
+`212` holds one slot, briefly, and nothing guarantees a poll lands inside it.
+
+**Where the app learns about alerts is still open.** In the controlled run the app
+was notified while neither the LAN session nor the cloud poll saw anything, which
+points at Tuya's push-notification service. That has not been reverse engineered.
 
 ### Consequences for this project
 

@@ -61,11 +61,13 @@ DPS_PRIVACY_MODE = "237"
 DPS_POWER_STATUS = "205"
 DPS_FLIP = "102"
 DPS_APP_TALKING = "253"
-# The three alert DPS below are cloud-only. A decrypted LAN capture (#51) shows
-# the local channel carrying the alert switches and sensitivities but none of
-# these three, so alerts cannot be picked up from the LAN push and always wait
-# for a cloud poll. That is why coordinator.py keeps the fast poll for monitors
-# that report alarms in DPS 212.
+# Alert delivery differs by family and by negotiated LAN protocol version. A
+# decrypted capture (#51) found none of these three in the LAN DP_QUERY set, and
+# on a 3.3 session none of them ever arrived as a push. On 3.5, DPS 212 does
+# arrive: an SCD951 owner measured a motion record pushed with the sensor firing
+# 1.3 seconds later, where the poll took 35 (#61). Sound on that same monitor
+# still came through the poll, so coordinator.py keeps the fast poll for monitors
+# reporting alarms in 212 rather than counting on the push.
 DPS_ALERT_EVENT = "250"
 DPS_DECIBEL_EVENT = "141"
 # Alarm record with the snapshot the camera uploaded. The SCD951 and SCD953
