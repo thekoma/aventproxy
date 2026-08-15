@@ -29,6 +29,7 @@ from .const import (
     DEFAULT_TALKBACK,
     DOMAIN,
 )
+from .payload import strip_stored_password
 from .region import (
     COUNTRY_ROUTING,
     api_host,
@@ -271,8 +272,10 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_create_entry(
                     title=f"Avent - {user_info.get('nickname', self._email)}",
                     data={
+                        # The password is deliberately not persisted: nothing
+                        # reads it back, reauth asks for it again, and it would
+                        # sit in plaintext in .storage and in every backup.
                         CONF_EMAIL: self._email,
-                        CONF_PASSWORD: self._password,
                         CONF_SID: sid,
                         CONF_ECODE: result.get("ecode", ""),
                         CONF_PARTNER: result.get("partnerIdentity", ""),
@@ -356,12 +359,14 @@ class PhilipsAventConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
                 # Update the config entry with new credentials
                 entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+                # Drop any password persisted by an older version rather than
+                # carrying it forward through the spread below.
+                existing = strip_stored_password(entry.data) or dict(entry.data)
                 self.hass.config_entries.async_update_entry(
                     entry,
                     data={
-                        **entry.data,
+                        **existing,
                         CONF_EMAIL: self._email,
-                        CONF_PASSWORD: self._password,
                         CONF_SID: result["sid"],
                         CONF_ECODE: result.get("ecode", ""),
                         CONF_PARTNER: result.get("partnerIdentity", ""),

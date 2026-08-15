@@ -163,3 +163,21 @@ def write_bridge_config_file(path, config: dict) -> None:
         if hasattr(os, "fchmod"):
             os.fchmod(handle.fileno(), BRIDGE_CONFIG_MODE)
         handle.write(payload)
+
+
+# homeassistant.const.CONF_PASSWORD, spelled out so this module stays free of
+# Home Assistant imports.
+STORED_PASSWORD_KEY = "password"
+
+
+def strip_stored_password(data: dict) -> dict | None:
+    """Config entry data with the account password removed, or None.
+
+    The config flow used to persist the plaintext password even though
+    nothing ever read it back — reauth prompts for it again. Returns None
+    when there is nothing to remove, so the caller can skip rewriting
+    .storage on every startup.
+    """
+    if STORED_PASSWORD_KEY not in data:
+        return None
+    return {k: v for k, v in data.items() if k != STORED_PASSWORD_KEY}

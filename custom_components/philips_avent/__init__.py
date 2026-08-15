@@ -33,6 +33,7 @@ from .payload import (
     bridge_config_filename,
     build_bridge_config,
     orphan_bridge_configs,
+    strip_stored_password,
     write_bridge_config_file,
 )
 from .region import DEFAULT_DATA_CENTER, api_host, api_url_for_host
@@ -123,8 +124,24 @@ async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> Non
     await hass.config_entries.async_reload(entry.entry_id)
 
 
+def _purge_stored_password(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Remove a password persisted by an older version of the config flow.
+
+    Nothing ever read it back — reauth prompts for it again — so it was
+    plaintext in .storage/core.config_entries and in every backup for no
+    benefit. New entries no longer store it; this clears the ones that do.
+    """
+    cleaned = strip_stored_password(entry.data)
+    if cleaned is None:
+        return
+    hass.config_entries.async_update_entry(entry, data=cleaned)
+    _LOGGER.info("Removed the stored account password from the config entry; it was never used")
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Philips Avent from a config entry."""
+    _purge_stored_password(hass, entry)
+
     session = aiohttp.ClientSession()
     api = PhilipsAventAPI(
         session,
