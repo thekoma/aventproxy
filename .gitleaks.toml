@@ -1,0 +1,62 @@
+title = "aventproxy"
+
+# Default rules plus project-specific ones. The defaults alone are not enough:
+# when a real account's credentials were committed in tools/, gitleaks caught
+# the sid but walked straight past ECODE = "REDACTED-TUYA-ECODE" and
+# LOCAL_KEY = 'REDACTED-CAMERA-LOCAL-KEY' — both short and low-entropy, and both enough
+# to take over the account's MQTT session or control the camera over the LAN.
+[extend]
+useDefault = true
+
+# --- Project rules ---------------------------------------------------------
+
+[[rules]]
+id = "aventproxy-tuya-session-id"
+description = "Tuya session id (sid) — authenticates api.json calls on its own"
+regex = '''\b(eu|us|cn|in|we)\d{10,}[A-Za-z0-9]{16,}\b'''
+tags = ["tuya", "session"]
+
+[[rules]]
+id = "aventproxy-credential-assignment"
+description = "Tuya credential assigned to a literal in source — load it from the environment or tools/credentials.json instead"
+regex = '''(?i)\b(sid|ecode|partner|partneridentity|uid|device_id|dev_id|camera_id|local_key|localkey)\s*[:=]\s*['"]([^'"\n]{10,})['"]'''
+secretGroup = 2
+tags = ["tuya", "credential"]
+
+  [rules.allowlist]
+  description = "Obvious non-values: fixtures, placeholders and templates"
+  regexTarget = "match"
+  regexes = [
+    '''(?i)(test|fake|dummy|sample|example|placeholder|redacted|xxx|your[_-]?|\.\.\.|<[^>]+>)''',
+    # Empty template fields in tools/credentials.json.example
+    '''['"]\s*['"]''',
+  ]
+
+[[rules]]
+id = "aventproxy-tuya-partner-identity"
+description = "Tuya partner identity — one third of the MQTT username, and too short for the length-based rule above"
+regex = '''(?i)\b(partner|partneridentity|partner_identity)\s*[:=]\s*['"](p\d{5,12})['"]'''
+secretGroup = 2
+tags = ["tuya", "credential"]
+
+# --- Global allowlist ------------------------------------------------------
+
+[allowlist]
+description = "Values that are public by design"
+paths = [
+  '''tools/credentials\.json\.example''',
+  # Unit tests use fabricated credentials on purpose; the rule allowlist above
+  # covers the usual spellings, this covers fixtures that don't say "test".
+  '''tests/.*''',
+]
+regexes = [
+  # Tuya app identifiers lifted from the Philips Avent APK. They identify the
+  # app, are identical for every install, and the whole project exists because
+  # they were reverse-engineered — see WHITEPAPER.md. Not user secrets.
+  '''wx3at9qprkhskvkcsyhm''',
+  '''071d81fa''',
+  '''8n459nxk9g98gqgcwrpk3csv97uuwajm''',
+  '''a3nfht4ufwfw9cmkspaftv4x89cx58qx''',
+  # The RSA key the login password is encrypted with. A public key.
+  '''MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQ[A-Za-z0-9+/=]+''',
+]

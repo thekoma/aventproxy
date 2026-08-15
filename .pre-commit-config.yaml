@@ -1,0 +1,47 @@
+# Local gate against committing secrets. Install once with:
+#   pip install pre-commit && pre-commit install
+#
+# This exists because a real account's Tuya credentials sat in tools/ for
+# three months. CI runs the same gitleaks scan (see .github/workflows/ci.yml),
+# but by then the secret is already pushed and has to be rotated — the point
+# of the hook is to catch it while it is still only on your disk.
+#
+# To scan everything by hand:      pre-commit run --all-files
+# To scan the whole git history:   pre-commit run gitleaks-history --hook-stage manual
+
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+        name: gitleaks (staged changes)
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: detect-private-key
+      - id: check-merge-conflict
+      - id: check-yaml
+        exclude: ^aventproxy-bridge-addon.*/config\.yaml$
+      - id: check-json
+        exclude: \.json\.example$
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.5
+    hooks:
+      - id: ruff-check
+        args: [--ignore, E501]
+        files: ^(custom_components|examples|tools)/
+
+  - repo: local
+    hooks:
+      - id: gitleaks-history
+        name: gitleaks (full git history)
+        entry: scripts/gitleaks-history.sh
+        language: script
+        pass_filenames: false
+        stages: [manual]

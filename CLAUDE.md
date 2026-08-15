@@ -88,6 +88,27 @@ GitHub Actions (`.github/workflows/ci.yml`):
 
 Release workflow (`release.yml`): version pattern `YEAR.MONTH.INCREMENT`, multi-arch (amd64+arm64), pushes to `ghcr.io/thekoma/aventproxy-bridge`. Types: `release`, `rc`, `beta`, `dev`. Only `dev` skips the GitHub release step, via the `publish_release` output. Pushes touching `.github/workflows/` need the SSH remote, since the HTTPS token has no `workflow` scope.
 
+## Secrets
+
+Nothing under `tools/` may hold a working credential. A real account's `sid`,
+`ecode` and camera `localKey` were committed there for three months (found by a
+reader, not by CI). Scripts read them via `tools/_credentials.py`, from
+`AVENT_*` environment variables or the gitignored `tools/credentials.json`; the
+loader has no defaults, so a missing value is a clean exit rather than a silent
+empty string.
+
+`pre-commit install` gates commits with gitleaks, and CI scans the full history
+on every push. `.gitleaks.toml` adds project rules on top of the defaults
+because the stock high-entropy detector misses `ECODE` and `LOCAL_KEY` — both
+short and low-entropy — which is exactly how the original leak got through.
+`./scripts/gitleaks-history.sh` scans history locally. The APK-derived
+constants in `const.py` are allowlisted on purpose: they identify the app, not
+a user. Full policy in `SECURITY.md`.
+
+Secrets never reach a log: `redact.py` is the single redactor used by both the
+debug log and the diagnostics dump, and it walks lists as well as dicts,
+because Tuya returns cameras (with their `localKey`) as a list.
+
 ## Style
 
 - Python 3.11+, ruff with `line-length = 120`, E501 ignored in CI

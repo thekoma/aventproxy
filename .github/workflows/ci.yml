@@ -30,6 +30,21 @@ jobs:
       - name: Test
         run: PYTHONPATH=. pytest -v --tb=short tests/
 
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history: the point is to catch a secret that was committed
+          # and then deleted, which a shallow clone would not see.
+          fetch-depth: 0
+
+      - name: Scan for secrets
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo \
+            zricethezav/gitleaks:v8.30.0 \
+            detect --source=. --config=.gitleaks.toml --redact --no-banner
+
   test-go:
     runs-on: ubuntu-latest
     steps:
