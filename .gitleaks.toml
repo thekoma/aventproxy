@@ -2,9 +2,10 @@ title = "aventproxy"
 
 # Default rules plus project-specific ones. The defaults alone are not enough:
 # when a real account's credentials were committed in tools/, gitleaks caught
-# the sid but walked straight past ECODE = "REDACTED-TUYA-ECODE" and
-# LOCAL_KEY = 'REDACTED-CAMERA-LOCAL-KEY' — both short and low-entropy, and both enough
-# to take over the account's MQTT session or control the camera over the LAN.
+# the sid and walked straight past the ecode (16 chars) and the camera's
+# localKey (16 chars) — both too short and too low-entropy for the generic
+# high-entropy detector, and either one enough on its own to take over the
+# account's MQTT session or control the camera over the LAN.
 [extend]
 useDefault = true
 
