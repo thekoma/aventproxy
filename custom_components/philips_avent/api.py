@@ -13,8 +13,10 @@ import aiohttp
 
 try:
     from .const import TUYA_API_URL, TUYA_APP_KEY, TUYA_CH_KEY, TUYA_DEFAULT_COUNTRY_CODE, TUYA_SIGNING_KEY
+    from .redact import redact_secrets
 except ImportError:
     from const import TUYA_API_URL, TUYA_APP_KEY, TUYA_CH_KEY, TUYA_DEFAULT_COUNTRY_CODE, TUYA_SIGNING_KEY
+    from redact import redact_secrets
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -260,7 +262,7 @@ class PhilipsAventAPI:
         homes = []
         try:
             homes = await self.get_homes()
-            _LOGGER.debug("Found %d homes: %s", len(homes), homes)
+            _LOGGER.debug("Found %d homes: %s", len(homes), redact_secrets(homes))
         except TuyaAPIError as e:
             _LOGGER.debug("Home list failed: %s", e)
 
@@ -278,7 +280,7 @@ class PhilipsAventAPI:
                         post_data={"gid": gid},
                         extra_params={"gid": gid},
                     )
-                    _LOGGER.debug("Rooms (v%s, gid=%s): %s", api_version, gid, rooms)
+                    _LOGGER.debug("Rooms (v%s, gid=%s): %s", api_version, gid, redact_secrets(rooms))
                     if isinstance(rooms, list):
                         for room in rooms:
                             for dev in room.get("deviceList", []):
@@ -303,7 +305,7 @@ class PhilipsAventAPI:
                         "tuya.m.my.group.device.list",
                         extra_params={"gid": gid},
                     )
-                    _LOGGER.debug("Group device list for gid %s: %s", gid, result)
+                    _LOGGER.debug("Group device list for gid %s: %s", gid, redact_secrets(result))
                     if isinstance(result, list):
                         for dev in result:
                             dev_id = dev.get("devId") or dev.get("deviceId")
@@ -332,7 +334,7 @@ class PhilipsAventAPI:
                     "tuya.m.my.group.device.relation.list",
                     extra_params={"gid": gid},
                 )
-                _LOGGER.debug("Device relation list for gid %s: %s", gid, result)
+                _LOGGER.debug("Device relation list for gid %s: %s", gid, redact_secrets(result))
                 if isinstance(result, list):
                     for dev in result:
                         dev_id = dev.get("devId") or dev.get("deviceId") or dev.get("id")
@@ -349,7 +351,7 @@ class PhilipsAventAPI:
         # Strategy 4: tuya.m.device.list.get
         try:
             result = await self._call("tuya.m.device.list.get")
-            _LOGGER.debug("Device list get: %s", result)
+            _LOGGER.debug("Device list get: %s", redact_secrets(result))
             if isinstance(result, list):
                 for dev in result:
                     dev_id = dev.get("devId") or dev.get("deviceId")

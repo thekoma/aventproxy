@@ -12,7 +12,9 @@ This page is what to send along with the bug report.
 2. **(Optional, but very helpful) a short debug log** — captured while you trigger the broken behavior (e.g. make a noise to test sound detection).
 3. **One sentence** describing what happened vs. what you expected.
 
-That's it. Both files are JSON / text that you can attach to a GitHub issue. The integration **automatically removes** your password, session token, email address, and device keys before you download anything.
+That's it. Both files are JSON / text that you can attach to a GitHub issue. The integration **automatically removes** your password, session token, email address, device keys, and your home's coordinates from everything it writes — the diagnostics dump and its own debug log lines alike.
+
+One caveat about the log, which the diagnostics dump doesn't have: the log file is written by Home Assistant, and it holds lines from every other integration you run too. Those aren't ours to redact. If you have something sensitive elsewhere in your setup, skim the file before attaching it, or send just the `philips_avent` lines.
 
 ---
 
