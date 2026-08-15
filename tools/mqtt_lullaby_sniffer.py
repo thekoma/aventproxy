@@ -7,8 +7,11 @@ Subscribes to ALL /av/ topics with wildcards to capture both:
 
 Run this WHILE triggering play/stop in the Philips Avent app.
 
+Credentials come from the environment or tools/credentials.json; see
+tools/_credentials.py. Nothing here may be hardcoded.
+
 Usage:
-    python tools/mqtt_lullaby_sniffer.py [--duration 300]
+    AVENT_SID=... AVENT_ECODE=... python tools/mqtt_lullaby_sniffer.py [--duration 300]
 """
 
 import argparse
@@ -19,6 +22,7 @@ import sys
 import time
 
 import paho.mqtt.client as mqtt
+from _credentials import MissingCredentials, load_credentials
 
 TUYA_SIGNING_KEY = (
     "com.philips.ph.babymonitorplus"
@@ -35,12 +39,7 @@ TUYA_CH_KEY = "071d81fa"
 TUYA_MQTT_HOST = "m1.tuyaeu.com"
 TUYA_MQTT_PORT = 8883
 
-SID = "REDACTED-TUYA-SID"
-ECODE = "REDACTED-TUYA-ECODE"
-PARTNER = "REDACTED-TUYA-PARTNER"
-UID = "REDACTED-TUYA-UID"
-DEVICE_ID = "REDACTED-PHONE-DEVICE-ID"
-CAMERA_ID = "REDACTED-CAMERA-ID"
+# Credentials are loaded at runtime in main(); see the module docstring.
 
 LULLABY_KEYWORDS = {"201", "play", "stop", "pause", "next", "prev",
                      "lullaby", "music", "play_control", "play_state",
@@ -97,7 +96,7 @@ def on_message(client, userdata, msg):
         direction = "DEV->APP"
     elif "smart/device" in topic:
         direction = "CLOUD->APP"
-    elif topic.startswith(PARTNER):
+    elif topic.startswith(userdata["partner"]):
         direction = "CLOUD-MB"
 
     print(f"\n{'='*70}")
@@ -146,20 +145,25 @@ def main():
     parser.add_argument("--duration", type=int, default=600, help="Listen duration (default: 600s)")
     args = parser.parse_args()
 
-    username = derive_mqtt_username(SID, ECODE, PARTNER)
-    password = derive_mqtt_password(ECODE)
-    client_id = derive_mqtt_client_id(UID, DEVICE_ID)
+    try:
+        creds = load_credentials("sid", "ecode", "partner", "uid", "device_id", "camera_id")
+    except MissingCredentials as err:
+        sys.exit(str(err))
+
+    username = derive_mqtt_username(creds["sid"], creds["ecode"], creds["partner"])
+    password = derive_mqtt_password(creds["ecode"])
+    client_id = derive_mqtt_client_id(creds["uid"], creds["device_id"])
 
     md5_appkey = hashlib.md5(TUYA_APP_KEY.encode()).hexdigest()
-    msid = hashlib.md5((md5_appkey + ECODE).encode()).hexdigest()[-16:]
+    msid = hashlib.md5((md5_appkey + creds["ecode"]).encode()).hexdigest()[-16:]
 
     topics = [
-        f"/av/u/{msid}",                          # Device -> App (via msid)
-        f"/av/u/{UID}",                            # Device -> App (via uid)
-        f"{PARTNER}/mb/{UID}",                     # Cloud push
-        f"smart/device/out/{CAMERA_ID}",           # Device cloud events
-        "/av/moto/+/u/" + CAMERA_ID,               # App -> Device (wildcard motoId)
-        "/av/moto/+/u/" + DEVICE_ID,               # App -> Device (alt ID)
+        f"/av/u/{msid}",                           # Device -> App (via msid)
+        f"/av/u/{creds['uid']}",                   # Device -> App (via uid)
+        f"{creds['partner']}/mb/{creds['uid']}",   # Cloud push
+        f"smart/device/out/{creds['camera_id']}",  # Device cloud events
+        "/av/moto/+/u/" + creds["camera_id"],      # App -> Device (wildcard motoId)
+        "/av/moto/+/u/" + creds["device_id"],      # App -> Device (alt ID)
         "/av/#",                                   # Catch-all AV
     ]
 
@@ -180,7 +184,7 @@ def main():
         client_id=client_id,
         protocol=mqtt.MQTTv311,
         callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
-        userdata={"topics": topics},
+        userdata={"topics": topics, "partner": creds["partner"]},
     )
     client.username_pw_set(username, password)
     client.tls_set(tls_version=ssl.PROTOCOL_TLSv1_2)

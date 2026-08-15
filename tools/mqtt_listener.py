@@ -5,8 +5,11 @@ Reuses credentials from the HA config entry — no re-authentication needed.
 Trigger DPS changes (night light, volume, lullaby) while this runs to see
 what arrives over MQTT.
 
+Credentials come from the environment or tools/credentials.json; see
+tools/_credentials.py. Nothing here may be hardcoded.
+
 Usage:
-    python tools/mqtt_listener.py [--duration 300]
+    AVENT_SID=... AVENT_ECODE=... python tools/mqtt_listener.py [--duration 300]
 """
 
 import argparse
@@ -17,6 +20,7 @@ import sys
 import time
 
 import paho.mqtt.client as mqtt
+from _credentials import MissingCredentials, load_credentials, mask
 
 TUYA_SIGNING_KEY = (
     "com.philips.ph.babymonitorplus"
@@ -33,12 +37,9 @@ TUYA_CH_KEY = "071d81fa"
 TUYA_MQTT_HOST = "m1.tuyaeu.com"
 TUYA_MQTT_PORT = 8883
 
-# From HA config entry
-SID = "REDACTED-TUYA-SID"
-ECODE = "REDACTED-TUYA-ECODE"
-PARTNER = "REDACTED-TUYA-PARTNER"
-UID = "REDACTED-TUYA-UID"
-DEVICE_ID = "REDACTED-PHONE-DEVICE-ID"
+# Credentials are loaded at runtime in main(); see the module docstring.
+
+TOPICS_NEEDING_CAMERA_ID = ("dev", "all")
 
 
 def derive_mqtt_password(ecode: str) -> str:
@@ -96,29 +97,37 @@ def main():
     parser.add_argument("--topic", choices=["av", "mb", "av_uid", "dev", "all", "none"], default="av", help="Topic: av, av_uid, mb, dev, all, none")
     args = parser.parse_args()
 
-    username = derive_mqtt_username(SID, ECODE, PARTNER)
-    password = derive_mqtt_password(ECODE)
-    client_id = derive_mqtt_client_id(UID, DEVICE_ID)
+    wanted = ["sid", "ecode", "partner", "uid", "device_id"]
+    if args.topic in TOPICS_NEEDING_CAMERA_ID:
+        wanted.append("camera_id")
+    try:
+        creds = load_credentials(*wanted)
+    except MissingCredentials as err:
+        sys.exit(str(err))
+
+    username = derive_mqtt_username(creds["sid"], creds["ecode"], creds["partner"])
+    password = derive_mqtt_password(creds["ecode"])
+    client_id = derive_mqtt_client_id(creds["uid"], creds["device_id"])
 
     # msid: same derivation as Go bridge
     md5_appkey = hashlib.md5(TUYA_APP_KEY.encode()).hexdigest()
-    msid = hashlib.md5((md5_appkey + ECODE).encode()).hexdigest()[-16:]
+    msid = hashlib.md5((md5_appkey + creds["ecode"]).encode()).hexdigest()[-16:]
 
-    topic_mb = f"{PARTNER}/mb/{UID}"
+    topic_mb = f"{creds['partner']}/mb/{creds['uid']}"
     topic_av_msid = f"/av/u/{msid}"
-    topic_av_uid = f"/av/u/{UID}"
+    topic_av_uid = f"/av/u/{creds['uid']}"
 
     print(f"MQTT Host:      {TUYA_MQTT_HOST}:{TUYA_MQTT_PORT}")
     print(f"Client ID:      {client_id}")
-    print(f"Username:       {username[:30]}...")
-    print(f"Password:       {password}")
+    print(f"Username:       {mask(username, 12)}")
+    print(f"Password:       {mask(password)}")
     print(f"Topic (mb):     {topic_mb}")
     print(f"Topic (av_msid): {topic_av_msid}")
     print(f"Topic (av_uid):  {topic_av_uid}")
     print(f"Duration:       {args.duration}s")
     print()
 
-    camera_id = "REDACTED-CAMERA-ID"
+    camera_id = creds.get("camera_id", "")
     topic_dev = f"smart/device/out/{camera_id}"
 
     topic_map = {

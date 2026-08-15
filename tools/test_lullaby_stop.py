@@ -8,20 +8,27 @@ From APK decompilation we found:
 
 This script tries multiple approaches to stop the lullaby.
 
+Credentials come from the environment or tools/credentials.json; see
+tools/_credentials.py. Nothing here may be hardcoded.
+
 Usage:
     # First start a lullaby from the Philips Avent app, then:
-    python tools/test_lullaby_stop.py [--ip REDACTED-LAN-IP]
+    AVENT_LOCAL_KEY=... python tools/test_lullaby_stop.py --ip 192.0.2.10
 """
 
 import argparse
 import json
+import os
+import sys
 import time
 
 import tinytuya
+from _credentials import MissingCredentials, load_credentials, mask
 
-DEV_ID = "REDACTED-CAMERA-ID"
-LOCAL_KEY = 'REDACTED-CAMERA-LOCAL-KEY'
-DEFAULT_IP = "REDACTED-LAN-IP"
+# Populated by main() from the environment or tools/credentials.json.
+# Module-level so the individual test functions can stay parameter-free.
+DEV_ID = ""
+LOCAL_KEY = ""
 
 
 def scan_for_device():
@@ -237,22 +244,28 @@ def test_integer_dps(ip):
 
 def main():
     parser = argparse.ArgumentParser(description="Test lullaby stop commands")
-    parser.add_argument("--ip", default=None, help=f"Device IP (default: scan or {DEFAULT_IP})")
+    parser.add_argument("--ip", default=None, help="Device IP (default: AVENT_IP, or --scan)")
     parser.add_argument("--test", type=int, default=0, help="Run specific test (1-9), 0=all")
     parser.add_argument("--scan", action="store_true", help="Scan for device first")
     args = parser.parse_args()
 
-    ip = args.ip
+    global DEV_ID, LOCAL_KEY
+    try:
+        creds = load_credentials("camera_id", "local_key")
+    except MissingCredentials as err:
+        sys.exit(str(err))
+    DEV_ID = creds["camera_id"]
+    LOCAL_KEY = creds["local_key"]
+
+    ip = args.ip or os.environ.get("AVENT_IP", "")
+    if not ip and args.scan:
+        ip = scan_for_device()
     if not ip:
-        if args.scan:
-            ip = scan_for_device()
-        if not ip:
-            ip = DEFAULT_IP
-            print(f"[INFO] Using default IP: {ip}")
+        parser.error("no device address: pass --ip, set AVENT_IP, or use --scan")
 
     print(f"[INFO] Device: {DEV_ID}")
     print(f"[INFO] IP: {ip}")
-    print(f"[INFO] Key: {LOCAL_KEY}")
+    print(f"[INFO] Key: {mask(LOCAL_KEY)}")
 
     tests = {
         1: test_v33_control,

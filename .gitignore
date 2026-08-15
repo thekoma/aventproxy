@@ -18,6 +18,11 @@ tuya_session_data.json
 tuya_keys*.json
 snapshot.json
 
+# Local credentials for the tools/ development scripts. The scripts read them
+# from here or from the environment; a real sid or localKey must never reach a
+# committed file again (see SECURITY.md).
+tools/credentials.json
+
 # Frida temporary scripts with hardcoded credentials
 gen_signs.js
 gen_signs2.js

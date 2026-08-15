@@ -4,7 +4,7 @@ Replace API polling with Tuya LAN protocol push for real-time DPS updates, with 
 
 ## Context
 
-The coordinator currently polls `tuya.m.device.get` every 30 seconds. Testing confirmed that the baby monitor (Tuya protocol 3.3 at `REDACTED-LAN-IP`) pushes DPS updates over LAN in real-time — temperature, night light, and motion detection were observed arriving instantly via TinyTuya's persistent socket.
+The coordinator currently polls `tuya.m.device.get` every 30 seconds. Testing confirmed that the baby monitor (Tuya protocol 3.3, on the local network) pushes DPS updates over LAN in real-time — temperature, night light, and motion detection were observed arriving instantly via TinyTuya's persistent socket.
 
 Not all DPS codes push reliably over LAN (brightness and volume were not observed), so API polling remains necessary as reconciliation.
 

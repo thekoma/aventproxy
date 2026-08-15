@@ -28,7 +28,7 @@ jobs:
           ruff check custom_components/ examples/ tools/ --ignore E501
 
       - name: Test
-        run: PYTHONPATH=. pytest -v --tb=short tests/test_philips_avent/
+        run: PYTHONPATH=. pytest -v --tb=short tests/
 
   test-go:
     runs-on: ubuntu-latest

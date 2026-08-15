@@ -4,21 +4,25 @@
 Runs each operation one at a time with 30s gaps.
 Pings the device continuously to detect crashes.
 
+Credentials come from the environment or tools/credentials.json; see
+tools/_credentials.py. Nothing here may be hardcoded.
+
 Usage:
-    python tools/find_crash_cause.py [--ip REDACTED-LAN-IP]
+    AVENT_LOCAL_KEY=... python tools/find_crash_cause.py --ip 192.0.2.10
 """
 
 import argparse
+import os
 import subprocess
 import sys
 import threading
 import time
 
 import tinytuya
+from _credentials import MissingCredentials, load_credentials
 
-DEV_ID = "REDACTED-CAMERA-ID"
-LOCAL_KEY = 'REDACTED-CAMERA-LOCAL-KEY'
-DEFAULT_IP = "REDACTED-LAN-IP"
+# Credentials and the device address are loaded at runtime in main();
+# see tools/_credentials.py. Nothing here may be hardcoded.
 
 PRIME_DPS = [101, 102, 106, 134, 138, 139, 140, 158, 207, 209, 237, 246]
 
@@ -92,9 +96,19 @@ def test_operation(name, func, ip):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ip", default=DEFAULT_IP)
+    parser.add_argument("--ip", default=os.environ.get("AVENT_IP", ""),
+                        help="Device LAN address (or set AVENT_IP)")
     args = parser.parse_args()
     ip = args.ip
+    if not ip:
+        parser.error("no device address: pass --ip or set AVENT_IP")
+
+    try:
+        creds = load_credentials("camera_id", "local_key", "sid", "ecode", "partner", "uid")
+    except MissingCredentials as err:
+        sys.exit(str(err))
+    dev_id = creds["camera_id"]
+    local_key = creds["local_key"]
 
     print("Baby Monitor Crash Finder")
     print(f"Device: {ip}")
@@ -123,7 +137,7 @@ def main():
 
     # --- TEST 2: TinyTuya status (sends DP_QUERY) ---
     def test_status():
-        d = tinytuya.Device(DEV_ID, ip, LOCAL_KEY, version=3.3)
+        d = tinytuya.Device(dev_id, ip, local_key, version=3.3)
         d.set_socketTimeout(5)
         s = d.status()
         d.close()
@@ -133,7 +147,7 @@ def main():
 
     # --- TEST 3: TinyTuya updatedps with all PRIME_DPS ---
     def test_updatedps_all():
-        d = tinytuya.Device(DEV_ID, ip, LOCAL_KEY, version=3.3)
+        d = tinytuya.Device(dev_id, ip, local_key, version=3.3)
         d.set_socketTimeout(5)
         r = d.updatedps(PRIME_DPS)
         d.close()
@@ -143,7 +157,7 @@ def main():
 
     # --- TEST 4: TinyTuya persistent socket + receive loop (10s) ---
     def test_persistent_receive():
-        d = tinytuya.Device(DEV_ID, ip, LOCAL_KEY, version=3.3)
+        d = tinytuya.Device(dev_id, ip, local_key, version=3.3)
         d.set_socketPersistent(True)
         d.set_socketTimeout(3)
         d.updatedps(PRIME_DPS)
@@ -160,7 +174,7 @@ def main():
     # --- TEST 5: Rapid reconnect (3x in 10s) ---
     def test_rapid_reconnect():
         for i in range(3):
-            d = tinytuya.Device(DEV_ID, ip, LOCAL_KEY, version=3.3)
+            d = tinytuya.Device(dev_id, ip, local_key, version=3.3)
             d.set_socketPersistent(True)
             d.set_socketTimeout(3)
             d.updatedps(PRIME_DPS)
@@ -191,15 +205,15 @@ def main():
             async with aiohttp.ClientSession() as session:
                 api = PhilipsAventAPI.__new__(PhilipsAventAPI)
                 api._session = session
-                api._sid = "REDACTED-TUYA-SID"
-                api._ecode = "REDACTED-TUYA-ECODE"
+                api._sid = creds["sid"]
+                api._ecode = creds["ecode"]
                 api._signing_key = TUYA_SIGNING_KEY
                 api._app_key = "wx3at9qprkhskvkcsyhm"
                 api._ch_key = "071d81fa"
                 api._api_url = "https://a1.tuyaeu.com/api.json"
-                api._partner = "REDACTED-TUYA-PARTNER"
-                api._uid = "REDACTED-TUYA-UID"
-                device = await api.get_device(DEV_ID)
+                api._partner = creds["partner"]
+                api._uid = creds["uid"]
+                device = await api.get_device(dev_id)
                 return f"got {len(device.get('dps', {}))} DPS values"
 
         return asyncio.run(_call())
@@ -226,15 +240,15 @@ def main():
             async with aiohttp.ClientSession() as session:
                 api = PhilipsAventAPI.__new__(PhilipsAventAPI)
                 api._session = session
-                api._sid = "REDACTED-TUYA-SID"
-                api._ecode = "REDACTED-TUYA-ECODE"
+                api._sid = creds["sid"]
+                api._ecode = creds["ecode"]
                 api._signing_key = TUYA_SIGNING_KEY
                 api._app_key = "wx3at9qprkhskvkcsyhm"
                 api._ch_key = "071d81fa"
                 api._api_url = "https://a1.tuyaeu.com/api.json"
-                api._partner = "REDACTED-TUYA-PARTNER"
-                api._uid = "REDACTED-TUYA-UID"
-                rssi = await api.get_rssi(DEV_ID)
+                api._partner = creds["partner"]
+                api._uid = creds["uid"]
+                rssi = await api.get_rssi(dev_id)
                 return f"rssi={rssi}"
 
         return asyncio.run(_call())
@@ -243,7 +257,7 @@ def main():
 
     # --- TEST 8: set_dps via LAN (night light on/off) ---
     def test_set_dps_lan():
-        d = tinytuya.Device(DEV_ID, ip, LOCAL_KEY, version=3.3)
+        d = tinytuya.Device(dev_id, ip, local_key, version=3.3)
         d.set_socketTimeout(5)
         r1 = d.set_value("138", True)
         time.sleep(1)
