@@ -1,7 +1,6 @@
 """Philips Avent Baby Monitor integration for Home Assistant."""
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 
@@ -29,7 +28,13 @@ from .const import (
     TUYA_SIGNING_KEY,
 )
 from .coordinator import PhilipsAventCoordinator
-from .payload import BRIDGE_CONFIG_PREFIX, bridge_config_filename, build_bridge_config, orphan_bridge_configs
+from .payload import (
+    BRIDGE_CONFIG_PREFIX,
+    bridge_config_filename,
+    build_bridge_config,
+    orphan_bridge_configs,
+    write_bridge_config_file,
+)
 from .region import DEFAULT_DATA_CENTER, api_host, api_url_for_host
 
 _LOGGER = logging.getLogger(__name__)
@@ -64,8 +69,10 @@ async def _write_bridge_config(hass: HomeAssistant, entry: ConfigEntry, api: Phi
         cameras=cameras,
     )
     bridge_path = Path(hass.config.path(bridge_config_filename(entry.entry_id)))
+    # Owner-only: the file carries a live Tuya session and /config is mounted
+    # by the Samba, File Editor and Terminal add-ons, and copied by backups.
     await hass.async_add_executor_job(
-        bridge_path.write_text, json.dumps(bridge_config, indent=2)
+        write_bridge_config_file, bridge_path, bridge_config
     )
     _LOGGER.info(
         "Bridge config written to %s (port: %d, api host: %s)",

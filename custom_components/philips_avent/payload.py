@@ -5,6 +5,9 @@ loaded by tests without dragging in the full HA stack.
 """
 from __future__ import annotations
 
+import json
+import os
+
 BRIDGE_CONFIG_PREFIX = "philips_avent_bridge_"
 BRIDGE_CONFIG_SUFFIX = ".json"
 
@@ -136,3 +139,27 @@ def build_cameras_payload(cameras: list) -> list:
         }
         for cam in cameras
     ]
+
+
+BRIDGE_CONFIG_MODE = 0o600
+
+
+def write_bridge_config_file(path, config: dict) -> None:
+    """Write the bridge config, readable only by the owner.
+
+    The file carries a live Tuya session — sid, ecode, partner, device id —
+    and it lands in /config, which the Samba, File Editor and Terminal add-ons
+    all mount and which every backup copies. ``Path.write_text`` left it at
+    the process umask, so in practice 0644.
+
+    The mode is tightened on the open file descriptor before any content is
+    written, so an already-existing 0644 file never holds the new session
+    while still world-readable. ``os.open`` alone would not be enough: its
+    mode argument only applies when the file is created.
+    """
+    payload = json.dumps(config, indent=2)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, BRIDGE_CONFIG_MODE)
+    with os.fdopen(fd, "w") as handle:
+        if hasattr(os, "fchmod"):
+            os.fchmod(handle.fileno(), BRIDGE_CONFIG_MODE)
+        handle.write(payload)
