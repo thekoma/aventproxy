@@ -1,5 +1,5 @@
 ARG BUILD_FROM
-FROM golang:1.26-bookworm AS builder
+FROM golang:1.27-bookworm AS builder
 
 WORKDIR /src
 COPY avent-webrtc-bridge/ .
