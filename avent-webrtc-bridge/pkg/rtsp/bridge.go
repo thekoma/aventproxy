@@ -399,20 +399,7 @@ func (wb *WebRTCBridge) setupPeerConnection(webRTCConfig *tuya.WebRTCConfig) err
 	}
 
 	// Setup connection state handler
-	wb.peerConnection.OnConnectionStateChange(func(state pion.PeerConnectionState) {
-		if state == pion.PeerConnectionStateFailed || state == pion.PeerConnectionStateClosed {
-			wb.handleError(errors.New("WebRTC connection failed/closed"))
-		}
-
-		if state == pion.PeerConnectionStateConnected {
-			core.Logger.Info().Msgf("WebRTC connection established")
-
-			if !wb.isHEVC && wb.resolution == "hd" {
-				_ = wb.cameraClient.SendResolution(0)
-				wb.waiter.Done(nil)
-			}
-		}
-	})
+	wb.peerConnection.OnConnectionStateChange(wb.handlePeerConnectionStateChange)
 
 	// Setup track handler for incoming media if not HEVC
 	wb.peerConnection.OnTrack(func(track *pion.TrackRemote, receiver *pion.RTPReceiver) {
@@ -450,6 +437,23 @@ func (wb *WebRTCBridge) setupPeerConnection(webRTCConfig *tuya.WebRTCConfig) err
 	})
 
 	return nil
+}
+
+func (wb *WebRTCBridge) handlePeerConnectionStateChange(state pion.PeerConnectionState) {
+	if state == pion.PeerConnectionStateFailed || state == pion.PeerConnectionStateClosed {
+		wb.handleError(errors.New("WebRTC connection failed/closed"))
+	}
+
+	if state == pion.PeerConnectionStateConnected {
+		core.Logger.Info().Msgf("WebRTC connection established")
+
+		if !wb.isHEVC {
+			if wb.resolution == "hd" {
+				_ = wb.cameraClient.SendResolution(0)
+			}
+			wb.waiter.Done(nil)
+		}
+	}
 }
 
 func (wb *WebRTCBridge) setupMQTTCameraClient(webRTCConfig *tuya.WebRTCConfig) {
