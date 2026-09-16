@@ -37,16 +37,26 @@ _LOGGER = logging.getLogger(__name__)
 # `is_new_event` also requires a stamp newer than the last one acted on.
 EVENT_MAX_AGE_SECONDS = 180.0
 
-MOTION_COMMANDS = frozenset({"ipc_motion", "ipc_move", "motion"})
+# `ipc_human` is what the SCD9xx SenseIQ family posts for a motion/human alert
+# (DPS 212 cmd, confirmed on a decrypted capture 2026-09-15). Until it was listed
+# here the motion sensor stayed off while the Philips app notified.
+MOTION_COMMANDS = frozenset({"ipc_motion", "ipc_move", "ipc_human", "motion"})
 # `ipc_bang` is what the SCD953 posts for a noise alert, confirmed by the
 # diagnostics on #42. Until it was listed here the sound sensor stayed off while
 # the Philips app notified. A cry is a sound alert on a baby monitor, so
-# `ipc_cry` belongs here too.
+# `ipc_cry` belongs here too — and the SenseIQ family names its cry alert
+# `ipc_baby_cry` (confirmed in the same 2026-09-15 capture's logs).
 SOUND_COMMANDS = frozenset(
-    {"ipc_bang", "ipc_cry", "ipc_sound", "ipc_decibel", "sound", "decibel"}
+    {"ipc_bang", "ipc_cry", "ipc_baby_cry", "ipc_sound", "ipc_decibel", "sound", "decibel"}
 )
 
 KNOWN_COMMANDS = MOTION_COMMANDS | SOUND_COMMANDS
+
+# Crying specifically, a subset of the sound alerts. The SenseIQ family posts
+# `ipc_baby_cry`; `ipc_cry` is the generic spelling. Kept inside SOUND_COMMANDS
+# too, so a cry lights up both the generic "Sound Detected" and the dedicated
+# "Crying Detected" sensor. Already part of KNOWN_COMMANDS via SOUND_COMMANDS.
+CRY_COMMANDS = frozenset({"ipc_cry", "ipc_baby_cry"})
 
 # Alarm commands already reported, so an unmapped one is logged once per run
 # instead of on every poll.
@@ -140,6 +150,15 @@ def motion_event_timestamp(raw: object) -> float | None:
 def sound_event_timestamp(raw: object) -> float | None:
     """Timestamp of a sound alarm carried in a DPS value."""
     return alarm_event_timestamp(raw, SOUND_COMMANDS)
+
+
+def cry_event_timestamp(raw: object) -> float | None:
+    """Timestamp of a crying alarm (``ipc_baby_cry``/``ipc_cry``) in a DPS value.
+
+    Returns None for a non-cry sound (e.g. ``ipc_bang``) without logging it as
+    unmapped, because those are still in KNOWN_COMMANDS via SOUND_COMMANDS.
+    """
+    return alarm_event_timestamp(raw, CRY_COMMANDS)
 
 
 def poll_should_stay_fast(lan_connected: bool, has_alarm_record: bool) -> bool:

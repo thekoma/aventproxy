@@ -77,28 +77,109 @@
       },
       "wifi_signal": {
         "name": "WiFi Signal"
+      },
+      "breathing_rate": {
+        "name": "Breathing rate"
+      },
+      "senseiq_state": {
+        "name": "SenseIQ state"
+      },
+      "sleeping_since": {
+        "name": "Sleeping since"
+      },
+      "sleep_duration": {
+        "name": "Sleep duration"
+      },
+      "sleep_stage": {
+        "name": "Sleep stage",
+        "state": {
+          "awake": "Awake",
+          "light": "Light sleep",
+          "deep": "Deep sleep"
+        }
+      },
+      "device_errors": {
+        "name": "Device errors"
+      },
+      "night_sleep": {
+        "name": "Sleep (night)"
+      },
+      "night_in_bed": {
+        "name": "Time in bed (night)"
+      },
+      "night_deep_sleep": {
+        "name": "Deep sleep (night)"
+      },
+      "night_light_sleep": {
+        "name": "Light sleep (night)"
+      },
+      "night_awake": {
+        "name": "Awake (night)"
+      }
+    },
+    "binary_sensor": {
+      "lullaby_playing": {
+        "name": "Lullaby Playing"
+      },
+      "motion_detected": {
+        "name": "Motion Detected"
+      },
+      "sound_detected": {
+        "name": "Sound Detected"
+      },
+      "baby_detected": {
+        "name": "Baby Detected"
+      },
+      "crying_detected": {
+        "name": "Crying Detected"
       }
     },
     "switch": {
-      "138": {
+      "night_light": {
         "name": "Night Light"
       },
-      "136": {
+      "motion_alert": {
         "name": "Motion Alert"
       },
-      "137": {
+      "sound_alert": {
         "name": "Sound Alert"
       },
-      "105": {
+      "privacy_mode": {
         "name": "Privacy Mode"
+      },
+      "senseiq": {
+        "name": "SenseIQ"
+      },
+      "awake_alert": {
+        "name": "Awake Alert"
+      },
+      "cry_alert": {
+        "name": "Cry Alert"
       }
     },
     "number": {
-      "158": {
+      "night_light_brightness": {
         "name": "Night Light Brightness"
       },
-      "209": {
+      "lullaby_volume": {
         "name": "Lullaby Volume"
+      },
+      "awake_alert_delay": {
+        "name": "Awake Alert Delay"
+      }
+    },
+    "select": {
+      "lullaby_track": {
+        "name": "Lullaby Track"
+      },
+      "play_mode": {
+        "name": "Play Mode"
+      },
+      "lullaby_timer": {
+        "name": "Lullaby Timer"
+      },
+      "night_light_timer": {
+        "name": "Night Light Timer"
       }
     },
     "button": {
@@ -116,31 +197,6 @@
       },
       "lullaby_prev": {
         "name": "Lullaby Prev"
-      }
-    },
-    "select": {
-      "lullaby_track": {
-        "name": "Lullaby Track"
-      },
-      "play_mode": {
-        "name": "Play Mode"
-      },
-      "212_timer": {
-        "name": "Lullaby Timer"
-      },
-      "211_timer": {
-        "name": "Night Light Timer"
-      }
-    },
-    "binary_sensor": {
-      "lullaby_playing": {
-        "name": "Lullaby Playing"
-      },
-      "motion_detected": {
-        "name": "Motion Detected"
-      },
-      "sound_detected": {
-        "name": "Sound Detected"
       }
     },
     "camera": {

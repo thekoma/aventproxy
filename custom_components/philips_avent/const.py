@@ -74,6 +74,17 @@ DPS_DECIBEL_EVENT = "141"
 # family reports motion here instead of on DPS 250 (issues #61, #42); see
 # events.py for the payload. One slot holding the newest alarm, not a queue.
 DPS_ALARM_RECORD = "212"
+DPS_SENSEIQ_STATUS = "3"
+DPS_SLEEP_SESSION = "4"
+# More SenseIQ data points, from the product schema (productId 7d9t0rygsm7ztnww)
+# read out of m.life.my.group.device.list. Confirmed live on an SCD9xx.
+DPS_SENSEIQ_SWITCH = "1"       # sleepiq_switch  (bool) SenseIQ on/off
+DPS_AWAKE_DELAY = "8"          # awake_delay     (value, seconds) awake-alert delay
+DPS_AWAKE_SWITCH = "11"        # awake_switch    (bool) baby-awake alert on/off
+DPS_CRY_DET_SWITCH = "12"      # cry_det_switch  (bool) cry alert on/off
+DPS_NO_SENSEIQ_SIGNAL = "15"   # no_senseiq_signal (bool) True when SenseIQ has no
+                               # signal (no baby detected / "scanning crib")
+DPS_DEVICE_ERRORS = "18"       # device_errors   (value) 0 = no error
 
 LULLABY_TRACK_MAP = {
     3542154: ("Baa Baa Black Sheep", "lullabies"),

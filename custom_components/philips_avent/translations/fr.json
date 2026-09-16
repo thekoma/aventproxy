@@ -1,0 +1,208 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Moniteur bébé Philips Avent",
+        "description": "Saisissez les identifiants de votre compte {app_name}.",
+        "data": {
+          "email": "E-mail",
+          "password": "Mot de passe",
+          "country": "Pays de votre compte Avent"
+        },
+        "data_description": {
+          "country": "Le pays choisi lors de la création du compte Philips Avent. Il détermine quel serveur Philips/Tuya héberge votre compte ; une valeur incorrecte fait échouer la connexion."
+        }
+      },
+      "mfa": {
+        "title": "Code de vérification",
+        "description": "Un code de vérification a été envoyé à {email}. Saisissez-le ci-dessous.",
+        "data": {
+          "mfa_code": "Code à 6 chiffres"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Ré-authentifier Philips Avent",
+        "description": "Votre session a expiré. Veuillez ressaisir vos identifiants.",
+        "data": {
+          "email": "E-mail",
+          "password": "Mot de passe",
+          "country": "Pays de votre compte Avent"
+        },
+        "data_description": {
+          "country": "Le pays choisi lors de la création du compte Philips Avent. Il détermine quel serveur Philips/Tuya héberge votre compte ; une valeur incorrecte fait échouer la connexion."
+        }
+      },
+      "reauth_mfa": {
+        "title": "Ré-authentification - Code de vérification",
+        "description": "Un code de vérification a été envoyé à {email}. Saisissez-le ci-dessous.",
+        "data": {
+          "mfa_code": "Code à 6 chiffres"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "E-mail ou mot de passe invalide",
+      "invalid_mfa": "Code de vérification invalide",
+      "cannot_connect": "Impossible de se connecter aux serveurs Philips Avent",
+      "tuya_error": "Échec de la connexion. Tuya a signalé : {error_code}. Activez les journaux de débogage et consultez le journal pour plus de détails, puis signalez ce code si le problème persiste.",
+      "unknown": "Erreur inattendue",
+      "wrong_region": "Votre compte n'est pas sur le serveur essayé (Tuya a signalé : {error_code}). Revenez en arrière et sélectionnez le pays où le compte Avent a été créé."
+    },
+    "abort": {
+      "already_configured": "Ce compte est déjà configuré",
+      "reauth_successful": "Ré-authentification réussie"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Paramètres du pont Philips Avent",
+        "data": {
+          "bridge_host": "Hôte du pont",
+          "bridge_port": "Port RTSP du pont",
+          "talkback": "Audio bidirectionnel (interphone)"
+        },
+        "data_description": {
+          "bridge_host": "Emplacement où Home Assistant peut joindre le pont WebRTC. Laissez localhost si vous utilisez l'add-on ; indiquez le nom du conteneur ou l'adresse IP si vous exécutez le pont ailleurs vous-même.",
+          "bridge_port": "Port sur lequel le pont WebRTC écoute (par défaut : 38554)",
+          "talkback": "Laissez désactivé sauf si un de vos clients parle réellement via le flux. Demander l'audio bidirectionnel à la caméra fait que le moniteur arrête une berceuse en cours et la redémarre depuis le début à la fermeture du flux."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "temperature": {
+        "name": "Température"
+      },
+      "wifi_signal": {
+        "name": "Signal WiFi"
+      },
+      "breathing_rate": {
+        "name": "Fréquence respiratoire"
+      },
+      "senseiq_state": {
+        "name": "État SenseIQ"
+      },
+      "sleeping_since": {
+        "name": "Endormi depuis"
+      },
+      "sleep_duration": {
+        "name": "Durée de sommeil"
+      },
+      "sleep_stage": {
+        "name": "Stade de sommeil",
+        "state": {
+          "awake": "Éveillé",
+          "light": "Sommeil léger",
+          "deep": "Sommeil profond"
+        }
+      },
+      "device_errors": {
+        "name": "Erreurs de l'appareil"
+      },
+      "night_sleep": {
+        "name": "Sommeil (nuit)"
+      },
+      "night_in_bed": {
+        "name": "Temps au lit (nuit)"
+      },
+      "night_deep_sleep": {
+        "name": "Sommeil profond (nuit)"
+      },
+      "night_light_sleep": {
+        "name": "Sommeil léger (nuit)"
+      },
+      "night_awake": {
+        "name": "Éveillé (nuit)"
+      }
+    },
+    "binary_sensor": {
+      "lullaby_playing": {
+        "name": "Berceuse en cours"
+      },
+      "motion_detected": {
+        "name": "Mouvement détecté"
+      },
+      "sound_detected": {
+        "name": "Son détecté"
+      },
+      "baby_detected": {
+        "name": "Bébé détecté"
+      },
+      "crying_detected": {
+        "name": "Pleurs détectés"
+      }
+    },
+    "switch": {
+      "night_light": {
+        "name": "Veilleuse"
+      },
+      "motion_alert": {
+        "name": "Alerte mouvement"
+      },
+      "sound_alert": {
+        "name": "Alerte son"
+      },
+      "privacy_mode": {
+        "name": "Mode privé"
+      },
+      "senseiq": {
+        "name": "SenseIQ"
+      },
+      "awake_alert": {
+        "name": "Alerte réveil"
+      },
+      "cry_alert": {
+        "name": "Alerte pleurs"
+      }
+    },
+    "number": {
+      "night_light_brightness": {
+        "name": "Luminosité de la veilleuse"
+      },
+      "lullaby_volume": {
+        "name": "Volume de la berceuse"
+      },
+      "awake_alert_delay": {
+        "name": "Délai d'alerte réveil"
+      }
+    },
+    "select": {
+      "lullaby_track": {
+        "name": "Berceuse"
+      },
+      "play_mode": {
+        "name": "Mode de lecture"
+      },
+      "lullaby_timer": {
+        "name": "Minuterie berceuse"
+      },
+      "night_light_timer": {
+        "name": "Minuterie veilleuse"
+      }
+    },
+    "button": {
+      "lullaby_play": {
+        "name": "Lecture berceuse"
+      },
+      "lullaby_pause": {
+        "name": "Pause berceuse"
+      },
+      "lullaby_stop": {
+        "name": "Arrêt berceuse"
+      },
+      "lullaby_next": {
+        "name": "Berceuse suivante"
+      },
+      "lullaby_prev": {
+        "name": "Berceuse précédente"
+      }
+    },
+    "camera": {
+      "camera": {
+        "name": "Caméra"
+      }
+    }
+  }
+}

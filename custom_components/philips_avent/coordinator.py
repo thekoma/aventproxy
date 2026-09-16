@@ -11,8 +11,9 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-from homeassistant.util.dt import utcnow
+from homeassistant.util.dt import now as dt_now, utcnow
 
+from . import senseiq
 from .api import PhilipsAventAPI, TuyaAPIError
 from .const import DPS_ALARM_RECORD, DPS_LULLABY_CONTROL, DPS_LULLABY_STATE
 from .events import LULLABY_SETTLE_SECONDS, lullaby_state_settled, poll_should_stay_fast
@@ -29,6 +30,10 @@ POLL_SLOW = timedelta(seconds=120)
 # RSSI moves slowly and costs a second API call per poll, so it is refreshed on
 # its own schedule rather than on every tick of a fast poll.
 RSSI_INTERVAL = timedelta(minutes=5)
+
+# The SenseIQ daily sleep summary is a cloud aggregate that changes slowly, so it
+# is fetched on its own schedule rather than on every DPS poll.
+SLEEP_DAY_INTERVAL = timedelta(minutes=15)
 
 
 class PhilipsAventCoordinator(DataUpdateCoordinator):
@@ -61,6 +66,9 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         self._pending_lullaby_since: float | None = None
         self._lullaby_unsub = None
         self._rssi_refreshed_at = None
+        # SenseIQ nightly sleep summary (cloud aggregate), decoded in senseiq.py.
+        self.sleep_day: dict | None = None
+        self._sleep_day_refreshed_at = None
 
     async def start_lan(self) -> None:
         if not self._local_key:
@@ -189,6 +197,33 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
             return
         self.rssi = rssi_data.get("value")
 
+    async def _refresh_sleep_day(self) -> None:
+        """Fetch and decode the SenseIQ nightly sleep summary, throttled.
+
+        Self-contained: a failure here (e.g. a monitor without SenseIQ, or the
+        cloud endpoint refusing the call) never disturbs the DPS poll.
+        """
+        now = utcnow()
+        if (
+            self._sleep_day_refreshed_at
+            and now - self._sleep_day_refreshed_at < SLEEP_DAY_INTERVAL
+        ):
+            return
+        date = dt_now().strftime("%Y%m%d")
+        try:
+            result = await self.api.get_sleep_day(self.camera_id, date)
+        except TuyaAPIError as err:
+            _LOGGER.warning(
+                "SenseIQ sleep-day fetch failed for %s: %s", self.camera_name, err
+            )
+            return
+        self._sleep_day_refreshed_at = now
+        self.sleep_day = senseiq.decode_sleep_day(result, date)
+        _LOGGER.debug(
+            "SenseIQ sleep-day for %s (%s): %s",
+            self.camera_name, date, self.sleep_day,
+        )
+
     @property
     def alerts_need_the_cloud(self) -> bool:
         """Whether alerts on this monitor are only visible on the cloud poll.
@@ -212,6 +247,7 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
             device = await self.api.get_device(self.camera_id)
             self.device_info = device
             await self._refresh_rssi()
+            await self._refresh_sleep_day()
             api_dps = device.get("dps", {})
             changed = dps_delta(self.data, api_dps)
             if changed:

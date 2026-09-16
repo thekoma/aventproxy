@@ -254,6 +254,26 @@ class PhilipsAventAPI:
             "smartlife.m.rtc.config.get", post_data={"devId": dev_id}
         )
 
+    async def get_sleep_day(self, dev_id: str, date: str) -> Any:
+        """SenseIQ daily sleep summary (the app's dashboard night breakdown).
+
+        `date` is YYYYMMDD (the wake day; a night that ends that morning is
+        returned under it). Returns the raw `result` list of day records, each
+        with `sessions[]` (st/et/sd/ssd) — decoded in senseiq.decode_sleep_day.
+        The app sends this encrypted (et=3); we send it plaintext like every
+        other call, which the server accepts.
+        """
+        return await self._call(
+            "m.solution.sleep.session.day",
+            "1.0",
+            post_data={
+                "beginDate": date,
+                "endDate": date,
+                "devId": dev_id,
+                "gwId": dev_id,
+            },
+        )
+
     async def discover_cameras(self) -> list[dict]:
         """Find all IPC cameras in the account."""
         cameras = []

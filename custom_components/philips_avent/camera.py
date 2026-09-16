@@ -39,7 +39,7 @@ class AventCamera(Camera):
     """Camera entity pointing to the WebRTC bridge RTSP stream."""
 
     _attr_has_entity_name = True
-    _attr_name = "Camera"
+    _attr_translation_key = "camera"
     _attr_supported_features = CameraEntityFeature.STREAM
 
     def __init__(

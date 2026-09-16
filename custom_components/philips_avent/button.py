@@ -39,7 +39,7 @@ class AventLullabyButton(CoordinatorEntity, ButtonEntity):
         super().__init__(coordinator)
         self._cam_id = cam_id
         self._action = action
-        self._attr_name = f"Lullaby {action.title()}"
+        self._attr_translation_key = f"lullaby_{action}"
         self._attr_icon = icon
         self._attr_unique_id = f"{cam_id}_lullaby_{action}"
         self._attr_device_info = build_device_info(coordinator, cam_id)

@@ -43,20 +43,20 @@ async def async_setup_entry(
         entities.append(AventPlayModeSelect(coordinator, cam_id))
         entities.append(AventTimerSelect(
             coordinator, cam_id,
-            "Lullaby Timer", "mdi:timer-music-outline",
-            DPS_LULLABY_TIMER, DPS_LULLABY_TIMER_SWITCH,
+            None, "mdi:timer-music-outline",
+            DPS_LULLABY_TIMER, DPS_LULLABY_TIMER_SWITCH, translation_key="lullaby_timer",
         ))
         entities.append(AventTimerSelect(
             coordinator, cam_id,
-            "Night Light Timer", "mdi:timer-outline",
-            DPS_LIGHT_TIMER, DPS_LIGHT_TIMER_SWITCH,
+            None, "mdi:timer-outline",
+            DPS_LIGHT_TIMER, DPS_LIGHT_TIMER_SWITCH, translation_key="night_light_timer",
         ))
     async_add_entities(entities)
 
 
 class AventLullabySelect(CoordinatorEntity, SelectEntity):
     _attr_has_entity_name = True
-    _attr_name = "Lullaby Track"
+    _attr_translation_key = "lullaby_track"
     _attr_icon = "mdi:music-note"
     _attr_options = LULLABY_TRACKS
 
@@ -96,7 +96,7 @@ class AventLullabySelect(CoordinatorEntity, SelectEntity):
 
 class AventPlayModeSelect(CoordinatorEntity, SelectEntity):
     _attr_has_entity_name = True
-    _attr_name = "Play Mode"
+    _attr_translation_key = "play_mode"
     _attr_icon = "mdi:repeat"
 
     def __init__(self, coordinator: PhilipsAventCoordinator, cam_id: str):
@@ -127,14 +127,18 @@ class AventTimerSelect(CoordinatorEntity, SelectEntity):
 
     def __init__(
         self, coordinator: PhilipsAventCoordinator, cam_id: str,
-        name: str, icon: str, dps_timer: str, dps_switch: str,
+        name: str | None, icon: str, dps_timer: str, dps_switch: str,
+        *, translation_key: str | None = None,
     ):
         super().__init__(coordinator)
         self._attr_options = list(TIMER_OPTIONS.keys())
         self._cam_id = cam_id
         self._dps_timer = dps_timer
         self._dps_switch = dps_switch
-        self._attr_name = name
+        if translation_key is not None:
+            self._attr_translation_key = translation_key
+        else:
+            self._attr_name = name
         self._attr_icon = icon
         self._attr_unique_id = f"{cam_id}_{dps_timer}_timer"
         self._attr_device_info = build_device_info(coordinator, cam_id)
