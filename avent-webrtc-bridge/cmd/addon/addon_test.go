@@ -363,3 +363,44 @@ func TestLoadConfig_TalkbackHonoured(t *testing.T) {
 		t.Error("talkback true in the config must be honoured")
 	}
 }
+
+func TestResolveBind(t *testing.T) {
+	none := BridgeConfig{}
+	fromJSON := BridgeConfig{RTSPBind: "192.168.1.10"}
+
+	if got := resolveBind("localhost", false, none); got != DefaultBind {
+		t.Errorf("no flag, no JSON: got %q, want %q", got, DefaultBind)
+	}
+	if DefaultBind != "localhost" {
+		t.Errorf("DefaultBind = %q: the unauthenticated RTSP server must default to loopback", DefaultBind)
+	}
+	if got := resolveBind("localhost", false, fromJSON); got != "192.168.1.10" {
+		t.Errorf("JSON value ignored: got %q", got)
+	}
+	if got := resolveBind("0.0.0.0", true, fromJSON); got != "0.0.0.0" {
+		t.Errorf("explicit flag must win over JSON: got %q", got)
+	}
+	if got := resolveBind("localhost", false, BridgeConfig{RTSPBind: "  "}); got != DefaultBind {
+		t.Errorf("blank JSON value: got %q, want %q", got, DefaultBind)
+	}
+}
+
+func TestLoadConfig_RTSPBind(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "bridge.json")
+	body := `{
+	  "signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P",
+	  "app_key": "AK", "device_id": "D", "rtsp_bind_address": "0.0.0.0",
+	  "cameras": [{"camera_id": "abc123", "camera_name": "Erik"}]
+	}`
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig(p)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if cfg.RTSPBind != "0.0.0.0" {
+		t.Errorf("RTSPBind = %q, want 0.0.0.0", cfg.RTSPBind)
+	}
+}
