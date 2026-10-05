@@ -171,7 +171,12 @@ func (rf *RTPForwarder) AddUDPClient(sessionID string, videoRTPPort, audioRTPPor
 	return nil
 }
 
-func (rf *RTPForwarder) SetupUDPBackchannel(sessionID string, clientPort int) (int, error) {
+// SetupUDPBackchannel opens the server-side RTP/RTCP ports for talkback audio.
+// bindIP is the local address of the client's RTSP connection: the ports then
+// live on the same interface the client already reached (loopback when the
+// RTSP server is bound to localhost) instead of on every interface, where
+// anyone could push audio to the camera speaker. nil keeps the old 0.0.0.0.
+func (rf *RTPForwarder) SetupUDPBackchannel(sessionID string, clientPort int, bindIP net.IP) (int, error) {
 	rf.mutex.Lock()
 	defer rf.mutex.Unlock()
 
@@ -193,7 +198,7 @@ func (rf *RTPForwarder) SetupUDPBackchannel(sessionID string, clientPort int) (i
 	}
 
 	// Allocate consecutive ports for RTP/RTCP
-	portPair, err := utils.DefaultPortAllocator.GetConsecutiveUDPPorts(nil, 10)
+	portPair, err := utils.DefaultPortAllocator.GetConsecutiveUDPPorts(bindIP, 10)
 	if err != nil {
 		return 0, fmt.Errorf("failed to allocate UDP ports for backchannel: %v", err)
 	}

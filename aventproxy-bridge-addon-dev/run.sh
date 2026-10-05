@@ -28,6 +28,26 @@ warn_on_extra_configs() {
     fi
 }
 
+# Where the RTSP server listens. It has no authentication, so it stays on
+# loopback unless the user opens it on purpose: Home Assistant shares the host
+# network with the add-on and reaches it at rtsp://localhost:<port>. The add-on
+# option rtsp_bind_address wins over the default; RTSP_BIND_ADDRESS (env) wins
+# over both, for docker-compose setups that have no /data/options.json.
+resolve_rtsp_bind() {
+    if [ -n "${RTSP_BIND_ADDRESS:-}" ]; then
+        echo "$RTSP_BIND_ADDRESS"
+        return 0
+    fi
+    if [ -f "$ADDON_CONFIG" ]; then
+        value=$(jq -r '.rtsp_bind_address // empty' "$ADDON_CONFIG" 2>/dev/null || true)
+        if [ -n "$value" ]; then
+            echo "$value"
+            return 0
+        fi
+    fi
+    echo "localhost"
+}
+
 if [ "${WAIT_FOR_CONFIG:-false}" = "true" ]; then
     echo "Waiting for bridge config from HA integration..."
     while ! find_bridge_config >/dev/null 2>&1 && [ ! -f "$ADDON_CONFIG" ]; do
@@ -53,7 +73,17 @@ fi
 echo "=============================="
 echo "Philips Avent WebRTC Bridge"
 echo "Config: $CONFIG_PATH"
+RTSP_BIND=$(resolve_rtsp_bind)
+echo "RTSP bind: $RTSP_BIND"
 echo "=============================="
+
+case "$RTSP_BIND" in
+    localhost|127.0.0.1|::1|"127.0.0.1,::1") ;;
+    *)
+        echo "WARNING: the RTSP server listens on '$RTSP_BIND' and has no password:"
+        echo "anyone who can reach this port can watch and hear the camera."
+        ;;
+esac
 
 # Supervise the bridge here rather than exiting the container when the config
 # changes. The old version killed this script and relied on the supervisor to
@@ -75,7 +105,7 @@ trap shutdown TERM INT
 while true; do
     CONFIG_HASH=$(md5sum "$CONFIG_PATH" 2>/dev/null | cut -d' ' -f1)
 
-    avent-webrtc-bridge addon --config "$CONFIG_PATH" &
+    avent-webrtc-bridge addon --config "$CONFIG_PATH" --bind "$RTSP_BIND" &
     BRIDGE_PID=$!
     echo "Bridge started (pid $BRIDGE_PID)"
 

@@ -1,0 +1,10 @@
+configuration:
+  rtsp_bind_address:
+    name: RTSP bind address
+    description: >-
+      Where the RTSP server listens. It has no password, so anyone who can reach
+      the port can watch and hear the camera. Keep "localhost" (127.0.0.1 and ::1):
+      Home Assistant runs on the same host and reaches the stream at
+      rtsp://localhost:38554. Use 0.0.0.0 (every interface), one address or a
+      comma-separated list only when another machine (VLC, Frigate, a separate
+      go2rtc) must open the stream, and then restrict the port on your network.

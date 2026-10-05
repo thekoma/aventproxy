@@ -1,0 +1,10 @@
+configuration:
+  rtsp_bind_address:
+    name: Adres nasłuchu RTSP
+    description: >-
+      Na jakim interfejsie nasłuchuje serwer RTSP. Serwer nie ma hasła, więc każdy,
+      kto dosięgnie portu, widzi i słyszy obraz z kamery. Zostaw "localhost"
+      (127.0.0.1 i ::1): Home Assistant działa na tym samym hoście i otwiera strumień
+      przez rtsp://localhost:38554. Wpisz 0.0.0.0 (wszystkie interfejsy), jeden adres
+      albo listę po przecinku tylko wtedy, gdy strumień ma otwierać inna maszyna
+      (VLC, Frigate, osobne go2rtc) — i wtedy ogranicz dostęp do portu w sieci.

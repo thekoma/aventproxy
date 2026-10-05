@@ -13,7 +13,9 @@ host_network: true
 apparmor: true
 options:
   cameras: []
+  rtsp_bind_address: "localhost"
 schema:
+  rtsp_bind_address: str?
   signing_key: str?
   sid: str?
   ecode: str?

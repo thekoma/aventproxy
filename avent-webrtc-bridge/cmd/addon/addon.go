@@ -21,17 +21,19 @@ import (
 // BridgeConfig is the JSON shape written by the HA integration
 // in custom_components/philips_avent/__init__.py::_write_bridge_config.
 type BridgeConfig struct {
-	SigningKey  string   `json:"signing_key"`
-	SID         string   `json:"sid"`
-	Ecode       string   `json:"ecode"`
-	Partner     string   `json:"partner"`
-	AppKey      string   `json:"app_key"`
-	DeviceID    string   `json:"device_id"`
-	PackageName string   `json:"package_name"`
-	APIHost     string   `json:"api_host"`
-	Talkback    bool     `json:"talkback"`
-	BridgePort  int      `json:"bridge_port"`
-	Cameras     []Camera `json:"cameras"`
+	SigningKey  string `json:"signing_key"`
+	SID         string `json:"sid"`
+	Ecode       string `json:"ecode"`
+	Partner     string `json:"partner"`
+	AppKey      string `json:"app_key"`
+	DeviceID    string `json:"device_id"`
+	PackageName string `json:"package_name"`
+	APIHost     string `json:"api_host"`
+	Talkback    bool   `json:"talkback"`
+	BridgePort  int    `json:"bridge_port"`
+	// RTSPBind is optional: the --bind flag wins when it is given.
+	RTSPBind string   `json:"rtsp_bind_address"`
+	Cameras  []Camera `json:"cameras"`
 }
 
 // Camera is one entry under "cameras" in the JSON.
@@ -102,6 +104,22 @@ func assignPaths(cams []Camera) []CameraWithPath {
 	return out
 }
 
+// DefaultBind keeps the unauthenticated RTSP server off the LAN. Home Assistant
+// runs on the host network next to the add-on, so loopback is enough for it.
+const DefaultBind = "localhost"
+
+// resolveBind picks the bind address: an explicit --bind flag, then the
+// rtsp_bind_address field of the config JSON, then DefaultBind.
+func resolveBind(flagValue string, flagSet bool, cfg BridgeConfig) string {
+	if flagSet {
+		return flagValue
+	}
+	if b := strings.TrimSpace(cfg.RTSPBind); b != "" {
+		return b
+	}
+	return DefaultBind
+}
+
 func validateConfig(cfg BridgeConfig) error {
 	if cfg.SigningKey == "" {
 		return fmt.Errorf("signing_key is required")
@@ -145,6 +163,9 @@ Example:
 		RunE: runAddon,
 	}
 	cmd.Flags().String("config", "", "Path to the bridge config JSON written by the HA integration")
+	cmd.Flags().String("bind", DefaultBind, "Interfaces the RTSP server listens on: localhost (127.0.0.1 and ::1), "+
+		"an address or comma-separated list, or 0.0.0.0 for every interface. The server has no authentication, "+
+		"so open it to the network only when another machine must reach it")
 	cmd.MarkFlagRequired("config")
 	return cmd
 }
@@ -231,7 +252,11 @@ func runAddon(cmd *cobra.Command, args []string) error {
 		core.Logger.Warn().Msgf("Could not save cameras: %v", err)
 	}
 
+	bindFlag, _ := cmd.Flags().GetString("bind")
+	bind := resolveBind(bindFlag, cmd.Flags().Changed("bind"), cfg)
+
 	server := rtsp.NewRTSPServer(port, storageManager)
+	server.BindAddress = bind
 	server.MobileClient = client
 	server.Talkback = cfg.Talkback
 	if cfg.Talkback {
@@ -240,7 +265,7 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	if err := server.Start(); err != nil {
 		return fmt.Errorf("start RTSP server: %w", err)
 	}
-	core.Logger.Info().Msgf("Serving %d cameras on port %d: %s", len(infos), port, strings.Join(pathLog, " "))
+	core.Logger.Info().Msgf("Serving %d cameras on port %d (bind %s): %s", len(infos), port, bind, strings.Join(pathLog, " "))
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)

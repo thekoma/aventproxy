@@ -415,7 +415,7 @@ func (s *RTSPServer) handleSetup(client *RTSPClient, request *RTSPRequest) {
 			// For backchannel, setup the server listener and get actual server port
 			if client.stream != nil && client.stream.webrtcBridge != nil {
 				port, err := client.stream.webrtcBridge.rtpForwarder.SetupUDPBackchannel(
-					client.session, clientRTPPort)
+					client.session, clientRTPPort, localIP(client.conn))
 				if err != nil {
 					core.Logger.Error().Err(err).Msg("Failed to setup UDP backchannel")
 					sendRTSPResponse(client.conn, 500, "Internal Server Error", nil,

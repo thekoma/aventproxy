@@ -22,6 +22,9 @@ services:
     environment:
       - WAIT_FOR_CONFIG=true
       - BRIDGE_PORT=38554
+      # RTSP has no authentication: loopback only by default. Set 0.0.0.0 only
+      # when Home Assistant is not on this host's network.
+      - RTSP_BIND_ADDRESS=localhost
     depends_on:
       - homeassistant
 

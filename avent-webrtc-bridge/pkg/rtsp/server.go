@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -32,7 +34,7 @@ func reuseAddrControl(network, address string, c syscall.RawConn) error {
 
 type RTSPServer struct {
 	port           int
-	listener       net.Listener
+	listeners      []net.Listener
 	storageManager *storage.StorageManager
 	clients        map[string]*RTSPClient
 	streams        map[string]*CameraStream
@@ -46,6 +48,69 @@ type RTSPServer struct {
 	// Talkback asks the camera for two-way audio on every stream. Off by
 	// default; see WebRTCBridge.Talkback and issue #72.
 	Talkback bool
+
+	// BindAddress limits the interfaces the RTSP server listens on. The server
+	// has no authentication, so anyone who can reach the port can watch the
+	// camera. Accepted values (see bindHosts):
+	//   - "" (default for library callers): all interfaces, the old behavior;
+	//   - "localhost": 127.0.0.1 and ::1 (the add-on default);
+	//   - one address or a comma-separated list, e.g. "127.0.0.1,192.168.1.10";
+	//   - "0.0.0.0" or "::": all interfaces, on purpose.
+	// Set it before Start.
+	BindAddress string
+}
+
+// describeBind is the human-readable form of BindAddress for the log.
+func describeBind(bind string) string {
+	if strings.TrimSpace(bind) == "" {
+		return "all interfaces"
+	}
+	return bind
+}
+
+// localIP returns the local IP of a TCP connection, or nil when it is not one.
+func localIP(conn net.Conn) net.IP {
+	if conn == nil {
+		return nil
+	}
+	if addr, ok := conn.LocalAddr().(*net.TCPAddr); ok {
+		return addr.IP
+	}
+	return nil
+}
+
+// bindHosts turns BindAddress into the list of hosts to listen on. "localhost"
+// expands to both loopback addresses: a client that resolves localhost to ::1
+// first must not hit a closed port when only 127.0.0.1 is bound.
+func bindHosts(bind string) []string {
+	bind = strings.TrimSpace(bind)
+	if bind == "" {
+		return []string{""}
+	}
+	var hosts []string
+	seen := make(map[string]bool)
+	add := func(h string) {
+		if !seen[h] {
+			seen[h] = true
+			hosts = append(hosts, h)
+		}
+	}
+	for _, part := range strings.Split(bind, ",") {
+		part = strings.Trim(strings.TrimSpace(part), "[]")
+		switch {
+		case part == "":
+			continue
+		case strings.EqualFold(part, "localhost"):
+			add("127.0.0.1")
+			add("::1")
+		default:
+			add(part)
+		}
+	}
+	if len(hosts) == 0 {
+		return []string{""}
+	}
+	return hosts
 }
 
 type RTSPClient struct {
@@ -131,19 +196,33 @@ func (s *RTSPServer) Start() error {
 	}
 
 	lc := net.ListenConfig{Control: reuseAddrControl}
-	listener, err := lc.Listen(s.ctx, "tcp", fmt.Sprintf(":%d", s.port))
-	if err != nil {
-		return fmt.Errorf("failed to listen on port %d: %v", s.port, err)
+	var listeners []net.Listener
+	var listenErrs []string
+	for _, host := range bindHosts(s.BindAddress) {
+		addr := net.JoinHostPort(host, strconv.Itoa(s.port))
+		ln, err := lc.Listen(s.ctx, "tcp", addr)
+		if err != nil {
+			// One missing address family (e.g. ::1 on a host with IPv6 off)
+			// must not stop the bridge as long as another address is bound.
+			core.Logger.Warn().Msgf("RTSP: cannot listen on %s: %v", addr, err)
+			listenErrs = append(listenErrs, err.Error())
+			continue
+		}
+		core.Logger.Info().Msgf("RTSP: listening on %s", ln.Addr())
+		listeners = append(listeners, ln)
+	}
+	if len(listeners) == 0 {
+		return fmt.Errorf("failed to listen on port %d (bind %q): %s", s.port, s.BindAddress, strings.Join(listenErrs, "; "))
 	}
 
-	s.listener = listener
+	s.listeners = listeners
 	s.running = true
 
 	if s.MobileClient != nil {
 		s.mqttManager = NewMQTTManager(s.MobileClient)
 	}
 
-	core.Logger.Info().Msgf("RTSP Server started on port %d", s.port)
+	core.Logger.Info().Msgf("RTSP Server started on port %d (bind: %s)", s.port, describeBind(s.BindAddress))
 	core.Logger.Info().Msgf("Available endpoints:")
 
 	// List available camera endpoints
@@ -152,7 +231,9 @@ func (s *RTSPServer) Start() error {
 	}
 
 	// Start accepting connections
-	go s.acceptConnections()
+	for _, ln := range s.listeners {
+		go s.acceptConnections(ln)
+	}
 
 	// Start cleanup routine
 	go s.cleanupRoutine()
@@ -174,9 +255,9 @@ func (s *RTSPServer) Stop() error {
 	s.running = false
 	s.cancel()
 
-	// Close listener
-	if s.listener != nil {
-		s.listener.Close()
+	// Close listeners
+	for _, ln := range s.listeners {
+		ln.Close()
 	}
 
 	// Close all client connections
@@ -234,13 +315,13 @@ type ServerStats struct {
 	TotalStreams int  `json:"totalStreams"`
 }
 
-func (s *RTSPServer) acceptConnections() {
+func (s *RTSPServer) acceptConnections(listener net.Listener) {
 	for s.running {
 		select {
 		case <-s.ctx.Done():
 			return
 		default:
-			conn, err := s.listener.Accept()
+			conn, err := listener.Accept()
 			if err != nil {
 				if s.running {
 					core.Logger.Error().Err(err).Msg("Error accepting connection")

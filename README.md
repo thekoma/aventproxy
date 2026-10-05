@@ -96,6 +96,10 @@ Two-way audio is off by default. Asking the camera for it makes the monitor stop
 
 If you don't run the add-on but host the bridge yourself, in its own container or on another machine, tell the integration where to find it: **Settings → Integrations → Philips Avent → Configure → Bridge host**. It defaults to `localhost`, which is only correct when the bridge shares the network with Home Assistant. A wrong host makes the camera entity flap between `Unavailable` and `Idle`, because Home Assistant marks a camera unavailable while its stream cannot be opened.
 
+#### Who can reach the RTSP stream
+
+The bridge's RTSP server has no password. The add-on therefore listens on loopback only (`localhost`, i.e. 127.0.0.1 and ::1) by default: Home Assistant runs on the host network next to it and opens `rtsp://localhost:38554/<camera>`, so nothing else on your network can watch the nursery. If another machine must open the stream (VLC, Frigate, a separate go2rtc, or Home Assistant itself when the bridge runs elsewhere), set the add-on option **RTSP bind address** (`rtsp_bind_address`) to `0.0.0.0`, to one address, or to a comma-separated list, and restrict port 38554 on your network. Outside the add-on, pass `--bind` to `avent-webrtc-bridge addon` or set `RTSP_BIND_ADDRESS` for `run.sh` (see `docker-compose.yml`).
+
 ### Automations
 
 The integration exposes `binary_sensor.<camera>_sound_detected` and `binary_sensor.<camera>_motion_detected` that turn on for ~30 seconds when the monitor reports an event. They are the trigger points for any automation.
