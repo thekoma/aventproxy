@@ -7,15 +7,17 @@ import time
 from datetime import timedelta
 from typing import Any
 
+import aiohttp
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-from homeassistant.util.dt import now as dt_now, utcnow
+from homeassistant.util.dt import now as dt_now
+from homeassistant.util.dt import utcnow
 
 from . import senseiq
 from .api import PhilipsAventAPI, TuyaAPIError
-from .const import DPS_ALARM_RECORD, DPS_LULLABY_CONTROL, DPS_LULLABY_STATE
+from .const import DPS_ALARM_RECORD, DPS_LULLABY_CONTROL, DPS_LULLABY_STATE, DPS_SENSEIQ_STATUS
 from .events import LULLABY_SETTLE_SECONDS, lullaby_state_settled, poll_should_stay_fast
 from .lan import TuyaLANClient
 from .payload import dps_delta, truncated_dps
@@ -209,15 +211,17 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
             and now - self._sleep_day_refreshed_at < SLEEP_DAY_INTERVAL
         ):
             return
+        # Stamped before the request, so a server that keeps refusing the call
+        # is asked again after SLEEP_DAY_INTERVAL rather than on every poll.
+        self._sleep_day_refreshed_at = now
         date = dt_now().strftime("%Y%m%d")
         try:
             result = await self.api.get_sleep_day(self.camera_id, date)
-        except TuyaAPIError as err:
+        except (TuyaAPIError, aiohttp.ClientError, TimeoutError, ValueError) as err:
             _LOGGER.warning(
                 "SenseIQ sleep-day fetch failed for %s: %s", self.camera_name, err
             )
             return
-        self._sleep_day_refreshed_at = now
         self.sleep_day = senseiq.decode_sleep_day(result, date)
         _LOGGER.debug(
             "SenseIQ sleep-day for %s (%s): %s",
@@ -247,8 +251,11 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
             device = await self.api.get_device(self.camera_id)
             self.device_info = device
             await self._refresh_rssi()
-            await self._refresh_sleep_day()
             api_dps = device.get("dps", {})
+            # Only a SenseIQ monitor has a sleep summary; asking every other
+            # model would cost a cloud call per poll for nothing.
+            if DPS_SENSEIQ_STATUS in api_dps or DPS_SENSEIQ_STATUS in (self.data or {}):
+                await self._refresh_sleep_day()
             changed = dps_delta(self.data, api_dps)
             if changed:
                 _LOGGER.debug("Cloud poll changed DPS for %s: %s", self.camera_name, changed)

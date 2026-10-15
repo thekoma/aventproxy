@@ -1,7 +1,7 @@
 """Sensor entities for Philips Avent Baby Monitor."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -10,8 +10,8 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
-    EntityCategory,
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    EntityCategory,
     UnitOfTemperature,
     UnitOfTime,
 )
@@ -29,6 +29,8 @@ from .const import (
 )
 from .coordinator import PhilipsAventCoordinator
 from .entity import build_device_info
+
+SLEEP_STAGE_OPTIONS = list(senseiq.SLEEP_STAGES)
 
 
 async def async_setup_entry(
@@ -220,7 +222,7 @@ class AventSleepStartSensor(_SenseIQEntity):
         if start is None:
             return None
 
-        return datetime.fromtimestamp(start, tz=timezone.utc)
+        return datetime.fromtimestamp(start, tz=UTC)
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -272,7 +274,7 @@ class AventSleepStageSensor(_SenseIQEntity):
 
     _attr_translation_key = "sleep_stage"
     _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = list(senseiq.SLEEP_STAGES)
+    _attr_options = SLEEP_STAGE_OPTIONS
     _attr_icon = "mdi:power-sleep"
 
     def __init__(self, coordinator: PhilipsAventCoordinator, cam_id: str):
@@ -396,7 +398,7 @@ class AventNightSleepSensor(AventNightDurationSensor):
             return None
 
         def _dt(ep):
-            return datetime.fromtimestamp(ep, tz=timezone.utc) if ep else None
+            return datetime.fromtimestamp(ep, tz=UTC) if ep else None
 
         return {
             "date": day.get("date"),
