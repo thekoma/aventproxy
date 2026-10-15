@@ -107,9 +107,9 @@ func bindHosts(bind string) []string {
 			add(part)
 		}
 	}
-	if len(hosts) == 0 {
-		return []string{""}
-	}
+	// A value with no address in it (",,") is a mistake, not a request for
+	// every interface: returning nil makes Start refuse it instead of failing
+	// open on an unauthenticated stream.
 	return hosts
 }
 
@@ -195,10 +195,15 @@ func (s *RTSPServer) Start() error {
 		return errors.New("server is already running")
 	}
 
+	hosts := bindHosts(s.BindAddress)
+	if len(hosts) == 0 {
+		return fmt.Errorf("no address to listen on in bind %q", s.BindAddress)
+	}
+
 	lc := net.ListenConfig{Control: reuseAddrControl}
 	var listeners []net.Listener
 	var listenErrs []string
-	for _, host := range bindHosts(s.BindAddress) {
+	for _, host := range hosts {
 		addr := net.JoinHostPort(host, strconv.Itoa(s.port))
 		ln, err := lc.Listen(s.ctx, "tcp", addr)
 		if err != nil {
@@ -316,14 +321,16 @@ type ServerStats struct {
 }
 
 func (s *RTSPServer) acceptConnections(listener net.Listener) {
-	for s.running {
+	// running is written under s.mutex by Stop, so it is read through
+	// IsRunning here rather than directly.
+	for s.IsRunning() {
 		select {
 		case <-s.ctx.Done():
 			return
 		default:
 			conn, err := listener.Accept()
 			if err != nil {
-				if s.running {
+				if s.IsRunning() {
 					core.Logger.Error().Err(err).Msg("Error accepting connection")
 				}
 				continue

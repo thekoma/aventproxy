@@ -24,7 +24,8 @@ func TestBindHosts(t *testing.T) {
 		{"[::1]", []string{"::1"}},
 		{"127.0.0.1, 192.168.1.10", []string{"127.0.0.1", "192.168.1.10"}},
 		{"localhost,127.0.0.1", []string{"127.0.0.1", "::1"}},
-		{",,", []string{""}},
+		{",,", nil},
+		{" , ", nil},
 	}
 	for _, c := range cases {
 		if got := bindHosts(c.in); !reflect.DeepEqual(got, c.want) {
@@ -124,6 +125,15 @@ func TestStartFailsWhenNoAddressCanBeBound(t *testing.T) {
 	if err := s.Start(); err == nil {
 		s.Stop()
 		t.Fatal("start succeeded on an address this host does not own")
+	}
+}
+
+func TestStartRefusesABindWithNoAddress(t *testing.T) {
+	// Must not fall back to all interfaces: the stream has no authentication.
+	s, _ := newTestServer(t, ",,")
+	if err := s.Start(); err == nil {
+		s.Stop()
+		t.Fatal("start succeeded with a bind that names no address")
 	}
 }
 
