@@ -46,6 +46,10 @@ type RTPForwarder struct {
 	// sequence numbers of everything after them.
 	videoSeqOffset uint16
 
+	// The camera's Wi-Fi link swaps adjacent packets; restore order before
+	// frames are stamped and forwarded.
+	videoOrder *rtpReorderBuffer
+
 	// backchannelSink takes talkback audio from the clients; see
 	// SetBackchannelSink.
 	backchannelSink func(*rtp.Packet)
@@ -100,6 +104,7 @@ func NewRTPForwarder() *RTPForwarder {
 		clients:          make(map[string]*RTPClient),
 		firstVideoPacket: true,
 		firstAudioPacket: true,
+		videoOrder:       newRTPReorderBuffer(),
 	}
 }
 
@@ -433,15 +438,23 @@ func (rf *RTPForwarder) cacheNAL(packet *rtp.Packet, nalType byte) {
 	}
 }
 
-// ForwardVideoPacket restamps an H.264 RTP packet from the camera (one
-// timestamp per frame, sequence numbers shifted past injected packets),
-// injects the cached SPS/PPS ahead of each IDR, and sends it to every client.
+// ForwardVideoPacket restores sequence order, then restamps each H.264 RTP
+// packet (one timestamp per frame, sequence numbers shifted past injected
+// packets), injects the cached SPS/PPS ahead of each IDR, and sends it to
+// every client.
 func (rf *RTPForwarder) ForwardVideoPacket(packet *rtp.Packet) {
 	// Write lock: this mutates forwarder state, and forwardVideoData may
 	// remove dead clients from the map.
 	rf.mutex.Lock()
 	defer rf.mutex.Unlock()
 
+	for _, ready := range rf.videoOrder.Push(packet, time.Now()) {
+		rf.forwardOrderedVideo(ready)
+	}
+}
+
+// forwardOrderedVideo stamps and forwards one in-order packet; the caller holds mutex.
+func (rf *RTPForwarder) forwardOrderedVideo(packet *rtp.Packet) {
 	// The clock and the parameter-set cache run whether or not anyone
 	// watches: the first viewer still needs the SPS and PPS that came before.
 	packet.Timestamp = rf.videoTs.timestamp(packet.Marker, 90000)
@@ -550,6 +563,7 @@ func (rf *RTPForwarder) resetSourceLocked() {
 	rf.firstAudioPacket = true
 	rf.spsPacket, rf.ppsPacket = nil, nil
 	rf.videoSeqOffset = 0
+	rf.videoOrder.Reset()
 }
 
 // SetBackchannelSink sets where talkback audio from the clients goes: the

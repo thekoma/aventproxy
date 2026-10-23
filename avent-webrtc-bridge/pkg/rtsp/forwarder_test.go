@@ -285,8 +285,10 @@ func TestRefusedUDPClientIsDropped(t *testing.T) {
 			control, peer := controlConn(t, loopback)
 			rf := NewRTPForwarder()
 			video, audio := refusedUDPPort(t), 0
+			var seq uint16 // a repeated sequence number would be dropped as a duplicate
 			send := func() {
-				rf.ForwardVideoPacket(&rtp.Packet{Header: rtp.Header{Marker: true}, Payload: []byte{0x41, 0x9a}})
+				seq++
+				rf.ForwardVideoPacket(&rtp.Packet{Header: rtp.Header{SequenceNumber: seq, Marker: true}, Payload: []byte{0x41, 0x9a}})
 			}
 			if track == "audio" {
 				video, audio = 0, refusedUDPPort(t)
