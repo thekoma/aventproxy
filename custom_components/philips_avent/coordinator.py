@@ -15,13 +15,14 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util.dt import now as dt_now
 from homeassistant.util.dt import utcnow
 
-from . import senseiq
+from . import audio, senseiq
 from .api import PhilipsAventAPI, TuyaAPIError
 from .const import (
     DPS_ALARM_RECORD,
     DPS_LULLABY_CONTROL,
     DPS_LULLABY_STATE,
     DPS_SENSEIQ_STATUS,
+    LULLABY_BIZ_CODE,
     mirror_dps_to_cloud,
 )
 from .events import LULLABY_SETTLE_SECONDS, lullaby_state_settled, poll_should_stay_fast
@@ -42,6 +43,11 @@ RSSI_INTERVAL = timedelta(minutes=5)
 # The SenseIQ daily sleep summary is a cloud aggregate that changes slowly, so it
 # is fetched on its own schedule rather than on every DPS poll.
 SLEEP_DAY_INTERVAL = timedelta(minutes=15)
+
+# The lullaby catalogue only changes when a recording is added or deleted. This
+# integration refreshes it straight after its own uploads; the interval is for
+# recordings made in the phone app.
+CATALOGUE_INTERVAL = timedelta(minutes=30)
 
 
 class PhilipsAventCoordinator(DataUpdateCoordinator):
@@ -81,6 +87,11 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         # SenseIQ nightly sleep summary (cloud aggregate), decoded in senseiq.py.
         self.sleep_day: dict | None = None
         self._sleep_day_refreshed_at = None
+        # This camera's lullabies with their ids, from the cloud; see audio.py.
+        # None until the first fetch succeeds, and the select falls back to
+        # the built-in id blocks meanwhile.
+        self.catalogue: list[audio.Track] | None = None
+        self._catalogue_refreshed_at = None
 
     async def start_lan(self) -> None:
         if not self._local_key:
@@ -276,6 +287,31 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
             self.camera_name, date, self.sleep_day,
         )
 
+    async def refresh_catalogue(self, force: bool = False) -> None:
+        """Fetch the lullaby catalogue, at most once per CATALOGUE_INTERVAL.
+
+        A failure keeps the last list, so the select never loses its options to
+        one refused call.
+        """
+        now = utcnow()
+        if (
+            not force
+            and self._catalogue_refreshed_at
+            and now - self._catalogue_refreshed_at < CATALOGUE_INTERVAL
+        ):
+            return
+        self._catalogue_refreshed_at = now
+        try:
+            result = await self.api.get_audio_catalogue(self.camera_id, LULLABY_BIZ_CODE)
+        except (TuyaAPIError, aiohttp.ClientError, TimeoutError) as err:
+            _LOGGER.debug("Lullaby catalogue fetch failed for %s: %s", self.camera_name, err)
+            return
+        tracks = audio.parse_catalogue(result)
+        if tracks:
+            self.catalogue = tracks
+        if force:
+            self.async_update_listeners()
+
     @property
     def alerts_need_the_cloud(self) -> bool:
         """Whether alerts on this monitor are only visible on the cloud poll.
@@ -299,6 +335,7 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
             device = await self.api.get_device(self.camera_id)
             self.device_info = device
             await self._refresh_rssi()
+            await self.refresh_catalogue()
             api_dps = device.get("dps", {})
             # Only a SenseIQ monitor has a sleep summary; asking every other
             # model would cost a cloud call per poll for nothing.

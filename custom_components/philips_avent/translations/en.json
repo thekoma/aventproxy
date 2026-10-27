@@ -204,5 +204,43 @@
         "name": "Camera"
       }
     }
+  },
+  "services": {
+    "upload_lullaby": {
+      "name": "Upload lullaby",
+      "description": "Stores an audio file as one of the camera's two custom lullabies, the slots the Philips app fills by recording. It then appears in the lullaby select.",
+      "fields": {
+        "device_id": {
+          "name": "Camera",
+          "description": "The baby monitor to upload to."
+        },
+        "file": {
+          "name": "File",
+          "description": "Absolute path of an audio file Home Assistant may read, such as one under /media. Any format ffmpeg reads."
+        },
+        "name": {
+          "name": "Name",
+          "description": "Name shown in the lullaby select. Defaults to the file name."
+        },
+        "max_duration": {
+          "name": "Maximum duration",
+          "description": "Longer audio is cut at this point. The app records at most 90 seconds; longer recordings are untested."
+        }
+      }
+    },
+    "delete_lullaby": {
+      "name": "Delete lullaby",
+      "description": "Deletes one of the camera's custom lullabies to free its slot. Presets cannot be deleted.",
+      "fields": {
+        "device_id": {
+          "name": "Camera",
+          "description": "The baby monitor holding the recording."
+        },
+        "recording": {
+          "name": "Recording",
+          "description": "Name of the recording as the lullaby select shows it, or its id."
+        }
+      }
+    }
   }
 }

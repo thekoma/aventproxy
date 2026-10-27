@@ -1,0 +1,37 @@
+upload_lullaby:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: philips_avent
+    file:
+      required: true
+      example: /media/lullabies/song.mp3
+      selector:
+        text:
+    name:
+      example: Mum singing
+      selector:
+        text:
+    max_duration:
+      default: 90
+      selector:
+        number:
+          min: 1
+          max: 600
+          unit_of_measurement: s
+          mode: box
+
+delete_lullaby:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: philips_avent
+    recording:
+      required: true
+      example: Mum singing
+      selector:
+        text:

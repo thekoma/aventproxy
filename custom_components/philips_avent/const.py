@@ -57,6 +57,14 @@ DPS_LULLABY_MODE = "203"
 DPS_LULLABY_STATE = "246"
 DPS_LULLABY_TIMER_SWITCH = "243"
 DPS_LULLABY_TIMER = "244"
+DPS_LULLABY_PLAY = "202"
+DPS_LULLABY_CURRENT = "248"
+# Writing "upgrade" tells the camera its recordings changed in the cloud, which
+# is what the panel does after an upload or a delete. It carries no audio.
+DPS_VOICE_UPGRADE = "249"
+VOICE_UPGRADE_SIGNAL = "upgrade"
+# Content namespace of the catalogue and of custom recordings, on every model.
+LULLABY_BIZ_CODE = "phi-no-bm"
 DPS_PRIVACY_MODE = "237"
 DPS_POWER_STATUS = "205"
 DPS_FLIP = "102"

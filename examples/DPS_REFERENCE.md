@@ -46,15 +46,58 @@ client.set_dps("YOUR_DEVICE_ID", {"201": "play"})   # play lullaby
 | ID | Code | Name | Type | Mode | Values/Range |
 |----|------|------|------|------|-------------|
 | 201 | `play_control` | Playback control | enum | rw | `play`, `pause`, `stop`, `next`, `prev` |
-| 202 | `play` | Play specific track | string | rw | track identifier |
+| 202 | `play` | Play specific track | string | rw | JSON: `{"bizcode":"phi-no-bm","id":<id>}`, id from the catalogue below |
 | 203 | `play_mode` | Loop mode | enum | rw | `loop`, `loop1`, `shuffle` |
 | 209 | `play_volume` | Volume | value | rw | 1–100 (step 1) |
 | 243 | `lullaby_timer_switch` | Timer enabled | bool | rw | true/false |
 | 244 | `lullaby_timer` | Auto-stop timer (seconds) | value | rw | 0–5400 |
 | 245 | `lullaby_display` | Timer remaining (seconds) | value | ro | -1–86400 |
 | 246 | `play_state` | Current state | enum | rw | `playing`, `stopping` |
-| 248 | `play_current` | Currently playing | string | rw | JSON: `{"bizcode":"phi-no-bm","id":3542155,"errcode":0}` |
-| 249 | `voice_upgrade` | Custom recording update | string | rw | — |
+| 248 | `play_current` | Currently playing | string | rw | JSON: `{"bizcode":"phi-no-bm","id":3542155,"errcode":0}`; the cloud poll escapes its quotes (`{\"bizcode\":…}`), as it does for 202 |
+| 249 | `voice_upgrade` | Recordings changed | string | rw | `upgrade`: refetch custom recordings from the cloud |
+
+#### Catalogue and custom recordings
+
+Track ids differ per unit, so the panel reads them from the cloud rather than
+from a table. The presets and custom recordings are entries under the content
+code `phi-no-bm`:
+
+```python
+client.call_result("tuya.m.audio.by.code.get", "1.0", {"devId": cam_id, "code": "phi-no-bm"})
+# {"limitNum": 17, "audioInfoVOList": [
+#    {"id": 19204255, "name": "Baa Baa Black Sheep", "isPreset": true, "fileFormat": "wav", ...}, ...]}
+```
+
+`limitNum` counts the 15 presets too, which leaves two custom recordings. Known
+preset blocks: 3542154-3542168 (SCD973), 12072916-12072930 (firmware 1.1.12),
+19204255 down to 19204241 (product `selj2idknqhjnids`, numbered backwards).
+
+The app's "record your own lullaby" is a cloud upload, not a stream to the
+camera. From the panel (RN bundle `000000kt5n` 1.3.0) and the app's
+`com.thingclips.smart.camera.audiomanager` package:
+
+1. Record a 16 kHz, 16-bit, mono WAV with a 44-byte header, at most 90 seconds.
+2. `thing.m.audio.upload.url.get` `{devId, code}` returns a signed storage
+   `url`, extra `headers`, a `bucket`, a storage path in `key`, and `localKey`,
+   a 16-character AES key for this file.
+3. Encrypt the WAV (container below) and `PUT` it to `url` with the headers and
+   `Content-Type: audio/x-wav`.
+4. `thing.m.audio.by.code.info.upload` `{devId, code, name, duration, size, key,
+   bucket, path}` registers it: `duration` in ms and `size` in bytes of the
+   plain WAV, `key` the `localKey`, `path` the storage `key`. It returns the new
+   id.
+5. Write `"upgrade"` to DPS 249. The camera fetches its recordings again.
+
+`tuya.m.audio.by.code.id.delete` `{devId, code, id}` and
+`tuya.m.audio.by.code.id.update` `{devId, code, id, name}` delete and rename;
+the panel writes `"upgrade"` after a delete too.
+
+The encrypted container, all integers little-endian: a 56-byte header of
+version `1`, five zero words, the word `110`, three zero words and a 16-byte
+ASCII IV. Then each 1280-byte chunk of the WAV is encrypted on its own with
+AES-CBC/PKCS#5 under `localKey` and the same IV (1296 bytes out), and written
+after a 24-byte frame header: type `5`, ciphertext length, 16 zero bytes.
+`custom_components/philips_avent/audio.py` implements it.
 
 ### Temperature Sensor
 

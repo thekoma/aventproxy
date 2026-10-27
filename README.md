@@ -17,7 +17,8 @@ Home Assistant integration for Philips Avent SCD973/SCD923 baby monitors, provid
 | 📹 Live Video | Camera | 1080p H.264 stream via WebRTC→RTSP bridge |
 | 🌡️ Temperature | Sensor | Room temperature from built-in sensor |
 | 💡 Night Light | Switch + Number | On/off + brightness 1-100% |
-| 🎵 Lullabies | Buttons + Number | Play/pause/stop/next/prev + volume |
+| 🎵 Lullabies | Buttons + Number + Select | Play/pause/stop/next/prev + volume + track |
+| 🎤 Custom Lullabies | Actions | Upload your own audio file into the camera's two custom lullaby slots |
 | 🏃 Motion Alert | Switch | Motion detection on/off |
 | 🔊 Sound Alert | Switch | Sound detection on/off |
 | 🏃 Motion Detected | Binary Sensor | Fires when motion is detected (auto-clears after 30s) |
@@ -135,6 +136,22 @@ automation:
             camera_view: live
 ```
 
+### Custom lullabies
+
+The Philips app lets you record two lullabies of your own. `philips_avent.upload_lullaby` fills one of those slots from an audio file instead, in any format ffmpeg reads. The recording then appears in the lullaby select next to the presets, and plays, loops and stops on the timer like them.
+
+```yaml
+action: philips_avent.upload_lullaby
+data:
+  device_id: <your monitor>        # pick it in the UI
+  file: /media/lullabies/song.mp3  # must be readable by Home Assistant: /media works by default
+  name: Mum singing                # optional, defaults to the file name
+```
+
+- The file is converted to what the app records: 16 kHz mono WAV, cut at 90 seconds. Pass `max_duration` for longer audio; the app never records more than 90 seconds, so longer recordings are untested.
+- A camera holds two custom recordings. Free a slot with `philips_avent.delete_lullaby`, giving the recording's name as the select shows it, or its id.
+- Both actions return the recording's id and name, for use in a script.
+
 ## How It Works
 
 The integration uses the same Tuya Mobile SDK API as the official Philips Avent Baby Monitor+ app. Authentication uses the same password + MFA flow — your traffic is indistinguishable from the real app.
@@ -172,6 +189,8 @@ The integration uses the same Tuya Mobile SDK API as the official Philips Avent 
 | 138 | `bulb_switch` | Night light | on/off |
 | 158 | `floodlight_lightness` | Brightness | 1–100 |
 | 201 | `play_control` | Lullaby | play/pause/stop/next/prev |
+| 202 | `play` | Lullaby track | `{"bizcode":"phi-no-bm","id":<id>}` |
+| 249 | `voice_upgrade` | Recordings changed | `upgrade` |
 | 207 | `sensor_temperature` | Temperature | °C × 100 |
 | 209 | `play_volume` | Volume | 1–100 |
 | 134 | `motion_switch` | Motion alert | on/off |

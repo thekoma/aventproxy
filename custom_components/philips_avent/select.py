@@ -10,16 +10,19 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import audio
 from .const import (
     DOMAIN,
     DPS_LIGHT_TIMER,
     DPS_LIGHT_TIMER_SWITCH,
     DPS_LULLABY_CONTROL,
+    DPS_LULLABY_CURRENT,
     DPS_LULLABY_MODE,
+    DPS_LULLABY_PLAY,
     DPS_LULLABY_TIMER,
     DPS_LULLABY_TIMER_SWITCH,
+    LULLABY_BIZ_CODE,
     LULLABY_TRACK_MAP,
-    LULLABY_TRACKS,
     TIMER_OPTIONS,
     TIMER_SECONDS_TO_LABEL,
     lullaby_track_id,
@@ -55,10 +58,16 @@ async def async_setup_entry(
 
 
 class AventLullabySelect(CoordinatorEntity, SelectEntity):
+    """Lullaby picker: the 15 presets, then the camera's custom recordings.
+
+    Ids come from the camera's own catalogue when the cloud has handed it over,
+    so presets play on any id block and recordings are selectable. Until then
+    the built-in blocks are guessed from DPS 248, as before.
+    """
+
     _attr_has_entity_name = True
     _attr_translation_key = "lullaby_track"
     _attr_icon = "mdi:music-note"
-    _attr_options = LULLABY_TRACKS
 
     def __init__(self, coordinator: PhilipsAventCoordinator, cam_id: str):
         super().__init__(coordinator)
@@ -68,30 +77,33 @@ class AventLullabySelect(CoordinatorEntity, SelectEntity):
 
     def _current_track_id(self) -> int | None:
         """The track id the camera last reported in DPS 248, if any."""
-        dps = self.coordinator.data
-        if not dps or "248" not in dps:
-            return None
-        try:
-            track_id = json.loads(dps["248"]).get("id")
-        except (json.JSONDecodeError, TypeError, AttributeError):
-            return None
-        return track_id if isinstance(track_id, int) else None
+        return audio.track_id_in((self.coordinator.data or {}).get(DPS_LULLABY_CURRENT))
+
+    @property
+    def options(self) -> list[str]:
+        return audio.track_options(self.coordinator.catalogue)
 
     @property
     def current_option(self) -> str | None:
-        track = LULLABY_TRACK_MAP.get(self._current_track_id())
+        track_id = self._current_track_id()
+        label = audio.track_labels(self.coordinator.catalogue or []).get(track_id)
+        if label:
+            return label
+        track = LULLABY_TRACK_MAP.get(track_id)
         return track[0] if track else None
 
     async def async_select_option(self, option: str) -> None:
-        track_id = lullaby_track_id(option, self._current_track_id())
+        track_id = audio.track_id_for(option, self.coordinator.catalogue)
+        if track_id is None:
+            track_id = lullaby_track_id(option, self._current_track_id())
         if track_id is None:
             return
         await self.coordinator.set_dps({
-            "202": json.dumps({"bizcode": "phi-no-bm", "id": track_id}),
+            DPS_LULLABY_PLAY: json.dumps({"bizcode": LULLABY_BIZ_CODE, "id": track_id}),
             DPS_LULLABY_CONTROL: "play",
         })
-        self.coordinator.data["248"] = json.dumps(
-            {"bizcode": "phi-no-bm", "id": track_id, "errcode": 0}
+        self.coordinator.data[DPS_LULLABY_CURRENT] = json.dumps(
+            {"bizcode": LULLABY_BIZ_CODE, "id": track_id, "errcode": 0}
         )
         self.async_write_ha_state()
 
