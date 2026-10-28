@@ -18,7 +18,7 @@ Home Assistant integration for Philips Avent SCD973/SCD923 baby monitors, provid
 | 🌡️ Temperature | Sensor | Room temperature from built-in sensor |
 | 💡 Night Light | Switch + Number | On/off + brightness 1-100% |
 | 🎵 Lullabies | Buttons + Number + Select | Play/pause/stop/next/prev + volume + track |
-| 🎤 Custom Lullabies | Actions | Upload your own audio file into the camera's two custom lullaby slots |
+| 🎤 Custom Lullabies | Actions + Select | Upload your own audio file into the camera's two custom lullaby slots, and play it |
 | 🏃 Motion Alert | Switch | Motion detection on/off |
 | 🔊 Sound Alert | Switch | Sound detection on/off |
 | 🏃 Motion Detected | Binary Sensor | Fires when motion is detected (auto-clears after 30s) |
@@ -138,7 +138,7 @@ automation:
 
 ### Custom lullabies
 
-The Philips app lets you record two lullabies of your own. `philips_avent.upload_lullaby` fills one of those slots from an audio file instead, in any format ffmpeg reads. The recording then appears in the lullaby select next to the presets, and plays, loops and stops on the timer like them.
+The Philips app lets you record two lullabies of your own. `philips_avent.upload_lullaby` fills one of those slots from an audio file instead, in any format ffmpeg reads. Play it from the **Lullaby Recording** select, which lists the camera's recordings the way the app's recording tab does; pause and stop work through the lullaby buttons. The select is unavailable while the camera holds no recordings.
 
 ```yaml
 action: philips_avent.upload_lullaby
@@ -149,7 +149,7 @@ data:
 ```
 
 - The file is converted to what the app records: 16 kHz mono WAV, cut at 90 seconds. Pass `max_duration` for longer audio; the app never records more than 90 seconds, so longer recordings are untested.
-- A camera holds two custom recordings. Free a slot with `philips_avent.delete_lullaby`, giving the recording's name as the select shows it, or its id.
+- A camera holds two custom recordings. Free a slot with `philips_avent.delete_lullaby`, giving the recording's name as the Lullaby Recording select shows it, or its id.
 - Both actions return the recording's id and name, for use in a script.
 
 ## How It Works

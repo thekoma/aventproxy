@@ -103,9 +103,16 @@ def track_labels(catalogue: list[Track]) -> dict[int, str]:
     return labels
 
 
-def track_options(catalogue: list[Track] | None) -> list[str]:
-    options = list(LULLABY_TRACKS)
-    options.extend(label for label in track_labels(catalogue or []).values() if label not in options)
+def track_options(catalogue: list[Track] | None, *, preset: bool = True) -> list[str]:
+    """The options of one select: the presets, or the recordings.
+
+    The app lists the two apart, a lullaby tab and a recording tab, though it
+    plays both with the same command.
+    """
+    tracks = catalogue or []
+    labels = track_labels(tracks)
+    options = list(LULLABY_TRACKS) if preset else []
+    options.extend(labels[t.id] for t in tracks if t.preset == preset and labels[t.id] not in options)
     return options
 
 

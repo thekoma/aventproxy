@@ -168,12 +168,17 @@ class TestTrackLabels:
         assert labels[19204254] == "Brahms' Lullaby"
         assert labels[19204241] == "Rain Shower"
 
-    def test_options_are_the_presets_then_the_recordings(self):
-        options = track_options(parse_catalogue(catalogue((5, "Mum singing"))))
-        assert options == [*LULLABY_TRACKS, "Mum singing"]
+    def test_lullaby_options_are_the_presets_alone(self):
+        assert track_options(parse_catalogue(catalogue((5, "Mum singing")))) == LULLABY_TRACKS
 
-    def test_options_without_a_catalogue_are_the_presets(self):
+    def test_recording_options_are_the_recordings_alone(self):
+        tracks = parse_catalogue(catalogue((5, "Mum singing"), (6, "White Noise")))
+        assert track_options(tracks, preset=False) == ["Mum singing", "White Noise (6)"]
+        assert track_options(parse_catalogue(catalogue()), preset=False) == []
+
+    def test_options_without_a_catalogue(self):
         assert track_options(None) == LULLABY_TRACKS
+        assert track_options(None, preset=False) == []
 
     def test_a_recording_named_like_a_preset_gets_its_id(self):
         labels = track_labels(parse_catalogue(catalogue((5, "White Noise"))))

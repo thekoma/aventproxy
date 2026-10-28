@@ -2,7 +2,7 @@
 
 The phone app records up to two lullabies of the parents' own. upload_lullaby
 fills one of those slots from an audio file instead; see audio.py for the
-protocol. The recording then shows up in the lullaby select like any preset.
+protocol. The recording then shows up in the lullaby recording select.
 """
 from __future__ import annotations
 

@@ -172,6 +172,9 @@
       "lullaby_track": {
         "name": "Lullaby Track"
       },
+      "lullaby_recording": {
+        "name": "Lullaby Recording"
+      },
       "play_mode": {
         "name": "Play Mode"
       },

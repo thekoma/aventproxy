@@ -43,6 +43,7 @@ async def async_setup_entry(
     entities = []
     for cam_id, coordinator in data["coordinators"].items():
         entities.append(AventLullabySelect(coordinator, cam_id))
+        entities.append(AventRecordingSelect(coordinator, cam_id))
         entities.append(AventPlayModeSelect(coordinator, cam_id))
         entities.append(AventTimerSelect(
             coordinator, cam_id,
@@ -58,21 +59,22 @@ async def async_setup_entry(
 
 
 class AventLullabySelect(CoordinatorEntity, SelectEntity):
-    """Lullaby picker: the 15 presets, then the camera's custom recordings.
+    """Lullaby picker: the 15 presets.
 
     Ids come from the camera's own catalogue when the cloud has handed it over,
-    so presets play on any id block and recordings are selectable. Until then
-    the built-in blocks are guessed from DPS 248, as before.
+    so presets play on any id block. Until then the built-in blocks are guessed
+    from DPS 248, as before.
     """
 
     _attr_has_entity_name = True
     _attr_translation_key = "lullaby_track"
     _attr_icon = "mdi:music-note"
+    _preset = True
 
     def __init__(self, coordinator: PhilipsAventCoordinator, cam_id: str):
         super().__init__(coordinator)
         self._cam_id = cam_id
-        self._attr_unique_id = f"{cam_id}_lullaby_track"
+        self._attr_unique_id = f"{cam_id}_{self._attr_translation_key}"
         self._attr_device_info = build_device_info(coordinator, cam_id)
 
     def _current_track_id(self) -> int | None:
@@ -81,15 +83,15 @@ class AventLullabySelect(CoordinatorEntity, SelectEntity):
 
     @property
     def options(self) -> list[str]:
-        return audio.track_options(self.coordinator.catalogue)
+        return audio.track_options(self.coordinator.catalogue, preset=self._preset)
 
     @property
     def current_option(self) -> str | None:
         track_id = self._current_track_id()
         label = audio.track_labels(self.coordinator.catalogue or []).get(track_id)
         if label:
-            return label
-        track = LULLABY_TRACK_MAP.get(track_id)
+            return label if label in self.options else None
+        track = LULLABY_TRACK_MAP.get(track_id) if self._preset else None
         return track[0] if track else None
 
     async def async_select_option(self, option: str) -> None:
@@ -105,7 +107,23 @@ class AventLullabySelect(CoordinatorEntity, SelectEntity):
         self.coordinator.data[DPS_LULLABY_CURRENT] = json.dumps(
             {"bizcode": LULLABY_BIZ_CODE, "id": track_id, "errcode": 0}
         )
-        self.async_write_ha_state()
+        self.coordinator.async_update_listeners()
+
+
+class AventRecordingSelect(AventLullabySelect):
+    """The camera's own recordings, which the app lists apart from the presets.
+
+    The app plays a recording with the same DPS 202 command as a preset and
+    stops it through DPS 201 like one. Unavailable while the camera holds none.
+    """
+
+    _attr_translation_key = "lullaby_recording"
+    _attr_icon = "mdi:account-voice"
+    _preset = False
+
+    @property
+    def available(self) -> bool:
+        return super().available and bool(self.options)
 
 
 class AventPlayModeSelect(CoordinatorEntity, SelectEntity):
