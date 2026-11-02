@@ -47,7 +47,7 @@ type LANSource struct {
 	target                    LANTarget
 	forwarder                 *RTPForwarder
 	newClient                 func(lan.ClientConfig) lanClient // test seam
-	firstFrame                chan struct{}                    // closed once a video packet reached the forwarder
+	firstFrame                chan struct{}                    // closed once an SPS or IDR reached the forwarder
 
 	// mu also covers forwarding, so once Stop returns nothing more is forwarded.
 	mu       sync.Mutex
@@ -88,7 +88,7 @@ func (s *LANSource) SetOnError(fn func(error)) {
 	s.mu.Unlock()
 }
 
-// Start connects and returns once the first video frame reached the
+// Start connects and returns once an H.264 SPS or IDR reached the
 // forwarder. ctx bounds only that wait: when it ends first, Start fails with
 // errNoFirstFrame. The stream itself lives until Stop.
 func (s *LANSource) Start(ctx context.Context) error {
@@ -223,10 +223,11 @@ func (s *LANSource) onVideo(frame *lan.VideoFrame) {
 			},
 			Payload: payload,
 		})
-	}
-	if !s.gotFrame {
-		s.gotFrame = true
-		close(s.firstFrame)
+		// A stream that flows but cannot decode (HEVC, Annex-B) must not count.
+		if !s.gotFrame && carriesSPSOrIDR(payload) {
+			s.gotFrame = true
+			close(s.firstFrame)
+		}
 	}
 }
 

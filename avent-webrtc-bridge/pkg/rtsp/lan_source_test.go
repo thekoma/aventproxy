@@ -200,6 +200,41 @@ func TestLANSourceFailsWithoutFirstFrame(t *testing.T) {
 	}
 }
 
+// Only what lets a decoder start counts: a black stream must not pass.
+func TestLANSourceFirstFrameNeedsSPSOrIDR(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		nal  []byte
+		ok   bool
+	}{
+		{"H.264 SPS", []byte{0x67, 0x42, 0x00, 0x1f}, true},
+		{"FU-A start of an IDR", []byte{0x7c, 0x85, 0x88, 0x84}, true},
+		{"STAP-A with SPS and PPS", []byte{0x78, 0x00, 0x02, 0x67, 0x42, 0x00, 0x02, 0x68, 0xce}, true},
+		{"HEVC IDR_W_RADL", []byte{0x26, 0x01, 0xaf, 0x00}, false},
+		{"Annex-B IDR", []byte{0x00, 0x00, 0x00, 0x01, 0x65, 0x88}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			frame := &lan.VideoFrame{Width: 1280, Height: 720, FPS: 20, NAL: tc.nal}
+			fake := &fakeLANClient{start: func(f *fakeLANClient) error {
+				go f.cfg.OnVideo(frame)
+				return nil
+			}}
+			src, _ := newTestLANSource(t, fake)
+			defer src.Stop()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			defer cancel()
+			err := src.Start(ctx)
+			if tc.ok && err != nil {
+				t.Fatalf("Start: %v, want success", err)
+			}
+			if !tc.ok && !errors.Is(err, errNoFirstFrame) {
+				t.Fatalf("Start: %v, want errNoFirstFrame", err)
+			}
+		})
+	}
+}
+
 func TestLANSourceForwardsG711(t *testing.T) {
 	_, fake, pkts := startedLANSource(t)
 

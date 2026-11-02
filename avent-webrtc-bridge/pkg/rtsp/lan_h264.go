@@ -109,3 +109,32 @@ func splitNAL(payload []byte, p *codecs.H264Payloader) [][]byte {
 	}
 	return [][]byte{payload}
 }
+
+// carriesSPSOrIDR reports whether a payload holds an SPS or the start of an
+// IDR, what an H.264 decoder needs before it shows anything. An HEVC header
+// byte has even low bits and an Annex-B start code reads as type 0, so
+// neither can pass for one.
+func carriesSPSOrIDR(payload []byte) bool {
+	if len(payload) < 2 {
+		return false
+	}
+	switch payload[0] & 0x1f {
+	case 5, 7:
+		return true
+	case 28: // FU-A: only the start fragment names the NAL inside
+		return payload[1]&0x80 != 0 && payload[1]&0x1f == 5
+	case 24: // STAP-A: NALs, each after a 2-byte length
+		for rest := payload[1:]; len(rest) > 2; {
+			n := int(rest[0])<<8 | int(rest[1])
+			rest = rest[2:]
+			if n == 0 || n > len(rest) {
+				return false
+			}
+			if t := rest[0] & 0x1f; t == 5 || t == 7 {
+				return true
+			}
+			rest = rest[n:]
+		}
+	}
+	return false
+}
