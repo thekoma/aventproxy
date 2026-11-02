@@ -152,6 +152,8 @@ DEFAULT_BRIDGE_HOST = "localhost"
 # (issue #72), so listening must not imply talking.
 CONF_TALKBACK = "talkback"
 DEFAULT_TALKBACK = False
+CONF_LAN_STREAMING = "lan_streaming"
+DEFAULT_LAN_STREAMING = True
 
 
 def lullaby_track_id(name: str, current_id: int | None) -> int | None:

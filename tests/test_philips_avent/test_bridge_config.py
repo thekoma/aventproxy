@@ -34,6 +34,9 @@ class TestBuildCamerasPayloadShape:
             "camera_id": "abc123",
             "camera_name": "Baby",
             "product_id": "selj2idknqhjnids",
+            "local_key": "",
+            "p2p_password": "",
+            "lan_ip": "",
         }
 
     def test_product_id_empty_for_scd973(self):
@@ -121,14 +124,41 @@ class TestBuildBridgeConfig:
         config = build_bridge_config(**self.BASE)
         assert set(config) == {
             "signing_key", "sid", "ecode", "partner", "app_key", "device_id",
-            "package_name", "api_host", "talkback", "bridge_port", "cameras",
+            "package_name", "api_host", "talkback", "uid", "lan_streaming", "bridge_port",
+            "cameras",
         }
 
     def test_cameras_use_the_shared_payload_builder(self):
         config = build_bridge_config(**self.BASE)
         assert config["cameras"] == [
-            {"camera_id": "abc123", "camera_name": "Erik", "product_id": "p1"},
+            {
+                "camera_id": "abc123", "camera_name": "Erik", "product_id": "p1",
+                "local_key": "", "p2p_password": "", "lan_ip": "",
+            },
         ]
+
+    def test_cameras_carry_lan_fields(self):
+        lan = {"abc123": {"local_key": "lk", "p2p_password": "pw", "lan_ip": "192.168.1.9"}}
+        cameras = [*self.BASE["cameras"], {"deviceId": "other", "deviceName": "Two"}]
+        config = build_bridge_config(**{**self.BASE, "cameras": cameras}, uid="u1", lan=lan)
+        assert config["uid"] == "u1"
+        assert config["cameras"][0]["local_key"] == "lk"
+        assert config["cameras"][0]["p2p_password"] == "pw"
+        assert config["cameras"][0]["lan_ip"] == "192.168.1.9"
+        assert [config["cameras"][1][k] for k in ("local_key", "p2p_password", "lan_ip")] == ["", "", ""]
+
+    def test_lan_streaming_defaults_on(self):
+        assert build_bridge_config(**self.BASE)["lan_streaming"] is True
+
+    def test_lan_streaming_written_when_off(self):
+        assert build_bridge_config(**self.BASE, lan_streaming=False)["lan_streaming"] is False
+
+    def test_unchanged_inputs_give_identical_json(self):
+        # run.sh restarts the bridge on any md5 change (issue #73).
+        lan = {"abc123": {"local_key": "lk", "p2p_password": "pw", "lan_ip": "192.168.1.9"}}
+        first = json.dumps(build_bridge_config(**self.BASE, uid="u1", lan=lan), indent=2)
+        second = json.dumps(build_bridge_config(**self.BASE, uid="u1", lan=lan), indent=2)
+        assert first == second
 
     def test_config_is_json_serialisable(self):
         assert json.loads(json.dumps(build_bridge_config(**self.BASE))) == build_bridge_config(**self.BASE)
