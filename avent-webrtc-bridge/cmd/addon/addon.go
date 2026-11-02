@@ -30,7 +30,11 @@ type BridgeConfig struct {
 	PackageName string `json:"package_name"`
 	APIHost     string `json:"api_host"`
 	Talkback    bool   `json:"talkback"`
-	BridgePort  int    `json:"bridge_port"`
+	// UID is the Tuya account id, needed for LAN sessions and cloud-free starts.
+	UID string `json:"uid"`
+	// LanStreaming is a pointer so an absent field means enabled.
+	LanStreaming *bool `json:"lan_streaming"`
+	BridgePort   int   `json:"bridge_port"`
 	// RTSPBind is optional: the --bind flag wins when it is given.
 	RTSPBind string   `json:"rtsp_bind_address"`
 	Cameras  []Camera `json:"cameras"`
@@ -41,6 +45,55 @@ type Camera struct {
 	ID        string `json:"camera_id"`
 	Name      string `json:"camera_name"`
 	ProductID string `json:"product_id"`
+	// Secrets for the LAN path; they stay in memory (RTSPServer.LANTargets).
+	LocalKey    string `json:"local_key"`
+	P2PPassword string `json:"p2p_password"`
+	LanIP       string `json:"lan_ip"`
+}
+
+func lanStreamingEnabled(cfg BridgeConfig) bool {
+	return cfg.LanStreaming == nil || *cfg.LanStreaming
+}
+
+// lanTargets keeps the cameras that have both a local key and a P2P password,
+// keyed by camera id.
+func lanTargets(cams []Camera) map[string]rtsp.LANTarget {
+	out := make(map[string]rtsp.LANTarget)
+	for _, c := range cams {
+		if c.LocalKey != "" && c.P2PPassword != "" {
+			out[c.ID] = rtsp.LANTarget{LocalKey: c.LocalKey, Password: c.P2PPassword, IP: c.LanIP}
+		}
+	}
+	return out
+}
+
+// cloudFallbackUser decides what a failed cloud check means: with LAN targets
+// and a stored add-on user the bridge can still serve LAN streams, otherwise
+// the original error stands.
+func cloudFallbackUser(cloudErr error, targets map[string]rtsp.LANTarget, stored []storage.UserSession) (*storage.UserSession, error) {
+	if len(targets) == 0 {
+		return nil, cloudErr
+	}
+	for i := range stored {
+		if stored[i].Region == "addon" {
+			return &stored[i], nil
+		}
+	}
+	return nil, cloudErr
+}
+
+// verifyCloud checks API access and fetches the user.
+func verifyCloud(client *tuya.MobileSDKClient) (*tuya.UserInfoResult, error) {
+	core.Logger.Info().Msg("Verifying API access...")
+	if _, err := client.Call("smartlife.p.time.get", "1.0", nil); err != nil {
+		return nil, fmt.Errorf("API verification failed: %w", err)
+	}
+	core.Logger.Info().Msg("API access OK")
+	userInfo, err := client.GetUserInfo()
+	if err != nil {
+		return nil, fmt.Errorf("get user info: %w", err)
+	}
+	return userInfo, nil
 }
 
 func loadConfig(path string) (BridgeConfig, error) {
@@ -194,39 +247,47 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	client.PackageName = cfg.PackageName
 
 	core.Logger.Info().Msgf("Tuya API host: %s", apiHost)
-	core.Logger.Info().Msg("Verifying API access...")
-	if _, err := client.Call("smartlife.p.time.get", "1.0", nil); err != nil {
-		return fmt.Errorf("API verification failed: %w", err)
+	if cfg.UID != "" {
+		client.UID = cfg.UID
 	}
-	core.Logger.Info().Msg("API access OK")
+	targets := lanTargets(cfg.Cameras)
 
-	userInfo, err := client.GetUserInfo()
+	var userKey string
+	userInfo, err := verifyCloud(client)
 	if err != nil {
-		return fmt.Errorf("get user info: %w", err)
-	}
-	core.Logger.Info().Msgf("User: %s (%s)", userInfo.Nickname, utils.MaskEmail(userInfo.Email))
-	client.UID = userInfo.ID
-
-	userKey := "addon_" + strings.ReplaceAll(strings.ReplaceAll(userInfo.Email, "@", "_at_"), ".", "_")
-	user := &storage.UserSession{
-		Email:  userInfo.Email,
-		Region: "addon",
-		SessionData: &tuya.SessionData{
-			LoginResult: &tuya.LoginResult{
-				Uid:      userInfo.ID,
-				Email:    userInfo.Email,
-				Nickname: userInfo.Nickname,
-				Domain:   userInfo.Domain,
+		stored, _ := storageManager.ListUsers()
+		fallback, ferr := cloudFallbackUser(err, targets, stored)
+		if ferr != nil {
+			return ferr
+		}
+		core.Logger.Warn().Msgf("Cloud unreachable, serving LAN streams until it returns: %v", err)
+		userKey = fallback.UserKey
+	} else {
+		core.Logger.Info().Msgf("User: %s (%s)", userInfo.Nickname, utils.MaskEmail(userInfo.Email))
+		if cfg.UID == "" {
+			client.UID = userInfo.ID
+		}
+		userKey = "addon_" + strings.ReplaceAll(strings.ReplaceAll(userInfo.Email, "@", "_at_"), ".", "_")
+		user := &storage.UserSession{
+			Email:  userInfo.Email,
+			Region: "addon",
+			SessionData: &tuya.SessionData{
+				LoginResult: &tuya.LoginResult{
+					Uid:      userInfo.ID,
+					Email:    userInfo.Email,
+					Nickname: userInfo.Nickname,
+					Domain:   userInfo.Domain,
+				},
+				ServerHost: apiHost,
+				Region:     "addon",
+				UserEmail:  userInfo.Email,
 			},
-			ServerHost: apiHost,
-			Region:     "addon",
-			UserEmail:  userInfo.Email,
-		},
-		LastRefresh: time.Now(),
-		UserKey:     userKey,
-	}
-	if err := storageManager.SaveUser("addon", userInfo.Email, user.SessionData); err != nil {
-		core.Logger.Warn().Msgf("Could not save user session: %v", err)
+			LastRefresh: time.Now(),
+			UserKey:     userKey,
+		}
+		if err := storageManager.SaveUser("addon", userInfo.Email, user.SessionData); err != nil {
+			core.Logger.Warn().Msgf("Could not save user session: %v", err)
+		}
 	}
 
 	camsWithPath := assignPaths(cfg.Cameras)
@@ -259,6 +320,10 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	server.BindAddress = bind
 	server.MobileClient = client
 	server.Talkback = cfg.Talkback
+	server.LanStreaming = lanStreamingEnabled(cfg)
+	server.UID = client.UID
+	server.LANTargets = targets
+	core.Logger.Info().Msgf("LAN streaming %t, %d cameras with LAN targets", server.LanStreaming, len(targets))
 	if cfg.Talkback {
 		core.Logger.Info().Msg("Two-way audio enabled: streams will ask the camera for talkback")
 	}
