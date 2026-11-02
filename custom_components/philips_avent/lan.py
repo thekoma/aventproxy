@@ -14,6 +14,7 @@ from homeassistant.core import HomeAssistant
 from .lan_policy import (
     PROTOCOL_VERSION_DEFAULT,
     AddressPublisher,
+    confirmed_protocol,
     data_stale,
     heartbeat_due,
     is_connection_error,
@@ -40,6 +41,7 @@ class TuyaLANClient:
         on_dps_update: Callable[[dict[str, Any]], None],
         on_address_change: Callable[[str], None] | None = None,
         last_ip: str | None = None,
+        last_protocol: str = "",
     ) -> None:
         self._hass = hass
         self._device_id = device_id
@@ -47,7 +49,7 @@ class TuyaLANClient:
         self._on_dps_update = on_dps_update
         self._device: tinytuya.Device | None = None
         self._ip: str | None = None
-        self._address = AddressPublisher(on_address_change, last_ip)
+        self._address = AddressPublisher(on_address_change, last_ip, last_protocol)
         self._announced_version: float | None = None
         self._version: float | None = None
         self._task: asyncio.Task | None = None
@@ -58,6 +60,11 @@ class TuyaLANClient:
     def ip(self) -> str | None:
         """The last published address, not the live one: `_ip` is cleared on every failed connect."""
         return self._address.last
+
+    @property
+    def protocol(self) -> str:
+        """The protocol published with `ip`, such as "3.3"; "" when unknown."""
+        return self._address.protocol
 
     async def start(self) -> None:
         self._stop_event.clear()
@@ -130,6 +137,8 @@ class TuyaLANClient:
                         "LAN session with %s speaks protocol %s", self._device_id, version
                     )
                 self._version = version
+                # On the event loop, like the rest of _connect. An unconfirmed fallback keeps the last pair.
+                self._address.update(ip, confirmed_protocol(version, self._announced_version))
                 return device
         return None
 
@@ -148,7 +157,6 @@ class TuyaLANClient:
         # Scan for device IP
         _LOGGER.debug("Scanning LAN for device %s", self._device_id)
         self._ip, announced = await self._discover_device()
-        self._address.update(self._ip)  # on the event loop, like the rest of _connect
         if announced is not None and announced != self._announced_version:
             _LOGGER.debug(
                 "Device %s announces protocol %s", self._device_id, announced

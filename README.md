@@ -171,7 +171,7 @@ The integration uses the same Tuya Mobile SDK API as the official Philips Avent 
 
 ### Local streaming
 
-The bridge tries the local network first for HD streams with talkback off, when LAN streaming is on, the camera has a local key and P2P password and the integration knows its LAN address. The stream must deliver H.264, otherwise the first-frame check below sends it to the cloud. Anything else goes through the cloud, as before. That includes talkback and `/sd` streams. The monitor must also have reached the internet once since it booted, or it sends no media over the LAN.
+The bridge tries the local network first for HD streams with talkback off, when LAN streaming is on, the camera has a local key and P2P password and the integration knows its LAN address. The monitor must speak Tuya LAN protocol 3.5: monitors on 3.3 (seen on an SCD973 with firmware 1.4.0) keep using the cloud, and the bridge log says `Not using the LAN for <camera>: protocol 3.3`. The stream must deliver H.264, otherwise the first-frame check below sends it to the cloud. Anything else goes through the cloud, as before. That includes talkback and `/sd` streams. The monitor must also have reached the internet once since it booted, or it sends no media over the LAN.
 
 If no H.264 video arrives over the LAN within 4 seconds (an HEVC monitor ends up here), the stream falls back to the cloud and that camera skips the LAN for 5 minutes. A LAN stream that dies restarts on the cloud. After the 5 minutes, a stream on the cloud checks the LAN in the background and moves its viewers back with one short reconnect. RTSP clients see the same H.264 video and PCMU/8000 audio either way.
 

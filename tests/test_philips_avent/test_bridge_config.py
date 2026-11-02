@@ -37,6 +37,7 @@ class TestBuildCamerasPayloadShape:
             "local_key": "",
             "p2p_password": "",
             "lan_ip": "",
+            "lan_protocol": "",
         }
 
     def test_product_id_empty_for_scd973(self):
@@ -133,19 +134,21 @@ class TestBuildBridgeConfig:
         assert config["cameras"] == [
             {
                 "camera_id": "abc123", "camera_name": "Erik", "product_id": "p1",
-                "local_key": "", "p2p_password": "", "lan_ip": "",
+                "local_key": "", "p2p_password": "", "lan_ip": "", "lan_protocol": "",
             },
         ]
 
     def test_cameras_carry_lan_fields(self):
-        lan = {"abc123": {"local_key": "lk", "p2p_password": "pw", "lan_ip": "192.168.1.9"}}
+        lan = {"abc123": {"local_key": "lk", "p2p_password": "pw", "lan_ip": "192.168.1.9", "lan_protocol": "3.5"}}
         cameras = [*self.BASE["cameras"], {"deviceId": "other", "deviceName": "Two"}]
         config = build_bridge_config(**{**self.BASE, "cameras": cameras}, uid="u1", lan=lan)
         assert config["uid"] == "u1"
         assert config["cameras"][0]["local_key"] == "lk"
         assert config["cameras"][0]["p2p_password"] == "pw"
         assert config["cameras"][0]["lan_ip"] == "192.168.1.9"
-        assert [config["cameras"][1][k] for k in ("local_key", "p2p_password", "lan_ip")] == ["", "", ""]
+        assert config["cameras"][0]["lan_protocol"] == "3.5"
+        keys = ("local_key", "p2p_password", "lan_ip", "lan_protocol")
+        assert [config["cameras"][1][k] for k in keys] == ["", "", "", ""]
 
     def test_lan_streaming_defaults_on(self):
         assert build_bridge_config(**self.BASE)["lan_streaming"] is True
@@ -155,7 +158,7 @@ class TestBuildBridgeConfig:
 
     def test_unchanged_inputs_give_identical_json(self):
         # run.sh restarts the bridge on any md5 change (issue #73).
-        lan = {"abc123": {"local_key": "lk", "p2p_password": "pw", "lan_ip": "192.168.1.9"}}
+        lan = {"abc123": {"local_key": "lk", "p2p_password": "pw", "lan_ip": "192.168.1.9", "lan_protocol": "3.3"}}
         first = json.dumps(build_bridge_config(**self.BASE, uid="u1", lan=lan), indent=2)
         second = json.dumps(build_bridge_config(**self.BASE, uid="u1", lan=lan), indent=2)
         assert first == second
@@ -269,10 +272,11 @@ class TestTalkbackOption:
 
 
 class _Coordinator:
-    def __init__(self, device_info, stored_key="", lan_ip=None):
+    def __init__(self, device_info, stored_key="", lan_ip=None, lan_protocol=None):
         self.device_info = device_info
         self._local_key = stored_key
         self.lan_ip = lan_ip
+        self.lan_protocol = lan_protocol
 
 
 class _Api:
@@ -289,15 +293,17 @@ class TestLanCredentials:
     def test_lan_credentials_prefer_fresh_key(self):
         from lan_credentials import lan_credentials
 
-        coordinators = {"cam": _Coordinator({"localKey": "new"}, stored_key="old", lan_ip="10.0.0.5")}
+        coordinators = {
+            "cam": _Coordinator({"localKey": "new"}, stored_key="old", lan_ip="10.0.0.5", lan_protocol="3.3"),
+        }
         out = lan_credentials(coordinators, {"cam": "pw"})
-        assert out == {"cam": {"local_key": "new", "p2p_password": "pw", "lan_ip": "10.0.0.5"}}
+        assert out == {"cam": {"local_key": "new", "p2p_password": "pw", "lan_ip": "10.0.0.5", "lan_protocol": "3.3"}}
 
     def test_only_strings_never_none(self):
         from lan_credentials import lan_credentials
 
         out = lan_credentials({"cam": _Coordinator({}, stored_key=None)}, {"cam": None})
-        assert out["cam"] == {"local_key": "", "p2p_password": "", "lan_ip": ""}
+        assert out["cam"] == {"local_key": "", "p2p_password": "", "lan_ip": "", "lan_protocol": ""}
 
     def test_runtime_rewrite_takes_no_api(self):
         import inspect
@@ -340,13 +346,16 @@ class TestFetchPasswords:
 
 
 class TestPreviousLanValues:
-    def test_reads_ip_and_password_per_camera(self):
+    def test_reads_ip_protocol_and_password_per_camera(self):
         from payload import previous_lan_values
 
-        text = json.dumps({"cameras": [{"camera_id": "a", "lan_ip": "10.0.0.2", "p2p_password": "pw"}, {"camera_id": "b"}]})
+        text = json.dumps({"cameras": [
+            {"camera_id": "a", "lan_ip": "10.0.0.2", "lan_protocol": "3.5", "p2p_password": "pw"},
+            {"camera_id": "b"},
+        ]})
         assert previous_lan_values(text) == {
-            "a": {"lan_ip": "10.0.0.2", "p2p_password": "pw"},
-            "b": {"lan_ip": "", "p2p_password": ""},
+            "a": {"lan_ip": "10.0.0.2", "lan_protocol": "3.5", "p2p_password": "pw"},
+            "b": {"lan_ip": "", "lan_protocol": "", "p2p_password": ""},
         }
 
     def test_missing_or_corrupt_input_gives_empty(self):

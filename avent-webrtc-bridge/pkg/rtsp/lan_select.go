@@ -2,6 +2,7 @@ package rtsp
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"avent-webrtc-bridge/pkg/core"
@@ -16,6 +17,9 @@ const (
 	lanFirstFrameDeadline = 4 * time.Second
 	// lanCooldownPeriod keeps a camera whose LAN path failed on the cloud.
 	lanCooldownPeriod = 5 * time.Minute
+	// lanMinProtocol is the Tuya LAN protocol pkg/lan speaks. A monitor on 3.3
+	// ignores its frames, so trying would only wait out the deadline.
+	lanMinProtocol = 3.5
 )
 
 func (s *RTSPServer) lanCoolingDown(deviceID string) bool {
@@ -38,6 +42,7 @@ func (cs *CameraStream) lanEligible() (bool, string) {
 	}
 	id := cs.camera.DeviceID
 	target := s.LANTargets[id]
+	protocol, err := strconv.ParseFloat(target.Protocol, 64)
 	switch {
 	case s.Talkback:
 		return false, "talkback on" // the LAN path carries no return audio
@@ -47,6 +52,10 @@ func (cs *CameraStream) lanEligible() (bool, string) {
 		return false, "no LAN credentials"
 	case target.IP == "":
 		return false, "no address"
+	case target.Protocol == "":
+		return false, "protocol unknown"
+	case err != nil || !(protocol >= lanMinProtocol): // written so NaN fails too
+		return false, "protocol " + target.Protocol
 	case s.lanCoolingDown(id):
 		return false, "cooling down"
 	}

@@ -103,7 +103,7 @@ def build_bridge_config(
     audio, which the monitor answers by stopping a playing lullaby, so it
     defaults to off (issue #72).
     `uid` and `lan_streaming` steer the LAN path; `lan` maps a camera id to its
-    `local_key`, `p2p_password` and `lan_ip`.
+    `local_key`, `p2p_password`, `lan_ip` and `lan_protocol`.
     """
     return {
         "signing_key": signing_key,
@@ -131,9 +131,9 @@ def build_cameras_payload(cameras: list, lan: dict[str, dict] | None = None) -> 
     - in-memory shape from async_setup_entry: ``{"deviceId", "deviceName", "productId"}``
 
     Returns a list of ``{"camera_id", "camera_name", "product_id", "local_key",
-    "p2p_password", "lan_ip"}`` dicts — the contract consumed by the Go bridge in
-    ``cmd/addon/addon.go``. The last three come from ``lan[camera_id]`` and are
-    empty strings when unknown.
+    "p2p_password", "lan_ip", "lan_protocol"}`` dicts — the contract consumed by
+    the Go bridge in ``cmd/addon/addon.go``. The last four come from
+    ``lan[camera_id]`` and are empty strings when unknown.
     """
     lan = lan or {}
     return [
@@ -149,6 +149,7 @@ def build_cameras_payload(cameras: list, lan: dict[str, dict] | None = None) -> 
             "local_key": lan.get(camera_id, {}).get("local_key", ""),
             "p2p_password": lan.get(camera_id, {}).get("p2p_password", ""),
             "lan_ip": lan.get(camera_id, {}).get("lan_ip", ""),
+            "lan_protocol": lan.get(camera_id, {}).get("lan_protocol", ""),
         }
         for cam in cameras
     ]
@@ -158,7 +159,7 @@ BRIDGE_CONFIG_MODE = 0o600
 
 
 def previous_lan_values(text: str) -> dict[str, dict[str, str]]:
-    """Per camera ``lan_ip`` and ``p2p_password`` from an earlier bridge JSON.
+    """Per camera ``lan_ip``, ``lan_protocol`` and ``p2p_password`` from an earlier bridge JSON.
 
     Missing or corrupt text gives an empty result. Used to keep the file
     byte-identical across restarts and to keep a password when the cloud call
@@ -169,6 +170,7 @@ def previous_lan_values(text: str) -> dict[str, dict[str, str]]:
         return {
             cam["camera_id"]: {
                 "lan_ip": str(cam.get("lan_ip") or ""),
+                "lan_protocol": str(cam.get("lan_protocol") or ""),
                 "p2p_password": str(cam.get("p2p_password") or ""),
             }
             for cam in cameras

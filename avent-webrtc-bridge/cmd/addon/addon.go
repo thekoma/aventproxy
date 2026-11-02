@@ -49,6 +49,7 @@ type Camera struct {
 	LocalKey    string `json:"local_key"`
 	P2PPassword string `json:"p2p_password"`
 	LanIP       string `json:"lan_ip"`
+	LanProtocol string `json:"lan_protocol"`
 }
 
 func lanStreamingEnabled(cfg BridgeConfig) bool {
@@ -61,7 +62,7 @@ func lanTargets(cams []Camera) map[string]rtsp.LANTarget {
 	out := make(map[string]rtsp.LANTarget)
 	for _, c := range cams {
 		if c.LocalKey != "" && c.P2PPassword != "" {
-			out[c.ID] = rtsp.LANTarget{LocalKey: c.LocalKey, Password: c.P2PPassword, IP: c.LanIP}
+			out[c.ID] = rtsp.LANTarget{LocalKey: c.LocalKey, Password: c.P2PPassword, IP: c.LanIP, Protocol: c.LanProtocol}
 		}
 	}
 	return out

@@ -316,3 +316,4 @@ Found in the fork while reading it, each worth its own small change:
 - The P2P password is fetched once per setup and kept on failure.
 - gitleaks covers only the P2P password, not LAN addresses.
 - The bridge's own startup check of the cloud may fail when LAN targets and a stored session exist.
+- The bridge config also carries the protocol the integration's session negotiated (`lan_protocol`), and the bridge skips the LAN below 3.5: an SCD973 on firmware 1.4.0 speaks 3.3, and without the fork's discovery check every LAN attempt waited out the deadline.

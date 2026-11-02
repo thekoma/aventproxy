@@ -87,6 +87,7 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         self,
         on_address_change: Callable[[str], None] | None = None,
         last_ip: str | None = None,
+        last_protocol: str = "",
     ) -> None:
         if not self._local_key:
             return
@@ -97,6 +98,7 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
             self._on_lan_dps_update,
             on_address_change,
             last_ip,
+            last_protocol,
         )
         await self._lan_client.start()
 
@@ -112,6 +114,10 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
     @property
     def lan_ip(self) -> str | None:
         return self._lan_client.ip if self._lan_client else None
+
+    @property
+    def lan_protocol(self) -> str:
+        return self._lan_client.protocol if self._lan_client else ""
 
     @property
     def lan_connected(self) -> bool:

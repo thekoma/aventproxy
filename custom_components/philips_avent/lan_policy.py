@@ -121,28 +121,50 @@ def version_candidates(
     return candidates
 
 
+def confirmed_protocol(version: float, announced: float | None) -> str | None:
+    """The protocol to publish for a session at `version`, or None when it proves nothing.
+
+    Below 3.4 tinytuya does no handshake, so the 3.3 fallback on a monitor that
+    announces 3.5 is only a TCP connect, often after a Wi-Fi blip. Publishing it
+    would restart the bridge and keep every stream off the LAN until Home
+    Assistant restarts, so only a version at or above the announced one counts.
+    """
+    if announced is None or version >= announced:
+        return str(version)
+    return None
+
+
 class AddressPublisher:
-    """Report the monitor's LAN address when it becomes a new, non-empty value.
+    """Report the monitor's LAN address and protocol when the pair becomes new and complete.
 
     The LAN client clears its address on every failed connect and refills it after
     rediscovery. Reporting those blips would rewrite the bridge JSON, and restart
     the bridge, twice per hiccup (issue #73), so losing the address says nothing
-    and a return to the last reported address says nothing either.
+    and a return to the last reported pair says nothing either. The protocol rides
+    along because the bridge's LAN path speaks only 3.5.
     """
 
-    def __init__(self, callback: Callable[[str], None] | None, last: str | None = None) -> None:
+    def __init__(
+        self, callback: Callable[[str], None] | None, last: str | None = None, protocol: str = ""
+    ) -> None:
         self._callback = callback
         # Seeded from the bridge JSON on start, so rediscovery at the same address stays silent.
         self._last = last or None
+        self._protocol = protocol or ""
 
     @property
     def last(self) -> str | None:
         """The last address reported (or seeded): what the bridge JSON carries."""
         return self._last
 
-    def update(self, ip: str | None) -> None:
-        if not ip or ip == self._last:
+    @property
+    def protocol(self) -> str:
+        """The protocol reported (or seeded) with that address, such as "3.3"; "" when unknown."""
+        return self._protocol
+
+    def update(self, ip: str | None, protocol: str | None) -> None:
+        if not ip or not protocol or (ip, protocol) == (self._last, self._protocol):
             return
-        self._last = ip
+        self._last, self._protocol = ip, protocol
         if self._callback:
             self._callback(ip)
