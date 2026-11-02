@@ -142,12 +142,17 @@ func (s *LANSource) Start(ctx context.Context) error {
 	return nil
 }
 
-// abort tears down a start that did not succeed and says why.
+// abort tears down a start that did not succeed and says why, keeping the
+// client's own error when the deadline ended it: that names the failed step.
 func (s *LANSource) abort(ctx, life context.Context, err error) error {
-	if ctx.Err() != nil {
-		err = fmt.Errorf("%w: %w", errNoFirstFrame, ctx.Err())
-	} else if cause := context.Cause(life); cause != nil {
+	if cause := context.Cause(life); cause != nil {
 		err = cause
+	}
+	if ctx.Err() != nil {
+		if err == nil {
+			err = errors.New("connected, no SPS or IDR")
+		}
+		err = fmt.Errorf("%w: %w (%v)", errNoFirstFrame, ctx.Err(), err)
 	}
 	s.Stop()
 	return err

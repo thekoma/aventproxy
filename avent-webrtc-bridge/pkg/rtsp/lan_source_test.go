@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -169,26 +171,32 @@ func TestLANSourceStartsOnFirstFrame(t *testing.T) {
 }
 
 func TestLANSourceFailsWithoutFirstFrame(t *testing.T) {
-	for name, start := range map[string]func(*fakeLANClient) error{
-		"login ignored": nil,
-		"handshake hangs": func(f *fakeLANClient) error {
+	for name, tc := range map[string]struct {
+		start func(*fakeLANClient) error
+		why   string // what the error must still say about the client
+	}{
+		"login ignored": {nil, "connected, no SPS or IDR"},
+		"handshake hangs": {func(f *fakeLANClient) error {
 			select {
 			case <-f.done:
 			case <-time.After(2 * time.Second):
 			}
-			return net.ErrClosed
-		},
+			return fmt.Errorf("lan: answer: %w", net.ErrClosed)
+		}, "lan: answer: " + net.ErrClosed.Error()},
 	} {
 		t.Run(name, func(t *testing.T) {
-			fake := &fakeLANClient{start: start}
+			fake := &fakeLANClient{start: tc.start}
 			src, _ := newTestLANSource(t, fake)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 			defer cancel()
 			begun := time.Now()
 			err := src.Start(ctx)
-			if !errors.Is(err, errNoFirstFrame) {
-				t.Fatalf("Start: %v, want errNoFirstFrame", err)
+			if !errors.Is(err, errNoFirstFrame) || !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("Start: %v, want errNoFirstFrame and the deadline", err)
+			}
+			if !strings.Contains(err.Error(), tc.why) {
+				t.Errorf("Start: %v, want it to say %q", err, tc.why)
 			}
 			if elapsed := time.Since(begun); elapsed > 400*time.Millisecond {
 				t.Errorf("Start took %v", elapsed)
