@@ -144,6 +144,7 @@ type CameraStream struct {
 	mutex        sync.RWMutex
 	connecting   bool
 	active       bool
+	pending      bool // created, first client not attached yet
 	lastActivity time.Time
 
 	// handlingError prevents re-entrant OnError from PeerConnection.Close during teardown.
@@ -450,7 +451,7 @@ func (s *RTSPServer) getOrCreateStream(camera *storage.CameraInfo, streamResolut
 	// Check if stream already exists
 	streamId := fmt.Sprintf("%s-%s", camera.DeviceID, streamResolution)
 	if stream, exists := s.streams[streamId]; exists {
-		if stream.active || stream.connecting {
+		if stream.active || stream.connecting || stream.pending {
 			core.Logger.Trace().Msgf("Reusing existing stream for camera: %s", camera.DeviceName)
 			stream.lastActivity = time.Now()
 			return stream, nil
@@ -473,6 +474,7 @@ func (s *RTSPServer) getOrCreateStream(camera *storage.CameraInfo, streamResolut
 	}
 
 	stream.attachBridgeErrorHandler()
+	stream.pending = true
 
 	s.streams[streamId] = stream
 
@@ -504,17 +506,18 @@ func (s *RTSPServer) addClient(client *RTSPClient) {
 
 func (s *RTSPServer) removeClient(sessionID string) {
 	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	client, exists := s.clients[sessionID]
+	delete(s.clients, sessionID)
+	s.mutex.Unlock()
 
-	if client, exists := s.clients[sessionID]; exists {
-		// Remove client from stream
-		if client.stream != nil {
-			client.stream.RemoveClient(sessionID)
-		}
-
-		client.conn.Close()
-		delete(s.clients, sessionID)
+	if !exists {
+		return
 	}
+	// The stream lock can be held for a whole connect, so never wait on it under s.mutex.
+	if client.stream != nil {
+		client.stream.RemoveClient(sessionID)
+	}
+	client.conn.Close()
 }
 
 func (s *RTSPServer) printAvailableEndpoints() error {
@@ -609,6 +612,7 @@ func (cs *CameraStream) AddClient(client *RTSPClient) {
 
 	cs.clients[client.session] = client
 	cs.lastActivity = time.Now()
+	cs.pending = false
 
 	// Start stream if not active and not already connecting
 	if !cs.active && !cs.connecting {

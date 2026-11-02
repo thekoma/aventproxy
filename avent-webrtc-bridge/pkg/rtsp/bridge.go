@@ -26,6 +26,9 @@ import (
 	"github.com/pion/rtp"
 )
 
+// answerTimeout bounds the wait for the camera's answer so a silent camera cannot hang startStream.
+const answerTimeout = 20 * time.Second
+
 type WebRTCBridge struct {
 	camera         *storage.CameraInfo
 	resolution     string
@@ -249,7 +252,7 @@ func (wb *WebRTCBridge) Start() error {
 		return fmt.Errorf("failed to create offer: %v", err)
 	}
 
-	if err = wb.waiter.Wait(); err != nil {
+	if err = wb.waiter.WaitTimeout(answerTimeout); err != nil {
 		return fmt.Errorf("failed to establish connection: %v", err)
 	}
 
