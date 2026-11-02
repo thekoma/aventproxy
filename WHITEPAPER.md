@@ -1272,7 +1272,7 @@ Inputs are the camera's `localKey`, its P2P password (from `smartlife.m.rtc.conf
 
 Signalling runs on TCP 6668, in Tuya 3.5 framing (prefix 0x6699, AES-GCM). The AES-GCM IV is the ASCII bytes of the trace id, not random bytes. The offer names a placeholder STUN server, and the monitor never uses it. The monitor is the ICE-controlling side, and its STUN binding success responses carry no MESSAGE-INTEGRITY, so a stock ICE stack rejects them. The bridge therefore runs a small hand-rolled ICE: as the controlled side it sends its own checks, answers the monitor's requests and treats the first success response as connected. There is a single pair, so nothing is nominated.
 
-Media is KCP over the nominated UDP pair. Each datagram is AES-CBC encrypted and carries an HMAC. Frames inside the KCP stream have a sub-header in one of two forms, and the bridge reads both. Video is H.264. Audio is 16 kHz PCM, which the bridge downsamples to 8 kHz and encodes as mu-law, so RTSP consumers see the same description as on the cloud path: H.264 video and PCMU/8000 audio.
+Media is KCP over that UDP pair. Each datagram is AES-CBC encrypted and carries an HMAC. Frames inside the KCP stream have a sub-header in one of two forms, and the bridge reads both. Video is H.264. Audio is 16 kHz PCM, which the bridge downsamples to 8 kHz and encodes as mu-law, so RTSP consumers see the same description as on the cloud path: H.264 video and PCMU/8000 audio.
 
 One condition is outside our control. The monitor must have reached the internet once since it booted. After that a WAN outage does not stop LAN streams. A monitor that booted with no internet answers the offer but sends no media.
 
