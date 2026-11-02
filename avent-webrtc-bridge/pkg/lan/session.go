@@ -41,6 +41,7 @@ type Session struct {
 	conn    net.Conn
 	seq     atomic.Uint32
 	readBuf []byte
+	chunk   []byte // reused for every socket read
 
 	writeMu sync.Mutex
 }
@@ -68,6 +69,11 @@ func Dial(ctx context.Context, ip, deviceID, localKey string) (*Session, error) 
 	if err := s.negotiate([]byte(localKey)); err != nil {
 		stop()
 		conn.Close()
+		// A cancelled ctx closed the conn under the read: say so, rather than
+		// leave only the closed-connection error it caused.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("lan: negotiation with %s: %w (%v)", ip, ctxErr, err)
+		}
 		return nil, err
 	}
 	if !stop() {
@@ -195,8 +201,10 @@ func (s *Session) recvWithKey(key []byte) (Header, []byte, error) {
 				return hdr, nil, err
 			}
 			return hdr, plain, nil
-		} else if errors.Is(err, ErrBadPrefix) {
+		} else if errors.Is(err, ErrBadPrefix) || errors.Is(err, ErrBadLength) {
 			// Resynchronise on the next plausible prefix rather than giving up.
+			// A bad length must resync too: waiting for that frame to complete
+			// would grow the buffer without bound.
 			if idx := nextPrefix(s.readBuf); idx > 0 {
 				s.readBuf = s.readBuf[idx:]
 				continue
@@ -204,10 +212,12 @@ func (s *Session) recvWithKey(key []byte) (Header, []byte, error) {
 			s.readBuf = nil
 		}
 
-		chunk := make([]byte, 65535)
-		n, err := s.conn.Read(chunk)
+		if s.chunk == nil {
+			s.chunk = make([]byte, maxFrameLen)
+		}
+		n, err := s.conn.Read(s.chunk)
 		if n > 0 {
-			s.readBuf = append(s.readBuf, chunk[:n]...)
+			s.readBuf = append(s.readBuf, s.chunk[:n]...)
 		}
 		if err != nil {
 			return Header{}, nil, err
