@@ -58,6 +58,15 @@ type RTSPServer struct {
 	//   - "0.0.0.0" or "::": all interfaces, on purpose.
 	// Set it before Start.
 	BindAddress string
+
+	// LAN streaming: tried first for eligible streams (see lanEligible). Set
+	// before Start, read-only after. LANTargets is keyed by device id.
+	LanStreaming bool
+	UID          string
+	LANTargets   map[string]LANTarget
+
+	cooldownMutex sync.Mutex
+	lanCooldowns  map[string]time.Time // device id -> end of its LAN cool-down
 }
 
 // describeBind is the human-readable form of BindAddress for the log.
@@ -164,6 +173,11 @@ type CameraStream struct {
 
 	// startStreamOverride, if set, replaces startStream (tests only).
 	startStreamOverride func()
+
+	lan           lanStreamer        // the running LAN source; nil on the cloud
+	lanFactory    func() lanStreamer // builds the LAN source; callers hold mutex
+	cloudStart    func() error       // the cloud attempt; callers hold mutex
+	attemptCancel context.CancelFunc // ends a LAN attempt in flight
 }
 
 type ServerConfig struct {
@@ -182,6 +196,7 @@ func NewRTSPServer(port int, storageManager *storage.StorageManager) *RTSPServer
 		storageManager: storageManager,
 		clients:        make(map[string]*RTSPClient),
 		streams:        make(map[string]*CameraStream),
+		lanCooldowns:   make(map[string]time.Time),
 		ctx:            ctx,
 		cancel:         cancel,
 		running:        false,
@@ -458,19 +473,12 @@ func (s *RTSPServer) getOrCreateStream(camera *storage.CameraInfo, streamResolut
 		}
 	}
 
-	// Create new stream
+	// Create new stream. The cloud attempt connects MQTT (startCloud), so a
+	// stream exists while the cloud is down and s.mutex never waits on it.
 	stream := NewCameraStream(camera, streamResolution, user, s.storageManager, s)
 
-	// Setup bridge dependencies
 	if s.MobileClient != nil {
 		stream.webrtcBridge.SetMobileClient(s.MobileClient)
-	}
-	if s.mqttManager != nil {
-		mqttClient, err := s.mqttManager.GetClient(camera.DeviceID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get MQTT client: %v", err)
-		}
-		stream.webrtcBridge.SetMQTTClient(mqttClient)
 	}
 
 	stream.attachBridgeErrorHandler()
@@ -595,6 +603,8 @@ func NewCameraStream(camera *storage.CameraInfo, resolution string, user *storag
 	if server != nil {
 		stream.webrtcBridge.Talkback = server.Talkback
 	}
+	stream.lanFactory = stream.newLANSource
+	stream.cloudStart = stream.startCloud
 
 	return stream
 }
@@ -667,6 +677,10 @@ func (cs *CameraStream) startStream() {
 	}
 	cs.mutex.Unlock()
 
+	if cs.tryLAN() {
+		return
+	}
+
 	for attempt := 1; attempt <= 2; attempt++ {
 		if attempt > 1 {
 			core.Logger.Info().Msgf("Retrying stream for camera %s (attempt %d/2)", cs.camera.DeviceName, attempt)
@@ -692,11 +706,15 @@ func (cs *CameraStream) startStream() {
 		}
 
 		cs.bridgeStarted = true
-		err := cs.webrtcBridge.Start()
+		err := cs.cloudStart()
 		if err == nil {
 			cs.connecting = false
 			cs.active = true
+			if len(cs.clients) == 0 { // the last client left during a LAN attempt or the retry wait
+				cs.scheduleShutdown()
+			}
 			cs.mutex.Unlock()
+			core.Logger.Info().Msgf("Streaming %s over the cloud", cs.camera.DeviceName)
 			return
 		}
 
@@ -716,7 +734,8 @@ func (cs *CameraStream) stopStream() {
 }
 
 // replaceBridge swaps in a fresh WebRTC bridge, rewired to the server's mobile
-// and MQTT clients, with the error handler attached. Callers must hold cs.mutex.
+// client, with the error handler attached; startCloud adds the MQTT client.
+// Callers must hold cs.mutex.
 func (cs *CameraStream) replaceBridge() {
 	if cs.webrtcBridge != nil {
 		cs.webrtcBridge.OnError = nil
@@ -728,20 +747,29 @@ func (cs *CameraStream) replaceBridge() {
 		storageManager = cs.server.storageManager
 	}
 	cs.webrtcBridge = NewWebRTCBridge(cs.camera, cs.resolution, cs.user, storageManager)
+	cs.bridgeStarted = false
 
 	if cs.server != nil {
 		cs.webrtcBridge.Talkback = cs.server.Talkback
 		if cs.server.MobileClient != nil {
 			cs.webrtcBridge.SetMobileClient(cs.server.MobileClient)
 		}
-		if cs.server.mqttManager != nil {
-			if mqttClient, err := cs.server.mqttManager.GetClient(cs.camera.DeviceID); err == nil {
-				cs.webrtcBridge.SetMQTTClient(mqttClient)
-			}
-		}
 	}
 
 	cs.attachBridgeErrorHandler()
+}
+
+// startCloud is the default cloudStart. It fetches the MQTT client only now,
+// so a stream can exist while the cloud is down. Callers must hold cs.mutex.
+func (cs *CameraStream) startCloud() error {
+	if cs.server != nil && cs.server.mqttManager != nil {
+		mqttClient, err := cs.server.mqttManager.GetClient(cs.camera.DeviceID)
+		if err != nil {
+			return fmt.Errorf("failed to get MQTT client: %v", err)
+		}
+		cs.webrtcBridge.SetMQTTClient(mqttClient)
+	}
+	return cs.webrtcBridge.Start()
 }
 
 // attachBridgeErrorHandler wires WebRTC OnError to handleBridgeError on the current bridge.
@@ -762,9 +790,18 @@ func (cs *CameraStream) handleBridgeError(err error) {
 		cs.mutex.Unlock()
 		return
 	}
-	cs.handlingError = true
 
 	core.Logger.Error().Err(err).Msgf("WebRTC error for camera %s", cs.camera.DeviceName)
+
+	clients := cs.teardownLocked()
+	cs.mutex.Unlock()
+	closeClients(clients)
+}
+
+// teardownLocked stops a failed stream and returns its clients, for the caller
+// to close once it has released cs.mutex. Callers must hold cs.mutex.
+func (cs *CameraStream) teardownLocked() []*RTSPClient {
+	cs.handlingError = true
 
 	clients := make([]*RTSPClient, 0, len(cs.clients))
 	for _, client := range cs.clients {
@@ -777,8 +814,10 @@ func (cs *CameraStream) handleBridgeError(err error) {
 	}
 	cs.stopStreamInternal()
 	cs.handlingError = false
-	cs.mutex.Unlock()
+	return clients
+}
 
+func closeClients(clients []*RTSPClient) {
 	for _, client := range clients {
 		if client.conn != nil {
 			_ = client.conn.Close()
@@ -805,6 +844,16 @@ func (cs *CameraStream) stopStreamInternal() {
 	// Only log if we were actually active
 	if wasActive {
 		core.Logger.Info().Msgf("Stopping stream for camera: %s", cs.camera.DeviceName)
+	}
+
+	// A LAN attempt in flight ends now rather than at its deadline.
+	if cs.attemptCancel != nil {
+		cs.attemptCancel()
+		cs.attemptCancel = nil
+	}
+	if cs.lan != nil {
+		cs.lan.Stop()
+		cs.lan = nil
 	}
 
 	// Stop WebRTC bridge (sends SendDisconnect to clean device-side session)
