@@ -1,7 +1,6 @@
 package rtsp
 
 import (
-	"context"
 	"errors"
 	"time"
 
@@ -57,24 +56,12 @@ func (cs *CameraStream) promote() {
 	}
 	// A forwarder with no clients: the cloud stream's viewers never see the probe.
 	probe := cs.lanFactory(NewRTPForwarder())
-	// Only stopStreamInternal cancels stopped while the probe runs.
-	stopped, stop := context.WithCancel(context.Background())
-	defer stop()
-	cs.attemptCancel = stop
-	cs.mutex.Unlock()
-
-	ctx, cancel := context.WithTimeout(stopped, lanFirstFrameDeadline)
-	err := probe.Start(ctx)
-	cancel()
-
-	cs.mutex.Lock()
-	probe.Stop() // before the clients reconnect, so the monitor is free for them
-	if stopped.Err() != nil {
-		// The stream stopped; a restart may own attemptCancel and promoteTimer now.
+	stopped, err := cs.runLANAttempt(probe)
+	if stopped {
 		cs.mutex.Unlock()
 		return
 	}
-	cs.attemptCancel = nil
+	probe.Stop() // before the clients reconnect, so the monitor is free for them
 	if err != nil {
 		cs.server.startLANCooldown(cs.camera.DeviceID)
 		core.Logger.Info().Msgf("LAN still unavailable for %s: %v", cs.camera.DeviceName, err)

@@ -18,11 +18,6 @@ const (
 	lanCooldownPeriod = 5 * time.Minute
 )
 
-// lanAddress is where the LAN path reaches a monitor, or "" when unknown.
-func (s *RTSPServer) lanAddress(deviceID string) string {
-	return s.LANTargets[deviceID].IP
-}
-
 func (s *RTSPServer) lanCoolingDown(deviceID string) bool {
 	s.cooldownMutex.Lock()
 	defer s.cooldownMutex.Unlock()
@@ -50,7 +45,7 @@ func (cs *CameraStream) lanEligible() (bool, string) {
 		return false, "sd stream"
 	case target.LocalKey == "" || target.Password == "":
 		return false, "no LAN credentials"
-	case s.lanAddress(id) == "":
+	case target.IP == "":
 		return false, "no address"
 	case s.lanCoolingDown(id):
 		return false, "cooling down"
@@ -89,25 +84,12 @@ func (cs *CameraStream) tryLAN() (done bool) {
 	// Set before Start, so a death between Start and the commit below reaches
 	// lanDied, whose teardown cancels the attempt.
 	cs.lan = source
-	// Only stopStreamInternal cancels stopped while the attempt runs.
-	stopped, stop := context.WithCancel(context.Background())
-	defer stop()
-	cs.attemptCancel = stop
-	cs.mutex.Unlock()
-
 	source.SetOnError(func(err error) { cs.lanDied(source, err) })
-	ctx, cancel := context.WithTimeout(stopped, lanFirstFrameDeadline)
-	err := source.Start(ctx)
-	cancel()
-
-	cs.mutex.Lock()
+	stopped, err := cs.runLANAttempt(source)
 	defer cs.mutex.Unlock()
-	if stopped.Err() != nil {
-		// stopStreamInternal already cleared attemptCancel, and a restart may own it now.
-		source.Stop()
+	if stopped {
 		return true
 	}
-	cs.attemptCancel = nil
 	if err != nil {
 		cs.lan = nil
 		source.Stop()
@@ -122,6 +104,31 @@ func (cs *CameraStream) tryLAN() (done bool) {
 	}
 	core.Logger.Info().Msgf("Streaming %s over the LAN", cs.camera.DeviceName)
 	return true
+}
+
+// runLANAttempt starts src under the first-frame deadline without cs.mutex,
+// so a Stop cancels the attempt instead of waiting for it. Called with
+// cs.mutex held; returns with it held. stopped means the stream stopped
+// meanwhile: src is stopped, and a restart may own attemptCancel and
+// promoteTimer now, so the caller must leave the stream alone.
+func (cs *CameraStream) runLANAttempt(src lanStreamer) (stopped bool, err error) {
+	// Only stopStreamInternal cancels this while src starts.
+	stoppedCtx, stop := context.WithCancel(context.Background())
+	defer stop()
+	cs.attemptCancel = stop
+	cs.mutex.Unlock()
+
+	ctx, cancel := context.WithTimeout(stoppedCtx, lanFirstFrameDeadline)
+	err = src.Start(ctx)
+	cancel()
+
+	cs.mutex.Lock()
+	if stoppedCtx.Err() != nil {
+		src.Stop()
+		return true, err
+	}
+	cs.attemptCancel = nil
+	return false, err
 }
 
 // lanDied hands a LAN stream that died to the cloud: the camera cools down and

@@ -248,7 +248,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "api": api,
         "session": session,
         "coordinators": coordinators,
-        "cameras": cameras,
         "config": entry.data,
     }
     ready = False
