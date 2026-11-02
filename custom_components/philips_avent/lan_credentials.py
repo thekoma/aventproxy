@@ -25,17 +25,19 @@ async def fetch_p2p_passwords(api: Any, camera_ids: list[str], previous: dict[st
 
 
 def lan_credentials(coordinators: dict, passwords: dict[str, str]) -> dict[str, dict[str, str]]:
-    """Map camera id to ``local_key``, ``p2p_password`` and ``lan_ip``, all strings.
+    """Map camera id to ``local_key``, ``p2p_password``, ``lan_ip`` and ``lan_protocol``, all strings.
 
     No API call, so an address-triggered rewrite works while the cloud is down.
     The key comes from the latest cloud device info, so a rotated key wins over
-    the stored one. ``lan_ip`` is the last published address, never the live one.
+    the stored one. ``lan_ip`` is the last published address, never the live one,
+    and ``lan_protocol`` the version published with it.
     """
     return {
         cam_id: {
             "local_key": coordinator.device_info.get("localKey") or coordinator._local_key or "",
             "p2p_password": passwords.get(cam_id) or "",
             "lan_ip": coordinator.lan_ip or "",
+            "lan_protocol": coordinator.lan_protocol or "",
         }
         for cam_id, coordinator in coordinators.items()
     }

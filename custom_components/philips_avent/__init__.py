@@ -279,7 +279,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     coordinator._local_key = local_key
 
             coordinators[cam_id] = coordinator
-            await coordinator.start_lan(_on_address_change, previous.get(cam_id, {}).get("lan_ip") or None)
+            seed = previous.get(cam_id, {})
+            await coordinator.start_lan(_on_address_change, seed.get("lan_ip") or None, seed.get("lan_protocol", ""))
 
         passwords.update(
             await fetch_p2p_passwords(
