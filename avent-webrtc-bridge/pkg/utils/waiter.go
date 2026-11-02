@@ -84,7 +84,8 @@ func (w *Waiter) WaitChan() <-chan error {
 	return ch
 }
 
-// WaitTimeout is Wait bounded by d. On timeout the Wait goroutine stays parked until Done.
+// WaitTimeout is Wait bounded by d. A timeout finishes the waiter with
+// ErrWaitTimeout, which releases the Wait goroutine and every later Wait.
 func (w *Waiter) WaitTimeout(d time.Duration) error {
 	ch := make(chan error, 1)
 	go func() { ch <- w.Wait() }()
@@ -95,6 +96,7 @@ func (w *Waiter) WaitTimeout(d time.Duration) error {
 	case err := <-ch:
 		return err
 	case <-timer.C:
+		w.Done(ErrWaitTimeout)
 		return ErrWaitTimeout
 	}
 }

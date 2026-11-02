@@ -16,6 +16,18 @@ func TestWaitTimeoutExpires(t *testing.T) {
 	if time.Since(start) > time.Second {
 		t.Fatalf("WaitTimeout took %v", time.Since(start))
 	}
+
+	// The timeout finished the waiter, so nothing stays parked on it.
+	done := make(chan error, 1)
+	go func() { done <- w.Wait() }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrWaitTimeout) {
+			t.Fatalf("Wait after the timeout = %v, want ErrWaitTimeout", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Wait after the timeout is still parked")
+	}
 }
 
 func TestWaitTimeoutReturnsDoneError(t *testing.T) {

@@ -47,6 +47,7 @@ type WebRTCBridge struct {
 
 	// State
 	connected         bool
+	stopped           bool
 	ownsClient        bool
 	answerReceived    bool
 	pendingCandidates []pion.ICECandidateInit
@@ -266,10 +267,13 @@ func (wb *WebRTCBridge) Stop() {
 	wb.mutex.Lock()
 	defer wb.mutex.Unlock()
 
-	if !wb.connected {
+	// A Start that failed after creating the PeerConnection (no answer in
+	// time) left it and the MQTT camera client behind: tear those down too.
+	if wb.stopped || (!wb.connected && wb.peerConnection == nil) {
 		return
 	}
 
+	wb.stopped = true
 	wb.connected = false
 
 	core.Logger.Info().Msgf("Stopping WebRTC bridge for camera: %s", wb.camera.DeviceName)
