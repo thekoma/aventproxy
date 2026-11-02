@@ -65,7 +65,7 @@ type attempts struct {
 	cloudFwd     *RTPForwarder // the forwarder the cloud attempt ran on
 }
 
-func fakeAttempts(cs *CameraStream, lanStart func(context.Context) error) *attempts {
+func fakeAttempts(t *testing.T, cs *CameraStream, lanStart func(context.Context) error) *attempts {
 	a := &attempts{lan: &fakeLAN{start: lanStart}}
 	cs.lanFactory = func() lanStreamer {
 		a.lanBuilt.Add(1)
@@ -73,6 +73,9 @@ func fakeAttempts(cs *CameraStream, lanStart func(context.Context) error) *attem
 		return a.lan
 	}
 	cs.cloudStart = func() error {
+		if cs.webrtcBridge.OnError == nil {
+			t.Error("cloud attempt on a bridge with no error handler")
+		}
 		a.cloudStarted.Add(1)
 		a.cloudFwd = cs.webrtcBridge.rtpForwarder
 		return nil
@@ -122,7 +125,7 @@ func streamState(cs *CameraStream) (active, connecting bool, lan lanStreamer) {
 func TestLANSuccessSkipsCloud(t *testing.T) {
 	server := newLANServer()
 	cs, _ := newLANStream(t, server, "hd")
-	a := fakeAttempts(cs, nil)
+	a := fakeAttempts(t, cs, nil)
 
 	begin(cs)
 
@@ -150,7 +153,7 @@ func TestLANFailureFallsBackToCloud(t *testing.T) {
 	cs, _ := newLANStream(t, server, "hd")
 	cs.bridgeStarted = true // a reused stream: the LAN attempt needs a fresh bridge
 	original := cs.webrtcBridge.rtpForwarder
-	a := fakeAttempts(cs, func(context.Context) error {
+	a := fakeAttempts(t, cs, func(context.Context) error {
 		return fmt.Errorf("%w: %w", errNoFirstFrame, context.DeadlineExceeded)
 	})
 
@@ -180,7 +183,7 @@ func TestLANFailureFallsBackToCloud(t *testing.T) {
 func TestCooldownSkipsLAN(t *testing.T) {
 	server := newLANServer()
 	cs, _ := newLANStream(t, server, "hd")
-	a := fakeAttempts(cs, nil)
+	a := fakeAttempts(t, cs, nil)
 	server.lanCooldowns["testdev"] = time.Now().Add(time.Minute)
 
 	if ok, reason := cs.lanEligible(); ok || reason != "cooling down" {
@@ -219,7 +222,7 @@ func TestIneligibleStreamsSkipLAN(t *testing.T) {
 			server := newLANServer()
 			tc.configure(server)
 			cs, _ := newLANStream(t, server, tc.resolution)
-			a := fakeAttempts(cs, nil)
+			a := fakeAttempts(t, cs, nil)
 
 			if ok, reason := cs.lanEligible(); ok || reason != tc.reason {
 				t.Fatalf("lanEligible() = %v, %q; want false, %q", ok, reason, tc.reason)
@@ -235,7 +238,7 @@ func TestIneligibleStreamsSkipLAN(t *testing.T) {
 func TestLANDeathRestartsOnCloud(t *testing.T) {
 	server := newLANServer()
 	cs, clientConn := newLANStream(t, server, "hd")
-	a := fakeAttempts(cs, nil)
+	a := fakeAttempts(t, cs, nil)
 	begin(cs)
 
 	a.lan.die(errors.New("lan: Test Cam stopped streaming: EOF"))
@@ -259,7 +262,7 @@ func TestLANDeathRestartsOnCloud(t *testing.T) {
 	if err != nil || next == cs {
 		t.Fatalf("getOrCreateStream = %p, %v; want a new stream", next, err)
 	}
-	b := fakeAttempts(next, nil)
+	b := fakeAttempts(t, next, nil)
 	begin(next)
 	if b.lanBuilt.Load() != 0 || b.cloudStarted.Load() != 1 {
 		t.Fatalf("new stream: lan built %d, cloud started %d; want 0 and 1", b.lanBuilt.Load(), b.cloudStarted.Load())
@@ -279,11 +282,36 @@ func TestLANDeathRestartsOnCloud(t *testing.T) {
 	next.stopStream()
 }
 
+func TestLANDeathBeforeCommitTearsDown(t *testing.T) {
+	// The monitor sends one keyframe, then drops the session before tryLAN
+	// re-takes the lock: the death must not be lost behind the commit.
+	server := newLANServer()
+	cs, clientConn := newLANStream(t, server, "hd")
+	var a *attempts
+	a = fakeAttempts(t, cs, func(context.Context) error {
+		a.lan.die(errors.New("lan: Test Cam stopped streaming: EOF"))
+		return nil
+	})
+
+	begin(cs)
+
+	if active, connecting, lan := streamState(cs); active || connecting || lan != nil {
+		t.Fatalf("active=%v connecting=%v lan=%v, want a torn-down stream", active, connecting, lan)
+	}
+	_ = clientConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	if _, err := clientConn.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("client connection not closed after the LAN died: %v", err)
+	}
+	if !server.lanCoolingDown("testdev") || !a.lan.isStopped() {
+		t.Fatal("a LAN death before commit must start the cool-down and stop the source")
+	}
+}
+
 func TestStopCancelsLANAttempt(t *testing.T) {
 	server := newLANServer()
 	cs, _ := newLANStream(t, server, "hd")
 	started := make(chan struct{})
-	a := fakeAttempts(cs, func(ctx context.Context) error {
+	a := fakeAttempts(t, cs, func(ctx context.Context) error {
 		close(started)
 		<-ctx.Done()
 		return fmt.Errorf("%w: %w", errNoFirstFrame, ctx.Err())
@@ -324,7 +352,7 @@ func TestStopCancelsLANAttempt(t *testing.T) {
 func TestClientLeavingDuringLANAttemptSchedulesShutdown(t *testing.T) {
 	server := newLANServer()
 	cs, _ := newLANStream(t, server, "hd")
-	fakeAttempts(cs, func(context.Context) error {
+	fakeAttempts(t, cs, func(context.Context) error {
 		left := make(chan struct{})
 		go func() {
 			cs.RemoveClient("s1")

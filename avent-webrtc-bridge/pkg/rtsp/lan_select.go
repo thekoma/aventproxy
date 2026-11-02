@@ -86,6 +86,9 @@ func (cs *CameraStream) tryLAN() (done bool) {
 		cs.replaceBridge()
 	}
 	source := cs.lanFactory()
+	// Set before Start, so a death between Start and the commit below reaches
+	// lanDied, whose teardown cancels the attempt.
+	cs.lan = source
 	// Only stopStreamInternal cancels stopped while the attempt runs.
 	stopped, stop := context.WithCancel(context.Background())
 	defer stop()
@@ -106,12 +109,12 @@ func (cs *CameraStream) tryLAN() (done bool) {
 	}
 	cs.attemptCancel = nil
 	if err != nil {
+		cs.lan = nil
 		source.Stop()
 		cs.server.startLANCooldown(cs.camera.DeviceID)
 		core.Logger.Warn().Msgf("LAN failed for %s: %v, using the cloud", cs.camera.DeviceName, err)
 		return false
 	}
-	cs.lan = source
 	cs.connecting = false
 	cs.active = true
 	if len(cs.clients) == 0 { // the last client left during the attempt

@@ -159,8 +159,8 @@ type CameraStream struct {
 	// handlingError prevents re-entrant OnError from PeerConnection.Close during teardown.
 	handlingError bool
 
-	// bridgeStarted records that the current bridge has been started once, so a
-	// restart replaces it instead of reusing a stopped one.
+	// bridgeStarted records that the current bridge has been started or
+	// stopped once, so a restart replaces it instead of reusing a dead one.
 	bridgeStarted bool
 
 	// Delayed shutdown
@@ -174,7 +174,7 @@ type CameraStream struct {
 	// startStreamOverride, if set, replaces startStream (tests only).
 	startStreamOverride func()
 
-	lan           lanStreamer        // the running LAN source; nil on the cloud
+	lan           lanStreamer        // the LAN source, from its attempt on; nil on the cloud
 	lanFactory    func() lanStreamer // builds the LAN source; callers hold mutex
 	cloudStart    func() error       // the cloud attempt; callers hold mutex
 	attemptCancel context.CancelFunc // ends a LAN attempt in flight
@@ -860,6 +860,9 @@ func (cs *CameraStream) stopStreamInternal() {
 	if cs.webrtcBridge != nil {
 		cs.webrtcBridge.OnError = nil
 		cs.webrtcBridge.Stop()
+		// Even a bridge that never ran (a LAN stream) has lost its OnError,
+		// so a restart must replace it.
+		cs.bridgeStarted = true
 	}
 
 	// MQTT client is NOT closed — kept alive for next stream (matches app behavior)
