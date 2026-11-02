@@ -1,7 +1,7 @@
 # LAN Streaming Design
 
 **Date:** 2026-11-02
-**Status:** Approved
+**Status:** Implemented
 **Context:** Baby monitor: a stream that silently shows nothing is worse than one that is slow
 **Issue:** #51
 **Origin:** port of Leonard Pitzu's work in [leonardpitzu/aventproxy](https://github.com/leonardpitzu/aventproxy), 82 commits on top of our `2026.8.0`
@@ -305,3 +305,14 @@ Found in the fork while reading it, each worth its own small change:
 - The downsampling filter for 16 kHz to 8 kHz.
 - Whether `cmd/lan` (the fork's standalone LAN test command) is worth keeping as
   a developer tool.
+
+## Changes during implementation
+
+- No bridge-side discovery: the LAN address comes only from the integration's tinytuya session; without one the stream uses the cloud.
+- No separate cloud-retry logic: the bridge reuses its stored session and the MQTT manager reconnects lazily.
+- LAN audio is mu-law only, with no A-law path.
+- First frame means an H.264 SPS or IDR, so HEVC never counts as healthy.
+- The bridge config carries each camera's last published LAN address, seeded from the previous file; losing the address never rewrites it.
+- The P2P password is fetched once per setup and kept on failure.
+- gitleaks covers only the P2P password, not LAN addresses.
+- The bridge's own startup check of the cloud may fail when LAN targets and a stored session exist.
