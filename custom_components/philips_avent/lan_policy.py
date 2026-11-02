@@ -130,9 +130,15 @@ class AddressPublisher:
     and a return to the last reported address says nothing either.
     """
 
-    def __init__(self, callback: Callable[[str], None] | None) -> None:
+    def __init__(self, callback: Callable[[str], None] | None, last: str | None = None) -> None:
         self._callback = callback
-        self._last: str | None = None
+        # Seeded from the bridge JSON on start, so rediscovery at the same address stays silent.
+        self._last = last or None
+
+    @property
+    def last(self) -> str | None:
+        """The last address reported (or seeded): what the bridge JSON carries."""
+        return self._last
 
     def update(self, ip: str | None) -> None:
         if not ip or ip == self._last:

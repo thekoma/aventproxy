@@ -287,37 +287,70 @@ class _Api:
 
 class TestLanCredentials:
     def test_lan_credentials_prefer_fresh_key(self):
-        import asyncio
-
         from lan_credentials import lan_credentials
 
         coordinators = {"cam": _Coordinator({"localKey": "new"}, stored_key="old", lan_ip="10.0.0.5")}
-        out = asyncio.run(lan_credentials(_Api({"password": "pw"}), coordinators))
+        out = lan_credentials(coordinators, {"cam": "pw"})
         assert out == {"cam": {"local_key": "new", "p2p_password": "pw", "lan_ip": "10.0.0.5"}}
 
-    def test_failed_rtc_config_leaves_password_empty(self):
-        import asyncio
-
-        from lan_credentials import lan_credentials
-
-        coordinators = {"cam": _Coordinator({"localKey": "new"})}
-        out = asyncio.run(lan_credentials(_Api(error=RuntimeError("boom")), coordinators))
-        assert out["cam"]["p2p_password"] == ""
-
     def test_only_strings_never_none(self):
-        import asyncio
-
         from lan_credentials import lan_credentials
 
-        coordinators = {"cam": _Coordinator({}, stored_key=None)}
-        out = asyncio.run(lan_credentials(_Api({"password": None}), coordinators))
+        out = lan_credentials({"cam": _Coordinator({}, stored_key=None)}, {"cam": None})
         assert out["cam"] == {"local_key": "", "p2p_password": "", "lan_ip": ""}
 
-    def test_stored_key_used_when_cloud_has_none(self):
-        import asyncio
+    def test_runtime_rewrite_takes_no_api(self):
+        import inspect
 
         from lan_credentials import lan_credentials
 
-        coordinators = {"cam": _Coordinator({}, stored_key="old")}
-        out = asyncio.run(lan_credentials(_Api({"password": "pw"}), coordinators))
+        assert list(inspect.signature(lan_credentials).parameters) == ["coordinators", "passwords"]
+
+    def test_stored_key_used_when_cloud_has_none(self):
+        from lan_credentials import lan_credentials
+
+        out = lan_credentials({"cam": _Coordinator({}, stored_key="old")}, {"cam": "pw"})
         assert out["cam"]["local_key"] == "old"
+
+
+class TestFetchPasswords:
+    def test_fetched_once_per_camera(self):
+        import asyncio
+
+        from lan_credentials import fetch_p2p_passwords
+
+        out = asyncio.run(fetch_p2p_passwords(_Api({"password": "pw"}), ["cam"], {"cam": "old"}))
+        assert out == {"cam": "pw"}
+
+    def test_failure_keeps_previous_value(self):
+        import asyncio
+
+        from lan_credentials import fetch_p2p_passwords
+
+        out = asyncio.run(fetch_p2p_passwords(_Api(error=RuntimeError("boom")), ["cam", "b"], {"cam": "pw"}))
+        assert out == {"cam": "pw", "b": ""}
+
+    def test_empty_password_keeps_previous_value(self):
+        import asyncio
+
+        from lan_credentials import fetch_p2p_passwords
+
+        out = asyncio.run(fetch_p2p_passwords(_Api({"password": None}), ["cam"], {"cam": "pw"}))
+        assert out == {"cam": "pw"}
+
+
+class TestPreviousLanValues:
+    def test_reads_ip_and_password_per_camera(self):
+        from payload import previous_lan_values
+
+        text = json.dumps({"cameras": [{"camera_id": "a", "lan_ip": "10.0.0.2", "p2p_password": "pw"}, {"camera_id": "b"}]})
+        assert previous_lan_values(text) == {
+            "a": {"lan_ip": "10.0.0.2", "p2p_password": "pw"},
+            "b": {"lan_ip": "", "p2p_password": ""},
+        }
+
+    def test_missing_or_corrupt_input_gives_empty(self):
+        from payload import previous_lan_values
+
+        for text in ("", "{not json", "[]", '{"cameras": [{"no_id": 1}]}', '{"cameras": 5}'):
+            assert previous_lan_values(text) == {}

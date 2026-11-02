@@ -157,6 +157,26 @@ def build_cameras_payload(cameras: list, lan: dict[str, dict] | None = None) -> 
 BRIDGE_CONFIG_MODE = 0o600
 
 
+def previous_lan_values(text: str) -> dict[str, dict[str, str]]:
+    """Per camera ``lan_ip`` and ``p2p_password`` from an earlier bridge JSON.
+
+    Missing or corrupt text gives an empty result. Used to keep the file
+    byte-identical across restarts and to keep a password when the cloud call
+    that refreshes it fails.
+    """
+    try:
+        cameras = json.loads(text).get("cameras", [])
+        return {
+            cam["camera_id"]: {
+                "lan_ip": str(cam.get("lan_ip") or ""),
+                "p2p_password": str(cam.get("p2p_password") or ""),
+            }
+            for cam in cameras
+        }
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return {}
+
+
 def write_bridge_config_file(path, config: dict) -> None:
     """Write the bridge config, readable only by the owner.
 

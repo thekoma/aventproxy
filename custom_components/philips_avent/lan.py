@@ -39,6 +39,7 @@ class TuyaLANClient:
         local_key: str,
         on_dps_update: Callable[[dict[str, Any]], None],
         on_address_change: Callable[[str], None] | None = None,
+        last_ip: str | None = None,
     ) -> None:
         self._hass = hass
         self._device_id = device_id
@@ -46,7 +47,7 @@ class TuyaLANClient:
         self._on_dps_update = on_dps_update
         self._device: tinytuya.Device | None = None
         self._ip: str | None = None
-        self._address = AddressPublisher(on_address_change)
+        self._address = AddressPublisher(on_address_change, last_ip)
         self._announced_version: float | None = None
         self._version: float | None = None
         self._task: asyncio.Task | None = None
@@ -55,7 +56,8 @@ class TuyaLANClient:
 
     @property
     def ip(self) -> str | None:
-        return self._ip
+        """The last published address, not the live one: `_ip` is cleared on every failed connect."""
+        return self._address.last
 
     async def start(self) -> None:
         self._stop_event.clear()

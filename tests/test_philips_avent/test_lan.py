@@ -145,3 +145,20 @@ class TestAddressPublisher:
         from lan_policy import AddressPublisher
 
         AddressPublisher(None).update("192.168.1.9")
+
+    def test_seeded_publisher_stays_silent_on_same_ip_and_fires_on_another(self):
+        from lan_policy import AddressPublisher
+
+        seen = []
+        publisher = AddressPublisher(seen.append, "192.168.1.9")
+        assert publisher.last == "192.168.1.9"
+
+        publisher.update("192.168.1.9")
+        assert seen == []
+
+        publisher.update(None)
+        assert publisher.last == "192.168.1.9"  # sticky: the JSON never loses the address
+
+        publisher.update("192.168.1.10")
+        assert seen == ["192.168.1.10"]
+        assert publisher.last == "192.168.1.10"
