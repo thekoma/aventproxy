@@ -266,3 +266,58 @@ class TestTalkbackOption:
 
     def test_key_is_part_of_the_go_contract(self):
         assert "talkback" in build_bridge_config(**self.BASE)
+
+
+class _Coordinator:
+    def __init__(self, device_info, stored_key="", lan_ip=None):
+        self.device_info = device_info
+        self._local_key = stored_key
+        self.lan_ip = lan_ip
+
+
+class _Api:
+    def __init__(self, result=None, error=None):
+        self._result, self._error = result, error
+
+    async def get_rtc_config(self, dev_id):
+        if self._error:
+            raise self._error
+        return self._result
+
+
+class TestLanCredentials:
+    def test_lan_credentials_prefer_fresh_key(self):
+        import asyncio
+
+        from lan_credentials import lan_credentials
+
+        coordinators = {"cam": _Coordinator({"localKey": "new"}, stored_key="old", lan_ip="10.0.0.5")}
+        out = asyncio.run(lan_credentials(_Api({"password": "pw"}), coordinators))
+        assert out == {"cam": {"local_key": "new", "p2p_password": "pw", "lan_ip": "10.0.0.5"}}
+
+    def test_failed_rtc_config_leaves_password_empty(self):
+        import asyncio
+
+        from lan_credentials import lan_credentials
+
+        coordinators = {"cam": _Coordinator({"localKey": "new"})}
+        out = asyncio.run(lan_credentials(_Api(error=RuntimeError("boom")), coordinators))
+        assert out["cam"]["p2p_password"] == ""
+
+    def test_only_strings_never_none(self):
+        import asyncio
+
+        from lan_credentials import lan_credentials
+
+        coordinators = {"cam": _Coordinator({}, stored_key=None)}
+        out = asyncio.run(lan_credentials(_Api({"password": None}), coordinators))
+        assert out["cam"] == {"local_key": "", "p2p_password": "", "lan_ip": ""}
+
+    def test_stored_key_used_when_cloud_has_none(self):
+        import asyncio
+
+        from lan_credentials import lan_credentials
+
+        coordinators = {"cam": _Coordinator({}, stored_key="old")}
+        out = asyncio.run(lan_credentials(_Api({"password": "pw"}), coordinators))
+        assert out["cam"]["local_key"] == "old"

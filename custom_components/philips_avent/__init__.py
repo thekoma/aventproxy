@@ -1,6 +1,7 @@
 """Philips Avent Baby Monitor integration for Home Assistant."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 
@@ -16,10 +17,13 @@ from .const import (
     CONF_COUNTRY_CODE,
     CONF_DEVICE_ID,
     CONF_ECODE,
+    CONF_LAN_STREAMING,
     CONF_PARTNER,
     CONF_SID,
     CONF_TALKBACK,
+    CONF_UID,
     DEFAULT_BRIDGE_PORT,
+    DEFAULT_LAN_STREAMING,
     DEFAULT_TALKBACK,
     DOMAIN,
     TUYA_APP_KEY,
@@ -28,6 +32,7 @@ from .const import (
     TUYA_SIGNING_KEY,
 )
 from .coordinator import PhilipsAventCoordinator
+from .lan_credentials import lan_credentials
 from .payload import (
     BRIDGE_CONFIG_PREFIX,
     bridge_config_filename,
@@ -53,7 +58,9 @@ def _entry_api_host(entry: ConfigEntry) -> str:
     return entry.data.get(CONF_API_HOST) or api_host(DEFAULT_DATA_CENTER)
 
 
-async def _write_bridge_config(hass: HomeAssistant, entry: ConfigEntry, api: PhilipsAventAPI, cameras: list) -> None:
+async def _write_bridge_config(
+    hass: HomeAssistant, entry: ConfigEntry, api: PhilipsAventAPI, cameras: list, coordinators: dict
+) -> None:
     """Write bridge config JSON for the add-on."""
     bridge_port = entry.options.get(CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT)
     bridge_config = build_bridge_config(
@@ -66,6 +73,9 @@ async def _write_bridge_config(hass: HomeAssistant, entry: ConfigEntry, api: Phi
         package_name=TUYA_PACKAGE_NAME,
         api_host=_entry_api_host(entry),
         talkback=entry.options.get(CONF_TALKBACK, DEFAULT_TALKBACK),
+        uid=entry.data.get(CONF_UID, ""),
+        lan_streaming=entry.options.get(CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING),
+        lan=await lan_credentials(api, coordinators),
         bridge_port=bridge_port,
         cameras=cameras,
     )
@@ -220,7 +230,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await session.close()
         return False
 
-    coordinators = {}
+    coordinators: dict = {}
+    write_lock = asyncio.Lock()
+    data: dict = {
+        "api": api,
+        "session": session,
+        "coordinators": coordinators,
+        "cameras": cameras,
+        "config": entry.data,
+    }
+    # Registered before the LAN clients start, so an address found early is not dropped.
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = data
+
+    async def _rewrite_bridge_config() -> None:
+        # One writer at a time: each write reads the latest address after the lock.
+        async with write_lock:
+            await _write_bridge_config(hass, entry, api, cameras, coordinators)
+
+    def _on_address_change(_ip: str) -> None:
+        # Called on the event loop by the LAN client; a reload or unload cancels the task.
+        if hass.data.get(DOMAIN, {}).get(entry.entry_id) is data:
+            entry.async_create_background_task(hass, _rewrite_bridge_config(), "philips_avent_bridge_config")
+
     for cam in cameras:
         cam_id = cam.get("deviceId") or cam.get("devId")
         cam_name = cam.get("deviceName") or cam.get("name", cam_id)
@@ -234,17 +265,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if local_key:
                 coordinator._local_key = local_key
 
-        await coordinator.start_lan()
         coordinators[cam_id] = coordinator
+        await coordinator.start_lan(_on_address_change)
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
-        "api": api,
-        "session": session,
-        "coordinators": coordinators,
-        "config": entry.data,
-    }
-
-    await _write_bridge_config(hass, entry, api, cameras)
+    await _rewrite_bridge_config()
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 

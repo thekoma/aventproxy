@@ -1,6 +1,7 @@
 """Tests for the config flow logic (without Home Assistant runtime)."""
 
 import json
+from pathlib import Path
 
 from api import TuyaAPIError, classify_login_error
 from const import CONF_BRIDGE_HOST, CONF_BRIDGE_PORT, DEFAULT_BRIDGE_HOST, DEFAULT_BRIDGE_PORT
@@ -101,3 +102,27 @@ class TestOptionsFlow:
 
     def test_bridge_host_fallback(self):
         assert {}.get(CONF_BRIDGE_HOST, DEFAULT_BRIDGE_HOST) == "localhost"
+
+
+class TestLanStreamingOption:
+    def test_default_is_on(self):
+        from const import CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING
+
+        assert CONF_LAN_STREAMING == "lan_streaming"
+        assert DEFAULT_LAN_STREAMING is True
+
+    def test_options_flow_offers_lan_streaming(self):
+        """The options form carries the option, defaulting to True, and saves False."""
+        import re
+        from pathlib import Path
+
+        src = (Path(__file__).parents[2] / "custom_components/philips_avent/config_flow.py").read_text()
+        assert re.search(r"vol\.Optional\(\s*CONF_LAN_STREAMING,\s*default=current_lan_streaming", src)
+        assert "CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING" in " ".join(src.split())
+
+    def test_strings_carry_label_and_description(self):
+        for name in ("strings.json", "translations/en.json"):
+            path = Path(__file__).parents[2] / "custom_components/philips_avent" / name
+            step = json.loads(path.read_text())["options"]["step"]["init"]
+            assert step["data"]["lan_streaming"] == "LAN streaming"
+            assert step["data_description"]["lan_streaming"].startswith("Stream over the local network")

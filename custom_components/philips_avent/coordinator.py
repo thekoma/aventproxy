@@ -4,6 +4,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import time
+from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
@@ -82,7 +83,7 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         self.sleep_day: dict | None = None
         self._sleep_day_refreshed_at = None
 
-    async def start_lan(self) -> None:
+    async def start_lan(self, on_address_change: Callable[[str], None] | None = None) -> None:
         if not self._local_key:
             return
         self._lan_client = TuyaLANClient(
@@ -90,6 +91,7 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
             self.camera_id,
             self._local_key,
             self._on_lan_dps_update,
+            on_address_change,
         )
         await self._lan_client.start()
 
@@ -101,6 +103,10 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         if self._lan_client:
             await self._lan_client.stop()
             self._lan_client = None
+
+    @property
+    def lan_ip(self) -> str | None:
+        return self._lan_client.ip if self._lan_client else None
 
     @property
     def lan_connected(self) -> bool:

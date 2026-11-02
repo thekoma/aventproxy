@@ -5,6 +5,8 @@ an HA runtime; `lan.py` owns the sockets and calls into here.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 # The monitor closes an idle LAN socket after roughly 30-45 seconds, which shows
 # up as "Unexpected Payload from Device" followed by a reconnect every ~30s
 # (issue #62). tinytuya leaves keep-alive to the caller on persistent sockets, so
@@ -117,3 +119,24 @@ def version_candidates(
     if default not in candidates:
         candidates.append(default)
     return candidates
+
+
+class AddressPublisher:
+    """Report the monitor's LAN address when it becomes a new, non-empty value.
+
+    The LAN client clears its address on every failed connect and refills it after
+    rediscovery. Reporting those blips would rewrite the bridge JSON, and restart
+    the bridge, twice per hiccup (issue #73), so losing the address says nothing
+    and a return to the last reported address says nothing either.
+    """
+
+    def __init__(self, callback: Callable[[str], None] | None) -> None:
+        self._callback = callback
+        self._last: str | None = None
+
+    def update(self, ip: str | None) -> None:
+        if not ip or ip == self._last:
+            return
+        self._last = ip
+        if self._callback:
+            self._callback(ip)
