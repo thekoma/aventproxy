@@ -67,9 +67,9 @@ type attempts struct {
 
 func fakeAttempts(t *testing.T, cs *CameraStream, lanStart func(context.Context) error) *attempts {
 	a := &attempts{lan: &fakeLAN{start: lanStart}}
-	cs.lanFactory = func() lanStreamer {
+	cs.lanFactory = func(fwd *RTPForwarder) lanStreamer {
 		a.lanBuilt.Add(1)
-		a.lanFwd = cs.webrtcBridge.rtpForwarder
+		a.lanFwd = fwd
 		return a.lan
 	}
 	cs.cloudStart = func() error {

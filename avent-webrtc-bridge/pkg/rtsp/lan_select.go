@@ -58,11 +58,10 @@ func (cs *CameraStream) lanEligible() (bool, string) {
 	return true, ""
 }
 
-// newLANSource is the default lanFactory. It feeds the current bridge's
-// forwarder, the one RTSP clients attach to at SETUP. Callers hold cs.mutex.
-func (cs *CameraStream) newLANSource() lanStreamer {
+// newLANSource is the default lanFactory. Callers hold cs.mutex.
+func (cs *CameraStream) newLANSource(forwarder *RTPForwarder) lanStreamer {
 	s := cs.server
-	return NewLANSource(cs.camera.DeviceID, cs.camera.DeviceName, s.UID, s.LANTargets[cs.camera.DeviceID], cs.webrtcBridge.rtpForwarder)
+	return NewLANSource(cs.camera.DeviceID, cs.camera.DeviceName, s.UID, s.LANTargets[cs.camera.DeviceID], forwarder)
 }
 
 // tryLAN streams over the LAN when the stream may. It reports done when the
@@ -85,7 +84,8 @@ func (cs *CameraStream) tryLAN() (done bool) {
 	if cs.bridgeStarted {
 		cs.replaceBridge()
 	}
-	source := cs.lanFactory()
+	// The current bridge's forwarder is the one RTSP clients attach to at SETUP.
+	source := cs.lanFactory(cs.webrtcBridge.rtpForwarder)
 	// Set before Start, so a death between Start and the commit below reaches
 	// lanDied, whose teardown cancels the attempt.
 	cs.lan = source

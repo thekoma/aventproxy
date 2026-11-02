@@ -174,10 +174,11 @@ type CameraStream struct {
 	// startStreamOverride, if set, replaces startStream (tests only).
 	startStreamOverride func()
 
-	lan           lanStreamer        // the LAN source, from its attempt on; nil on the cloud
-	lanFactory    func() lanStreamer // builds the LAN source; callers hold mutex
-	cloudStart    func() error       // the cloud attempt; callers hold mutex
-	attemptCancel context.CancelFunc // ends a LAN attempt in flight
+	lan           lanStreamer                     // the LAN source, from its attempt on; nil on the cloud
+	lanFactory    func(*RTPForwarder) lanStreamer // builds a LAN source feeding that forwarder; callers hold mutex
+	cloudStart    func() error                    // the cloud attempt; callers hold mutex
+	attemptCancel context.CancelFunc              // ends a LAN attempt or probe in flight
+	promoteTimer  *time.Timer                     // moves a cloud stream back to the LAN; see armPromotion
 }
 
 type ServerConfig struct {
@@ -713,6 +714,7 @@ func (cs *CameraStream) startStream() {
 			if len(cs.clients) == 0 { // the last client left during a LAN attempt or the retry wait
 				cs.scheduleShutdown()
 			}
+			cs.armPromotion()
 			cs.mutex.Unlock()
 			core.Logger.Info().Msgf("Streaming %s over the cloud", cs.camera.DeviceName)
 			return
@@ -839,6 +841,10 @@ func (cs *CameraStream) stopStreamInternal() {
 	if cs.shutdownTimer != nil {
 		cs.shutdownTimer.Stop()
 		cs.shutdownTimer = nil
+	}
+	if cs.promoteTimer != nil {
+		cs.promoteTimer.Stop()
+		cs.promoteTimer = nil
 	}
 
 	// Only log if we were actually active
