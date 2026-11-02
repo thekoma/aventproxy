@@ -14,6 +14,7 @@ from homeassistant.core import HomeAssistant
 from .lan_policy import (
     PROTOCOL_VERSION_DEFAULT,
     AddressPublisher,
+    confirmed_protocol,
     data_stale,
     heartbeat_due,
     is_connection_error,
@@ -136,7 +137,8 @@ class TuyaLANClient:
                         "LAN session with %s speaks protocol %s", self._device_id, version
                     )
                 self._version = version
-                self._address.update(ip, str(version))  # on the event loop, like the rest of _connect
+                # On the event loop, like the rest of _connect. An unconfirmed fallback keeps the last pair.
+                self._address.update(ip, confirmed_protocol(version, self._announced_version))
                 return device
         return None
 

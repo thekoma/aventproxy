@@ -121,6 +121,19 @@ def version_candidates(
     return candidates
 
 
+def confirmed_protocol(version: float, announced: float | None) -> str | None:
+    """The protocol to publish for a session at `version`, or None when it proves nothing.
+
+    Below 3.4 tinytuya does no handshake, so the 3.3 fallback on a monitor that
+    announces 3.5 is only a TCP connect, often after a Wi-Fi blip. Publishing it
+    would restart the bridge and keep every stream off the LAN until Home
+    Assistant restarts, so only a version at or above the announced one counts.
+    """
+    if announced is None or version >= announced:
+        return str(version)
+    return None
+
+
 class AddressPublisher:
     """Report the monitor's LAN address and protocol when the pair becomes new and complete.
 

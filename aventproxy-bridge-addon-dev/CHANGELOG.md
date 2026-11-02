@@ -5,7 +5,7 @@ Stay on the stable card unless you are testing, and use the beta card if you onl
 
 ## Unreleased (dev2)
 
-The bridge now uses the LAN only for monitors that speak Tuya LAN protocol 3.5. Monitors on protocol 3.3, such as an SCD973 on firmware 1.4.0, keep streaming over the cloud without a 4-second detour and without probing the LAN every 5 minutes.
+The bridge now uses the LAN only for monitors that speak Tuya LAN protocol 3.5. Monitors on protocol 3.3, such as an SCD973 on firmware 1.4.0, keep streaming over the cloud without a 4-second detour and without probing the LAN every 5 minutes. Update the integration and this card to dev2 together: a dev2 bridge with a dev1 integration never uses the LAN and logs "protocol unknown".
 
 ## Unreleased (dev)
 

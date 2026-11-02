@@ -189,3 +189,33 @@ class TestAddressPublisher:
         publisher = AddressPublisher(seen.append, "192.168.1.9")
         publisher.update("192.168.1.9", "3.3")
         assert seen == ["192.168.1.9"]
+
+
+class TestConfirmedProtocol:
+    """Below 3.4 tinytuya does no handshake, so a fallback session proves only a TCP connect."""
+
+    def test_fallback_below_the_announced_version_is_not_published(self):
+        from lan_policy import confirmed_protocol
+
+        assert confirmed_protocol(3.3, 3.5) is None
+
+    def test_a_session_at_the_announced_version_is_published(self):
+        from lan_policy import confirmed_protocol
+
+        assert confirmed_protocol(3.3, 3.3) == "3.3"
+        assert confirmed_protocol(3.5, 3.5) == "3.5"
+
+    def test_without_an_announcement_the_session_is_published(self):
+        from lan_policy import confirmed_protocol
+
+        assert confirmed_protocol(3.5, None) == "3.5"
+
+    def test_an_unconfirmed_fallback_leaves_the_published_pair_alone(self):
+        """Wi-Fi blip on a 3.5 monitor: the 3.3 fallback must not rewrite the JSON (and restart the bridge)."""
+        from lan_policy import AddressPublisher, confirmed_protocol
+
+        seen = []
+        publisher = AddressPublisher(seen.append, "192.168.1.9", "3.5")
+        publisher.update("192.168.1.9", confirmed_protocol(3.3, 3.5))
+        assert seen == []
+        assert publisher.protocol == "3.5"
