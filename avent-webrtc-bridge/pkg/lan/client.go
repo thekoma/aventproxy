@@ -58,8 +58,11 @@ type Client struct {
 	cancel context.CancelFunc
 	// closers is everything Start opened, closed in reverse order by Close.
 	closers []io.Closer
-	// lastMedia is when any conversation last delivered a media message, in
-	// Unix nanoseconds.
+	// epoch keeps the idle clock monotonic: a wall-clock step (NTP on a board
+	// without an RTC) must neither kill a live stream nor hide a dead one.
+	epoch time.Time
+	// lastMedia is when any conversation last delivered a media message, as
+	// time since epoch.
 	lastMedia atomic.Int64
 }
 
@@ -71,15 +74,15 @@ type mediaReader interface {
 
 // NewClient prepares a client; nothing touches the network until Start.
 func NewClient(cfg ClientConfig) *Client {
-	c := &Client{cfg: cfg}
+	c := &Client{cfg: cfg, epoch: time.Now()}
 	c.markMedia()
 	return c
 }
 
-func (c *Client) markMedia() { c.lastMedia.Store(time.Now().UnixNano()) }
+func (c *Client) markMedia() { c.lastMedia.Store(int64(time.Since(c.epoch))) }
 
 func (c *Client) mediaDeadline() time.Time {
-	return time.Unix(0, c.lastMedia.Load()).Add(mediaIdleTimeout)
+	return c.epoch.Add(time.Duration(c.lastMedia.Load()) + mediaIdleTimeout)
 }
 
 var candidateRE = regexp.MustCompile(`candidate:(\S+) (\d+) (\S+) (\d+) (\S+) (\d+) typ (\S+)`)
@@ -178,6 +181,7 @@ func (c *Client) connect(life, setup context.Context, ip net.IP) error {
 		return err
 	}
 	c.markMedia() // the idle clock starts with the stream, not with NewClient
+	go c.drainControl(life, control)
 	go c.attachMedia(life, router, peer, aesKey)
 	go c.keepAlive(life, session)
 	return nil
@@ -219,6 +223,14 @@ func (c *Client) attachMedia(ctx context.Context, router *packetRouter, peer *ne
 			go c.consume(ctx, stream, aesKey)
 		}
 	}
+}
+
+// drainControl reads and drops the control conversation. Nothing needs it
+// after login, but left unread it would fill the KCP receive window over
+// hours of streaming. It ends with the client, silently.
+func (c *Client) drainControl(ctx context.Context, control io.Reader) {
+	_, err := io.Copy(io.Discard, control)
+	c.fail(ctx, fmt.Errorf("lan: control conversation: %w", err))
 }
 
 // collectAnswer waits for the monitor's answer and its first host candidate.

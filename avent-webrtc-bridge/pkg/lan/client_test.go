@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -286,6 +287,51 @@ func TestControlSessionSilentAfterClose(t *testing.T) {
 	time.Sleep(50 * time.Millisecond) // let the drain see its closed session
 	if n := len(rec.closed); n != 0 {
 		t.Fatalf("OnClosed called %d times after Close, want none", n)
+	}
+}
+
+// The control conversation is read and dropped after login, so it cannot fill
+// the KCP window; the client closing it is not a dead stream.
+func TestControlConversationDrained(t *testing.T) {
+	rec := newRecorder()
+	c := rec.client()
+	control, monitor := net.Pipe()
+	defer monitor.Close()
+	if err := c.hold(control); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c.drainControl(context.Background(), control)
+	}()
+
+	for i := range 3 {
+		// net.Pipe is unbuffered: Write returns only once the drain read it.
+		_ = monitor.SetWriteDeadline(time.Now().Add(time.Second))
+		if _, err := monitor.Write([]byte("control message")); err != nil {
+			t.Fatalf("message %d not drained: %v", i, err)
+		}
+	}
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("drain still running after Close")
+	}
+	if n := len(rec.closed); n != 0 {
+		t.Fatalf("OnClosed called %d times after Close, want none", n)
+	}
+}
+
+// A wall-clock step must not move the idle deadline, so it keeps the
+// monotonic reading.
+func TestIdleDeadlineIsMonotonic(t *testing.T) {
+	c := NewClient(ClientConfig{})
+	if d := c.mediaDeadline(); !strings.Contains(d.String(), " m=") {
+		t.Fatalf("idle deadline %v has no monotonic reading", d)
 	}
 }
 
