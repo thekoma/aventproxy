@@ -469,28 +469,47 @@ func TestLanTargetsNeedKeyAndPassword(t *testing.T) {
 	}
 }
 
+func addonUser(key, uid string) storage.UserSession {
+	return storage.UserSession{
+		Region: "addon", UserKey: key,
+		SessionData: &tuya.SessionData{LoginResult: &tuya.LoginResult{Uid: uid}},
+	}
+}
+
 func TestCloudFallbackUser(t *testing.T) {
 	errCloud := errors.New("API verification failed: down")
 	targets := map[string]rtsp.LANTarget{"a": {LocalKey: "lk", Password: "pw"}}
-	stored := []storage.UserSession{
-		{Region: "other", UserKey: "other_x"},
-		{Region: "addon", UserKey: "addon_x"},
-	}
+	a, b := addonUser("addon_a", "ua"), addonUser("addon_b", "ub")
+	other := storage.UserSession{Region: "other", UserKey: "other_x"}
 
-	t.Run("continues with the stored add-on user", func(t *testing.T) {
-		u, err := cloudFallbackUser(errCloud, targets, stored)
-		if err != nil || u == nil || u.UserKey != "addon_x" {
-			t.Errorf("got %+v, %v", u, err)
-		}
-	})
-	t.Run("fails without LAN targets", func(t *testing.T) {
-		if u, err := cloudFallbackUser(errCloud, nil, stored); u != nil || !errors.Is(err, errCloud) {
-			t.Errorf("got %+v, %v", u, err)
-		}
-	})
-	t.Run("fails without a stored add-on user", func(t *testing.T) {
-		if u, err := cloudFallbackUser(errCloud, targets, stored[:1]); u != nil || !errors.Is(err, errCloud) {
-			t.Errorf("got %+v, %v", u, err)
-		}
-	})
+	cases := []struct {
+		name    string
+		uid     string
+		targets map[string]rtsp.LANTarget
+		stored  []storage.UserSession
+		wantKey string // empty: the original error
+		wantUID string
+	}{
+		{"configured uid picks the matching user", "ub", targets, []storage.UserSession{a, b}, "addon_b", "ub"},
+		{"configured uid without a match fails", "uz", targets, []storage.UserSession{a, b}, "", ""},
+		{"no uid and two users fails", "", targets, []storage.UserSession{a, b}, "", ""},
+		{"no uid and one user takes it with its uid", "", targets, []storage.UserSession{other, a}, "addon_a", "ua"},
+		{"no uid and a user without uid fails", "", targets, []storage.UserSession{{Region: "addon", UserKey: "addon_n"}}, "", ""},
+		{"no LAN targets fails", "ua", nil, []storage.UserSession{a}, "", ""},
+		{"no stored add-on user fails", "ua", targets, []storage.UserSession{other}, "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			u, uid, err := cloudFallbackUser(errCloud, c.uid, c.targets, c.stored)
+			if c.wantKey == "" {
+				if u != nil || !errors.Is(err, errCloud) {
+					t.Errorf("got %+v, %v; want the original error", u, err)
+				}
+				return
+			}
+			if err != nil || u == nil || u.UserKey != c.wantKey || uid != c.wantUID {
+				t.Errorf("got %+v, %q, %v", u, uid, err)
+			}
+		})
+	}
 }

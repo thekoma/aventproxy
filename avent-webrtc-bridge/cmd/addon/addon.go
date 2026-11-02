@@ -67,19 +67,43 @@ func lanTargets(cams []Camera) map[string]rtsp.LANTarget {
 	return out
 }
 
-// cloudFallbackUser decides what a failed cloud check means: with LAN targets
-// and a stored add-on user the bridge can still serve LAN streams, otherwise
-// the original error stands.
-func cloudFallbackUser(cloudErr error, targets map[string]rtsp.LANTarget, stored []storage.UserSession) (*storage.UserSession, error) {
-	if len(targets) == 0 {
-		return nil, cloudErr
+func storedUID(u storage.UserSession) string {
+	if u.SessionData == nil || u.SessionData.LoginResult == nil {
+		return ""
 	}
+	return u.SessionData.LoginResult.Uid
+}
+
+// cloudFallbackUser decides what a failed cloud check means: with LAN targets
+// and this account's stored add-on user the bridge can still serve LAN
+// streams, otherwise the original error stands. The data dir holds every
+// account's user, so with a configured uid only the matching one is taken;
+// without it only a sole add-on user is, and it must carry a uid. Returns the
+// user and the uid for LAN sessions.
+func cloudFallbackUser(cloudErr error, cfgUID string, targets map[string]rtsp.LANTarget, stored []storage.UserSession) (*storage.UserSession, string, error) {
+	if len(targets) == 0 {
+		return nil, "", cloudErr
+	}
+	var match []*storage.UserSession
 	for i := range stored {
-		if stored[i].Region == "addon" {
-			return &stored[i], nil
+		if stored[i].Region != "addon" {
+			continue
+		}
+		if cfgUID == "" || storedUID(stored[i]) == cfgUID {
+			match = append(match, &stored[i])
 		}
 	}
-	return nil, cloudErr
+	if len(match) == 0 || (cfgUID == "" && len(match) != 1) {
+		return nil, "", cloudErr
+	}
+	uid := cfgUID
+	if uid == "" {
+		uid = storedUID(*match[0])
+	}
+	if uid == "" {
+		return nil, "", cloudErr
+	}
+	return match[0], uid, nil
 }
 
 // verifyCloud checks API access and fetches the user.
@@ -256,12 +280,13 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	userInfo, err := verifyCloud(client)
 	if err != nil {
 		stored, _ := storageManager.ListUsers()
-		fallback, ferr := cloudFallbackUser(err, targets, stored)
+		fallback, uid, ferr := cloudFallbackUser(err, cfg.UID, targets, stored)
 		if ferr != nil {
 			return ferr
 		}
 		core.Logger.Warn().Msgf("Cloud unreachable, serving LAN streams until it returns: %v", err)
 		userKey = fallback.UserKey
+		client.UID = uid
 	} else {
 		core.Logger.Info().Msgf("User: %s (%s)", userInfo.Nickname, utils.MaskEmail(userInfo.Email))
 		if cfg.UID == "" {
