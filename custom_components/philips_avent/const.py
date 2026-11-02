@@ -106,9 +106,10 @@ LULLABY_CATALOGUE = (
 )
 # First id of each block the catalogue is published under. Units of the same
 # product (kzm54lhabeeucq5a) report different blocks: the original SCD973 uses
-# 3542154-3542168, a unit on firmware 1.1.12 uses 12072916-12072930 (issue #91).
+# 3542154-3542168, a unit on firmware 1.1.12 uses 12072916-12072930 (issue #91),
+# an SCD923 on firmware 1.4.0 uses 3219038-3219052 (issue #93).
 # A camera ignores DPS 202 with an id outside its own block and keeps playing.
-LULLABY_BLOCK_STARTS = (3542154, 12072916)
+LULLABY_BLOCK_STARTS = (3542154, 12072916, 3219038)
 LULLABY_TRACK_MAP = {
     start + index: track
     for start in LULLABY_BLOCK_STARTS
@@ -151,6 +152,8 @@ DEFAULT_BRIDGE_HOST = "localhost"
 # (issue #72), so listening must not imply talking.
 CONF_TALKBACK = "talkback"
 DEFAULT_TALKBACK = False
+CONF_LAN_STREAMING = "lan_streaming"
+DEFAULT_LAN_STREAMING = True
 
 
 def lullaby_track_id(name: str, current_id: int | None) -> int | None:

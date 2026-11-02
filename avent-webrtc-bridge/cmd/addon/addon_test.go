@@ -1,10 +1,13 @@
 package addon
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"avent-webrtc-bridge/pkg/rtsp"
+	"avent-webrtc-bridge/pkg/storage"
 	"avent-webrtc-bridge/pkg/tuya"
 )
 
@@ -402,5 +405,127 @@ func TestLoadConfig_RTSPBind(t *testing.T) {
 	}
 	if cfg.RTSPBind != "0.0.0.0" {
 		t.Errorf("RTSPBind = %q, want 0.0.0.0", cfg.RTSPBind)
+	}
+}
+
+func writeCfg(t *testing.T, body string) BridgeConfig {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "bridge.json")
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig(p)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	return cfg
+}
+
+func TestLoadConfigWithLANFields(t *testing.T) {
+	cfg := writeCfg(t, `{
+	  "signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P",
+	  "app_key": "AK", "device_id": "D", "uid": "u1", "lan_streaming": false,
+	  "cameras": [{"camera_id": "abc123", "camera_name": "Erik",
+	    "local_key": "lk", "p2p_password": "pw", "lan_ip": "192.0.2.7"}]
+	}`)
+	if cfg.UID != "u1" {
+		t.Errorf("UID = %q", cfg.UID)
+	}
+	if lanStreamingEnabled(cfg) {
+		t.Error("lan_streaming false must disable LAN streaming")
+	}
+	got, ok := lanTargets(cfg.Cameras)["abc123"]
+	want := rtsp.LANTarget{LocalKey: "lk", Password: "pw", IP: "192.0.2.7"}
+	if !ok || got != want {
+		t.Errorf("target = %+v (present %v), want %+v", got, ok, want)
+	}
+}
+
+func TestLoadConfigWithoutLANFields(t *testing.T) {
+	cfg := writeCfg(t, `{
+	  "signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P",
+	  "app_key": "AK", "device_id": "D",
+	  "cameras": [{"camera_id": "abc123", "camera_name": "Erik"}]
+	}`)
+	if !lanStreamingEnabled(cfg) {
+		t.Error("an absent lan_streaming must mean enabled")
+	}
+	if n := len(lanTargets(cfg.Cameras)); n != 0 {
+		t.Errorf("targets = %d, want 0", n)
+	}
+}
+
+func TestLanTargetsNeedKeyAndPassword(t *testing.T) {
+	got := lanTargets([]Camera{
+		{ID: "a", LocalKey: "lk"},
+		{ID: "b", P2PPassword: "pw"},
+		{ID: "c", LocalKey: "lk", P2PPassword: "pw"},
+	})
+	if len(got) != 1 {
+		t.Fatalf("targets = %v, want only c", got)
+	}
+	if _, ok := got["c"]; !ok {
+		t.Errorf("c missing: %v", got)
+	}
+}
+
+func addonUser(key, uid string) storage.UserSession {
+	return storage.UserSession{
+		Region: "addon", UserKey: key,
+		SessionData: &tuya.SessionData{LoginResult: &tuya.LoginResult{Uid: uid}},
+	}
+}
+
+func TestCloudFallbackUser(t *testing.T) {
+	errCloud := errors.New("API verification failed: down")
+	targets := map[string]rtsp.LANTarget{"a": {LocalKey: "lk", Password: "pw"}}
+	a, b := addonUser("addon_a", "ua"), addonUser("addon_b", "ub")
+	other := storage.UserSession{Region: "other", UserKey: "other_x"}
+
+	cases := []struct {
+		name    string
+		uid     string
+		targets map[string]rtsp.LANTarget
+		stored  []storage.UserSession
+		wantKey string // empty: the original error
+	}{
+		{"configured uid picks the matching user", "ub", targets, []storage.UserSession{a, b}, "addon_b"},
+		{"configured uid skips other regions", "ua", targets, []storage.UserSession{other, a}, "addon_a"},
+		{"configured uid without a match fails", "uz", targets, []storage.UserSession{a, b}, ""},
+		{"no uid fails, even with a sole add-on user", "", targets, []storage.UserSession{a}, ""},
+		{"no LAN targets fails", "ua", nil, []storage.UserSession{a}, ""},
+		{"no stored add-on user fails", "ua", targets, []storage.UserSession{other}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			u, err := cloudFallbackUser(errCloud, c.uid, c.targets, c.stored)
+			if c.wantKey == "" {
+				if u != nil || !errors.Is(err, errCloud) {
+					t.Errorf("got %+v, %v; want the original error", u, err)
+				}
+				return
+			}
+			if err != nil || u == nil || u.UserKey != c.wantKey {
+				t.Errorf("got %+v, %v", u, err)
+			}
+		})
+	}
+}
+
+func TestLanUID(t *testing.T) {
+	cases := []struct {
+		cfgUID, cloudUID, want string
+		differ                 bool
+	}{
+		{"u1", "u1", "u1", false},
+		{"", "u1", "u1", false},  // a config without uid takes the cloud's
+		{"u1", "", "u1", false},  // the cloud returned no id
+		{"u1", "u2", "u1", true}, // LAN offers keep the integration's uid
+	}
+	for _, c := range cases {
+		got, differ := lanUID(c.cfgUID, c.cloudUID)
+		if got != c.want || differ != c.differ {
+			t.Errorf("lanUID(%q, %q) = %q, %v; want %q, %v", c.cfgUID, c.cloudUID, got, differ, c.want, c.differ)
+		}
 	}
 }

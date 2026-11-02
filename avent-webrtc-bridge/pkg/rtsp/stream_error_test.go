@@ -278,3 +278,42 @@ func TestSDPAdvertisesBackchannelOnlyWithTalkback(t *testing.T) {
 		t.Error("talkback on: the return channel must be marked sendonly")
 	}
 }
+
+func TestGetOrCreateStreamReusesPendingStream(t *testing.T) {
+	server := NewRTSPServer(0, nil)
+	camera := &storage.CameraInfo{DeviceID: "d", DeviceName: "n"}
+
+	first, err := server.getOrCreateStream(camera, "hd", nil)
+	if err != nil {
+		t.Fatalf("first getOrCreateStream: %v", err)
+	}
+	second, err := server.getOrCreateStream(camera, "hd", nil)
+	if err != nil {
+		t.Fatalf("second getOrCreateStream: %v", err)
+	}
+	if first != second {
+		t.Fatal("second caller got a new stream before the first client attached")
+	}
+}
+
+func TestRemoveClientDoesNotHoldServerLockOnStream(t *testing.T) {
+	server, stream := newTestCameraStream(t)
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	client := &RTSPClient{conn: serverConn, session: "sess1", stream: stream}
+	server.addClient(client)
+
+	stream.mutex.Lock() // simulates startStream holding the stream lock
+	defer stream.mutex.Unlock()
+	go server.removeClient(client.session)
+	time.Sleep(50 * time.Millisecond) // let it reach the stream lock
+
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for !server.mutex.TryLock() {
+		if time.Now().After(deadline) {
+			t.Fatal("server.mutex still held while the stream lock is busy")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	server.mutex.Unlock()
+}

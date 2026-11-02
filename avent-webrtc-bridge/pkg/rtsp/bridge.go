@@ -26,6 +26,9 @@ import (
 	"github.com/pion/rtp"
 )
 
+// answerTimeout bounds the wait for the camera's answer so a silent camera cannot hang startStream.
+const answerTimeout = 20 * time.Second
+
 type WebRTCBridge struct {
 	camera         *storage.CameraInfo
 	resolution     string
@@ -44,6 +47,7 @@ type WebRTCBridge struct {
 
 	// State
 	connected         bool
+	stopped           bool
 	ownsClient        bool
 	answerReceived    bool
 	pendingCandidates []pion.ICECandidateInit
@@ -249,7 +253,7 @@ func (wb *WebRTCBridge) Start() error {
 		return fmt.Errorf("failed to create offer: %v", err)
 	}
 
-	if err = wb.waiter.Wait(); err != nil {
+	if err = wb.waiter.WaitTimeout(answerTimeout); err != nil {
 		return fmt.Errorf("failed to establish connection: %v", err)
 	}
 
@@ -263,10 +267,13 @@ func (wb *WebRTCBridge) Stop() {
 	wb.mutex.Lock()
 	defer wb.mutex.Unlock()
 
-	if !wb.connected {
+	// A Start that failed after creating the PeerConnection (no answer in
+	// time) left it and the MQTT camera client behind: tear those down too.
+	if wb.stopped || (!wb.connected && wb.peerConnection == nil) {
 		return
 	}
 
+	wb.stopped = true
 	wb.connected = false
 
 	core.Logger.Info().Msgf("Stopping WebRTC bridge for camera: %s", wb.camera.DeviceName)

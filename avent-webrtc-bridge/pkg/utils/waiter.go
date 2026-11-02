@@ -3,8 +3,12 @@
 package utils
 
 import (
+	"errors"
 	"sync"
+	"time"
 )
+
+var ErrWaitTimeout = errors.New("timed out waiting")
 
 // Waiter support:
 // - autotart on first Wait
@@ -44,9 +48,9 @@ func (w *Waiter) Done(err error) {
 	w.mu.Lock()
 
 	// safe run Done only when have tasks
-	if w.state > 0 {
+	release := w.state > 0
+	if release {
 		w.state--
-		w.WaitGroup.Done()
 	}
 
 	// block waiter for any operations after last done
@@ -56,6 +60,11 @@ func (w *Waiter) Done(err error) {
 	}
 
 	w.mu.Unlock()
+
+	// release after err is set, so a woken Wait never reads it unsynchronised
+	if release {
+		w.WaitGroup.Done()
+	}
 }
 
 func (w *Waiter) WaitChan() <-chan error {
@@ -73,4 +82,21 @@ func (w *Waiter) WaitChan() <-chan error {
 	w.mu.Unlock()
 
 	return ch
+}
+
+// WaitTimeout is Wait bounded by d. A timeout finishes the waiter with
+// ErrWaitTimeout, which releases the Wait goroutine and every later Wait.
+func (w *Waiter) WaitTimeout(d time.Duration) error {
+	ch := make(chan error, 1)
+	go func() { ch <- w.Wait() }()
+
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case err := <-ch:
+		return err
+	case <-timer.C:
+		w.Done(ErrWaitTimeout)
+		return ErrWaitTimeout
+	}
 }

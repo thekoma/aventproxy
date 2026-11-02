@@ -14,7 +14,7 @@ Home Assistant integration for Philips Avent SCD973/SCD923 baby monitors, provid
 
 | Feature | Entity Type | Description |
 |---------|-------------|-------------|
-| 📹 Live Video | Camera | 1080p H.264 stream via WebRTC→RTSP bridge |
+| 📹 Live Video | Camera | 1080p H.264 stream via WebRTC→RTSP bridge, over your local network when possible |
 | 🌡️ Temperature | Sensor | Room temperature from built-in sensor |
 | 💡 Night Light | Switch + Number | On/off + brightness 1-100% |
 | 🎵 Lullabies | Buttons + Number | Play/pause/stop/next/prev + volume |
@@ -23,6 +23,8 @@ Home Assistant integration for Philips Avent SCD973/SCD923 baby monitors, provid
 | 🏃 Motion Detected | Binary Sensor | Fires when motion is detected (auto-clears after 30s) |
 | 🔊 Sound Detected | Binary Sensor | Fires when sound is detected (auto-clears after 30s) |
 | 🔒 Privacy Mode | Switch | Camera on/off |
+
+Video goes over your local network first and falls back to the cloud when the monitor does not allow it. See [Local streaming](#local-streaming) below.
 
 Multiple monitors on one Tuya account are supported: the bridge serves each camera from the same port on a distinct RTSP path derived from the camera's display name.
 
@@ -41,6 +43,8 @@ The integration is model-agnostic (it talks to the Tuya cloud API generically), 
 | SCD860 | ❓ Requested, not yet confirmed ([#59](https://github.com/thekoma/aventproxy/issues/59)) |
 
 Motion and sound alerts do not travel the same way on every model. The SCD973 and SCD923 report them on DPS 250 and 141, while the SCD951 and SCD953 use a timestamped alarm record on DPS 212 instead. Both shapes are handled since 2026.8.0. If your monitor raises an alert the app notifies you about and Home Assistant stays quiet, the log now names the alert Tuya sent, which usually turns the fix into one line.
+
+LAN streaming has only been tested on an SCD973/26.
 
 Got a model that isn't listed, or one that misbehaves? A [diagnostics dump](docs/reporting-issues.md) is the fastest way to get it mapped.
 
@@ -165,6 +169,14 @@ The integration uses the same Tuya Mobile SDK API as the official Philips Avent 
 └─────────────────────────────┘
 ```
 
+### Local streaming
+
+The bridge tries the local network first for HD streams with talkback off, when LAN streaming is on, the camera has a local key and P2P password and the integration knows its LAN address. The stream must deliver H.264, otherwise the first-frame check below sends it to the cloud. Anything else goes through the cloud, as before. That includes talkback and `/sd` streams. The monitor must also have reached the internet once since it booted, or it sends no media over the LAN.
+
+If no H.264 video arrives over the LAN within 4 seconds (an HEVC monitor ends up here), the stream falls back to the cloud and that camera skips the LAN for 5 minutes. A LAN stream that dies restarts on the cloud. After the 5 minutes, a stream on the cloud checks the LAN in the background and moves its viewers back with one short reconnect. RTSP clients see the same H.264 video and PCMU/8000 audio either way.
+
+The **LAN streaming** option in the integration options is on by default. Turn it off if a stream stopped working after an update, and open an issue with your monitor model and the bridge log.
+
 ## Camera Data Points
 
 | DPS | Code | Description | Values |
@@ -219,6 +231,8 @@ Found a bug or an entity that behaves oddly? See [`docs/reporting-issues.md`](do
 The WebRTC bridge (`avent-webrtc-bridge/`) is forked from [tuya-ipc-terminal](https://github.com/seydx/tuya-ipc-terminal) by seydx, which itself uses WebRTC and codec utilities from [go2rtc](https://github.com/AlexxIT/go2rtc) by AlexxIT. The bridge has since diverged significantly with Philips Avent-specific features including RTP timestamp rebasing, SPS/PPS injection, RTSP backchannel audio, and MQTT-based WebRTC signaling via the Tuya Mobile SDK.
 
 Protocol research in `WHITEPAPER.md` sections 14 to 17, covering the WebRTC signaling frames, the native `libThingP2PSDK.so` analysis and the local-signaling path, was contributed by [@leonardpitzu](https://github.com/leonardpitzu) in [#51](https://github.com/thekoma/aventproxy/issues/51) from work on the sibling `aventlocal` project.
+
+The local streaming path is a port of [Leonard Pitzu's work](https://github.com/leonardpitzu/aventproxy) ([#51](https://github.com/thekoma/aventproxy/issues/51)): he reverse-engineered the LAN protocol and wrote the first implementation. It is documented in `WHITEPAPER.md` section 20 and in his [PROTOCOL.md](https://github.com/leonardpitzu/aventproxy/blob/main/PROTOCOL.md).
 
 ## License
 

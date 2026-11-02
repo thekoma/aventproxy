@@ -20,7 +20,7 @@ tags = ["tuya", "session"]
 [[rules]]
 id = "aventproxy-credential-assignment"
 description = "Tuya credential assigned to a literal in source — load it from the environment or tools/credentials.json instead"
-regex = '''(?i)\b(sid|ecode|partner|partneridentity|uid|device_id|dev_id|camera_id|local_key|localkey)\s*[:=]\s*['"]([^'"\n]{10,})['"]'''
+regex = '''(?i)\b(sid|ecode|partner|partneridentity|uid|device_id|dev_id|camera_id|local_key|localkey|p2p_password|p2ppassword)\s*[:=]\s*['"]([^'"\n]{10,})['"]'''
 secretGroup = 2
 tags = ["tuya", "credential"]
 

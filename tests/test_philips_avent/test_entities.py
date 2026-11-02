@@ -158,7 +158,16 @@ class TestLullabySelect:
         assert LULLABY_TRACK_MAP[12072925][0] == "White Noise"
         assert LULLABY_TRACK_MAP[12072930][0] == "Rain Shower"
 
+    def test_scd923_block_names(self):
+        # Issue #93: a kzm54lhabeeucq5a SCD923 on firmware 1.4.0, measured from the app.
+        assert LULLABY_TRACK_MAP[3219038][0] == "Baa Baa Black Sheep"
+        assert LULLABY_TRACK_MAP[3219045][0] == "Heartbeat"
+        assert LULLABY_TRACK_MAP[3219047][0] == "White Noise"
+        assert LULLABY_TRACK_MAP[3219052][0] == "Rain Shower"
+
     def test_blocks_do_not_overlap(self):
+        assert 3219038 - 1 not in LULLABY_TRACK_MAP
+        assert 3219052 + 1 not in LULLABY_TRACK_MAP
         assert 3542168 + 1 not in LULLABY_TRACK_MAP
         assert 12072916 - 1 not in LULLABY_TRACK_MAP
 
@@ -166,6 +175,7 @@ class TestLullabySelect:
         assert lullaby_track_id("White Noise", 3542160) == 3542163
         assert lullaby_track_id("White Noise", 12072925) == 12072925
         assert lullaby_track_id("Rain Shower", 12072916) == 12072930
+        assert lullaby_track_id("Heartbeat", 3219043) == 3219045
 
     def test_id_defaults_to_original_block(self):
         assert lullaby_track_id("Brahms' Lullaby", None) == 3542155

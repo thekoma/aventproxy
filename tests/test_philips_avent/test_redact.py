@@ -7,7 +7,7 @@ responses carry ``localKey`` — a direct LAN control credential — inside list
 of device dicts, which is exactly the shape a non-recursive redactor misses.
 """
 
-from redact import SECRET_KEYS, redact_secrets
+from redact import REDACTED, SECRET_KEYS, redact_secrets
 
 
 class TestFlatDicts:
@@ -42,6 +42,10 @@ class TestFlatDicts:
 
 
 class TestNesting:
+    def test_redacts_lan_fields(self):
+        out = redact_secrets({"cameras": [{"p2p_password": "pw", "lan_ip": "192.168.1.9", "local_key": "lk"}]})
+        assert out["cameras"][0] == {"p2p_password": REDACTED, "lan_ip": REDACTED, "local_key": REDACTED}
+
     def test_recurses_into_nested_dicts(self):
         out = redact_secrets({"device": {"inner": {"localKey": "abc"}}})
         assert out["device"]["inner"]["localKey"] == "**REDACTED**"

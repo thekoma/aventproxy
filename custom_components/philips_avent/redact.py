@@ -24,7 +24,7 @@ SECRET_KEYS = frozenset({
     "password", "passwd", "email", "username", "mobile", "phone",
     "token", "access_token", "refresh_token", "sessionid", "session_id",
     # Device
-    "localkey", "local_key", "psk", "secret", "devkey", "dev_key",
+    "localkey", "local_key", "p2p_password", "lan_ip", "psk", "secret", "devkey", "dev_key",
     # Location. tuya.m.device.get reports the household's public address as
     # "ip", which kept a reporter from attaching the dump (issue #91).
     "lat", "lon", "lng", "latitude", "longitude", "ip",

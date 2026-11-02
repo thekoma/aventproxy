@@ -34,6 +34,9 @@ class TestBuildCamerasPayloadShape:
             "camera_id": "abc123",
             "camera_name": "Baby",
             "product_id": "selj2idknqhjnids",
+            "local_key": "",
+            "p2p_password": "",
+            "lan_ip": "",
         }
 
     def test_product_id_empty_for_scd973(self):
@@ -121,14 +124,41 @@ class TestBuildBridgeConfig:
         config = build_bridge_config(**self.BASE)
         assert set(config) == {
             "signing_key", "sid", "ecode", "partner", "app_key", "device_id",
-            "package_name", "api_host", "talkback", "bridge_port", "cameras",
+            "package_name", "api_host", "talkback", "uid", "lan_streaming", "bridge_port",
+            "cameras",
         }
 
     def test_cameras_use_the_shared_payload_builder(self):
         config = build_bridge_config(**self.BASE)
         assert config["cameras"] == [
-            {"camera_id": "abc123", "camera_name": "Erik", "product_id": "p1"},
+            {
+                "camera_id": "abc123", "camera_name": "Erik", "product_id": "p1",
+                "local_key": "", "p2p_password": "", "lan_ip": "",
+            },
         ]
+
+    def test_cameras_carry_lan_fields(self):
+        lan = {"abc123": {"local_key": "lk", "p2p_password": "pw", "lan_ip": "192.168.1.9"}}
+        cameras = [*self.BASE["cameras"], {"deviceId": "other", "deviceName": "Two"}]
+        config = build_bridge_config(**{**self.BASE, "cameras": cameras}, uid="u1", lan=lan)
+        assert config["uid"] == "u1"
+        assert config["cameras"][0]["local_key"] == "lk"
+        assert config["cameras"][0]["p2p_password"] == "pw"
+        assert config["cameras"][0]["lan_ip"] == "192.168.1.9"
+        assert [config["cameras"][1][k] for k in ("local_key", "p2p_password", "lan_ip")] == ["", "", ""]
+
+    def test_lan_streaming_defaults_on(self):
+        assert build_bridge_config(**self.BASE)["lan_streaming"] is True
+
+    def test_lan_streaming_written_when_off(self):
+        assert build_bridge_config(**self.BASE, lan_streaming=False)["lan_streaming"] is False
+
+    def test_unchanged_inputs_give_identical_json(self):
+        # run.sh restarts the bridge on any md5 change (issue #73).
+        lan = {"abc123": {"local_key": "lk", "p2p_password": "pw", "lan_ip": "192.168.1.9"}}
+        first = json.dumps(build_bridge_config(**self.BASE, uid="u1", lan=lan), indent=2)
+        second = json.dumps(build_bridge_config(**self.BASE, uid="u1", lan=lan), indent=2)
+        assert first == second
 
     def test_config_is_json_serialisable(self):
         assert json.loads(json.dumps(build_bridge_config(**self.BASE))) == build_bridge_config(**self.BASE)
@@ -236,3 +266,91 @@ class TestTalkbackOption:
 
     def test_key_is_part_of_the_go_contract(self):
         assert "talkback" in build_bridge_config(**self.BASE)
+
+
+class _Coordinator:
+    def __init__(self, device_info, stored_key="", lan_ip=None):
+        self.device_info = device_info
+        self._local_key = stored_key
+        self.lan_ip = lan_ip
+
+
+class _Api:
+    def __init__(self, result=None, error=None):
+        self._result, self._error = result, error
+
+    async def get_rtc_config(self, dev_id):
+        if self._error:
+            raise self._error
+        return self._result
+
+
+class TestLanCredentials:
+    def test_lan_credentials_prefer_fresh_key(self):
+        from lan_credentials import lan_credentials
+
+        coordinators = {"cam": _Coordinator({"localKey": "new"}, stored_key="old", lan_ip="10.0.0.5")}
+        out = lan_credentials(coordinators, {"cam": "pw"})
+        assert out == {"cam": {"local_key": "new", "p2p_password": "pw", "lan_ip": "10.0.0.5"}}
+
+    def test_only_strings_never_none(self):
+        from lan_credentials import lan_credentials
+
+        out = lan_credentials({"cam": _Coordinator({}, stored_key=None)}, {"cam": None})
+        assert out["cam"] == {"local_key": "", "p2p_password": "", "lan_ip": ""}
+
+    def test_runtime_rewrite_takes_no_api(self):
+        import inspect
+
+        from lan_credentials import lan_credentials
+
+        assert list(inspect.signature(lan_credentials).parameters) == ["coordinators", "passwords"]
+
+    def test_stored_key_used_when_cloud_has_none(self):
+        from lan_credentials import lan_credentials
+
+        out = lan_credentials({"cam": _Coordinator({}, stored_key="old")}, {"cam": "pw"})
+        assert out["cam"]["local_key"] == "old"
+
+
+class TestFetchPasswords:
+    def test_fetched_once_per_camera(self):
+        import asyncio
+
+        from lan_credentials import fetch_p2p_passwords
+
+        out = asyncio.run(fetch_p2p_passwords(_Api({"password": "pw"}), ["cam"], {"cam": "old"}))
+        assert out == {"cam": "pw"}
+
+    def test_failure_keeps_previous_value(self):
+        import asyncio
+
+        from lan_credentials import fetch_p2p_passwords
+
+        out = asyncio.run(fetch_p2p_passwords(_Api(error=RuntimeError("boom")), ["cam", "b"], {"cam": "pw"}))
+        assert out == {"cam": "pw", "b": ""}
+
+    def test_empty_password_keeps_previous_value(self):
+        import asyncio
+
+        from lan_credentials import fetch_p2p_passwords
+
+        out = asyncio.run(fetch_p2p_passwords(_Api({"password": None}), ["cam"], {"cam": "pw"}))
+        assert out == {"cam": "pw"}
+
+
+class TestPreviousLanValues:
+    def test_reads_ip_and_password_per_camera(self):
+        from payload import previous_lan_values
+
+        text = json.dumps({"cameras": [{"camera_id": "a", "lan_ip": "10.0.0.2", "p2p_password": "pw"}, {"camera_id": "b"}]})
+        assert previous_lan_values(text) == {
+            "a": {"lan_ip": "10.0.0.2", "p2p_password": "pw"},
+            "b": {"lan_ip": "", "p2p_password": ""},
+        }
+
+    def test_missing_or_corrupt_input_gives_empty(self):
+        from payload import previous_lan_values
+
+        for text in ("", "{not json", "[]", '{"cameras": [{"no_id": 1}]}', '{"cameras": 5}'):
+            assert previous_lan_values(text) == {}

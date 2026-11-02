@@ -20,12 +20,14 @@ from .const import (
     CONF_COUNTRY_CODE,
     CONF_DEVICE_ID,
     CONF_ECODE,
+    CONF_LAN_STREAMING,
     CONF_PARTNER,
     CONF_SID,
     CONF_TALKBACK,
     CONF_UID,
     DEFAULT_BRIDGE_HOST,
     DEFAULT_BRIDGE_PORT,
+    DEFAULT_LAN_STREAMING,
     DEFAULT_TALKBACK,
     DOMAIN,
 )
@@ -415,6 +417,9 @@ class PhilipsAventOptionsFlowHandler(config_entries.OptionsFlow):
         current_talkback = self.config_entry.options.get(
             CONF_TALKBACK, DEFAULT_TALKBACK
         )
+        current_lan_streaming = self.config_entry.options.get(
+            CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING
+        )
 
         return self.async_show_form(
             step_id="init",
@@ -425,6 +430,7 @@ class PhilipsAventOptionsFlowHandler(config_entries.OptionsFlow):
                         int, vol.Range(min=1024, max=65535)
                     ),
                     vol.Optional(CONF_TALKBACK, default=current_talkback): bool,
+                    vol.Optional(CONF_LAN_STREAMING, default=current_lan_streaming): bool,
                 }
             ),
         )

@@ -30,6 +30,7 @@
 17. [Completed Architecture](#17-completed-architecture)
 18. [Security Considerations](#18-security-considerations)
 19. [Reproducibility Guide](#19-reproducibility-guide)
+20. [Local streaming (LAN)](#20-local-streaming-lan)
 
 ---
 
@@ -1260,6 +1261,30 @@ rtc = call_api("smartlife.m.rtc.config.get", post_data={"devId": "camera_id"}, s
 
 # → rtsp://localhost:8554/MyCamera
 ```
+
+## 20. Local streaming (LAN)
+
+Section 16 showed that the official app can stream with the monitor cut off from the internet. Leonard Pitzu ([@leonardpitzu](https://github.com/leonardpitzu), [#51](https://github.com/thekoma/aventproxy/issues/51)) worked out how, down to the wire format, in his fork's [PROTOCOL.md](https://github.com/leonardpitzu/aventproxy/blob/main/PROTOCOL.md), sections 14 to 16 and 20 to 21. The bridge now has a port of that path, hardened. This section is the short version. His document has the byte-level detail and is the reference.
+
+### The local path
+
+Inputs are the camera's `localKey`, its P2P password (from `smartlife.m.rtc.config.get`, fetched once per setup) and its LAN address. The address comes from the integration's own tinytuya session and is written to the bridge config. The bridge does no discovery of its own.
+
+Signalling runs on TCP 6668, in Tuya 3.5 framing (prefix 0x6699, AES-GCM). The AES-GCM IV is the ASCII bytes of the trace id, not random bytes. The offer names a placeholder STUN server, and the monitor never uses it. The monitor is the ICE-controlling side, and its STUN binding success responses carry no MESSAGE-INTEGRITY, so a stock ICE stack rejects them. The bridge therefore runs a small hand-rolled ICE: as the controlled side it sends its own checks, answers the monitor's requests and treats the first success response as connected. There is a single pair, so nothing is nominated.
+
+Media is KCP over that UDP pair. Each datagram is AES-CBC encrypted and carries an HMAC. Frames inside the KCP stream have a sub-header in one of two forms, and the bridge reads both. Video is H.264. Audio is 16 kHz PCM, which the bridge downsamples to 8 kHz and encodes as mu-law, so RTSP consumers see the same description as on the cloud path: H.264 video and PCMU/8000 audio.
+
+One condition is outside our control. The monitor must have reached the internet once since it booted. After that a WAN outage does not stop LAN streams. A monitor that booted with no internet answers the offer but sends no media.
+
+### Hardening
+
+The bridge counts a LAN attempt as working only when an H.264 SPS or IDR frame arrives within 4 seconds. A connection that negotiates and then stays silent would otherwise leave a black stream reported as healthy. If the check fails, the same start falls back to the cloud and that camera skips the LAN for 5 minutes. A LAN stream that dies later restarts on the cloud.
+
+When the 5 minutes are over, a stream running on the cloud probes the LAN in the background. If the probe works, its viewers are reconnected onto the LAN, with one short reconnect.
+
+Each camera's last published LAN address is kept in the bridge config and seeded from the previous file. Rediscovery at the same address does not rewrite it, and losing the address never does either, so a blip on the integration's LAN session cannot restart the bridge. If the cloud is unreachable when the bridge starts, it still serves LAN streams using its stored session.
+
+Talkback and `/sd` streams stay on the cloud. An HEVC monitor tries the LAN, never delivers an H.264 SPS or IDR, hits the 4 second deadline, falls back to the cloud and skips the LAN for 5 minutes. This has only been tested on an SCD973/26.
 
 ---
 

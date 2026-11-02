@@ -1,6 +1,7 @@
 """Philips Avent Baby Monitor integration for Home Assistant."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 
@@ -16,10 +17,13 @@ from .const import (
     CONF_COUNTRY_CODE,
     CONF_DEVICE_ID,
     CONF_ECODE,
+    CONF_LAN_STREAMING,
     CONF_PARTNER,
     CONF_SID,
     CONF_TALKBACK,
+    CONF_UID,
     DEFAULT_BRIDGE_PORT,
+    DEFAULT_LAN_STREAMING,
     DEFAULT_TALKBACK,
     DOMAIN,
     TUYA_APP_KEY,
@@ -28,11 +32,13 @@ from .const import (
     TUYA_SIGNING_KEY,
 )
 from .coordinator import PhilipsAventCoordinator
+from .lan_credentials import fetch_p2p_passwords, lan_credentials
 from .payload import (
     BRIDGE_CONFIG_PREFIX,
     bridge_config_filename,
     build_bridge_config,
     orphan_bridge_configs,
+    previous_lan_values,
     strip_stored_password,
     write_bridge_config_file,
 )
@@ -53,7 +59,9 @@ def _entry_api_host(entry: ConfigEntry) -> str:
     return entry.data.get(CONF_API_HOST) or api_host(DEFAULT_DATA_CENTER)
 
 
-async def _write_bridge_config(hass: HomeAssistant, entry: ConfigEntry, api: PhilipsAventAPI, cameras: list) -> None:
+async def _write_bridge_config(
+    hass: HomeAssistant, entry: ConfigEntry, api: PhilipsAventAPI, cameras: list, lan: dict
+) -> None:
     """Write bridge config JSON for the add-on."""
     bridge_port = entry.options.get(CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT)
     bridge_config = build_bridge_config(
@@ -66,6 +74,9 @@ async def _write_bridge_config(hass: HomeAssistant, entry: ConfigEntry, api: Phi
         package_name=TUYA_PACKAGE_NAME,
         api_host=_entry_api_host(entry),
         talkback=entry.options.get(CONF_TALKBACK, DEFAULT_TALKBACK),
+        uid=entry.data.get(CONF_UID, ""),
+        lan_streaming=entry.options.get(CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING),
+        lan=lan,
         bridge_port=bridge_port,
         cameras=cameras,
     )
@@ -220,31 +231,71 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await session.close()
         return False
 
-    coordinators = {}
-    for cam in cameras:
-        cam_id = cam.get("deviceId") or cam.get("devId")
-        cam_name = cam.get("deviceName") or cam.get("name", cam_id)
-        local_key = cam.get("localKey")
+    bridge_path = Path(hass.config.path(bridge_config_filename(entry.entry_id)))
 
-        coordinator = PhilipsAventCoordinator(hass, api, cam_id, cam_name, local_key=local_key)
-        await coordinator.async_config_entry_first_refresh()
+    def _read_previous() -> str:
+        try:
+            return bridge_path.read_text()
+        except OSError:
+            return ""
 
-        if not local_key:
-            local_key = coordinator.device_info.get("localKey")
-            if local_key:
-                coordinator._local_key = local_key
+    previous = previous_lan_values(await hass.async_add_executor_job(_read_previous))
 
-        await coordinator.start_lan()
-        coordinators[cam_id] = coordinator
-
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
+    coordinators: dict = {}
+    passwords: dict[str, str] = {}
+    write_lock = asyncio.Lock()
+    data: dict = {
         "api": api,
         "session": session,
         "coordinators": coordinators,
         "config": entry.data,
     }
+    ready = False
 
-    await _write_bridge_config(hass, entry, api, cameras)
+    async def _rewrite_bridge_config() -> None:
+        # One writer at a time; no API call, so this works while the cloud is down.
+        async with write_lock:
+            lan = lan_credentials(coordinators, passwords)
+            await _write_bridge_config(hass, entry, api, cameras, lan)
+
+    def _on_address_change(_ip: str) -> None:
+        # On the event loop. Before `ready` it is dropped: the setup write reads every address.
+        # After an unload the entry data is gone, and unload cancels a task already queued.
+        if ready and hass.data.get(DOMAIN, {}).get(entry.entry_id) is data:
+            entry.async_create_background_task(hass, _rewrite_bridge_config(), "philips_avent_bridge_config")
+
+    try:
+        for cam in cameras:
+            cam_id = cam.get("deviceId") or cam.get("devId")
+            cam_name = cam.get("deviceName") or cam.get("name", cam_id)
+            local_key = cam.get("localKey")
+
+            coordinator = PhilipsAventCoordinator(hass, api, cam_id, cam_name, local_key=local_key)
+            await coordinator.async_config_entry_first_refresh()
+
+            if not local_key:
+                local_key = coordinator.device_info.get("localKey")
+                if local_key:
+                    coordinator._local_key = local_key
+
+            coordinators[cam_id] = coordinator
+            await coordinator.start_lan(_on_address_change, previous.get(cam_id, {}).get("lan_ip") or None)
+
+        passwords.update(
+            await fetch_p2p_passwords(
+                api, list(coordinators), {k: v["p2p_password"] for k, v in previous.items()}
+            )
+        )
+        hass.data.setdefault(DOMAIN, {})[entry.entry_id] = data
+        ready = True
+        await _rewrite_bridge_config()
+    except BaseException:
+        ready = False
+        hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+        for coordinator in coordinators.values():
+            await coordinator.stop_lan()
+        await session.close()
+        raise
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
