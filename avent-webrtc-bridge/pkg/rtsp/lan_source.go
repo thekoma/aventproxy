@@ -20,6 +20,7 @@ import (
 // LANTarget is what the LAN path needs to reach one monitor.
 type LANTarget struct {
 	LocalKey, Password, IP string
+	Protocol               string // Tuya LAN protocol the integration's session negotiated, such as "3.3"
 }
 
 // lanStreamer is a media source that feeds a stream's forwarder over the LAN.

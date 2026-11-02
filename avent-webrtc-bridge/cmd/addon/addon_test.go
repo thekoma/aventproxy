@@ -426,7 +426,7 @@ func TestLoadConfigWithLANFields(t *testing.T) {
 	  "signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P",
 	  "app_key": "AK", "device_id": "D", "uid": "u1", "lan_streaming": false,
 	  "cameras": [{"camera_id": "abc123", "camera_name": "Erik",
-	    "local_key": "lk", "p2p_password": "pw", "lan_ip": "192.0.2.7"}]
+	    "local_key": "lk", "p2p_password": "pw", "lan_ip": "192.0.2.7", "lan_protocol": "3.3"}]
 	}`)
 	if cfg.UID != "u1" {
 		t.Errorf("UID = %q", cfg.UID)
@@ -435,7 +435,7 @@ func TestLoadConfigWithLANFields(t *testing.T) {
 		t.Error("lan_streaming false must disable LAN streaming")
 	}
 	got, ok := lanTargets(cfg.Cameras)["abc123"]
-	want := rtsp.LANTarget{LocalKey: "lk", Password: "pw", IP: "192.0.2.7"}
+	want := rtsp.LANTarget{LocalKey: "lk", Password: "pw", IP: "192.0.2.7", Protocol: "3.3"}
 	if !ok || got != want {
 		t.Errorf("target = %+v (present %v), want %+v", got, ok, want)
 	}

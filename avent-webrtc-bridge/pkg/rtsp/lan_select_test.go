@@ -87,7 +87,7 @@ func fakeAttempts(t *testing.T, cs *CameraStream, lanStart func(context.Context)
 func newLANServer() *RTSPServer {
 	s := NewRTSPServer(0, nil)
 	s.LanStreaming = true
-	s.LANTargets = map[string]LANTarget{"testdev": {LocalKey: "lk", Password: "pw", IP: "192.0.2.10"}}
+	s.LANTargets = map[string]LANTarget{"testdev": {LocalKey: "lk", Password: "pw", IP: "192.0.2.10", Protocol: "3.5"}}
 	return s
 }
 
@@ -211,10 +211,17 @@ func TestIneligibleStreamsSkipLAN(t *testing.T) {
 		{"talkback on", "hd", func(s *RTSPServer) { s.Talkback = true }},
 		{"sd stream", "sd", func(*RTSPServer) {}},
 		{"no LAN credentials", "hd", func(s *RTSPServer) {
-			s.LANTargets["testdev"] = LANTarget{LocalKey: "lk", IP: "192.0.2.10"}
+			s.LANTargets["testdev"] = LANTarget{LocalKey: "lk", IP: "192.0.2.10", Protocol: "3.5"}
 		}},
 		{"no address", "hd", func(s *RTSPServer) {
-			s.LANTargets["testdev"] = LANTarget{LocalKey: "lk", Password: "pw"}
+			s.LANTargets["testdev"] = LANTarget{LocalKey: "lk", Password: "pw", Protocol: "3.5"}
+		}},
+		// pkg/lan speaks 3.5 only: a 3.3 monitor would ignore it until the deadline.
+		{"protocol 3.3", "hd", func(s *RTSPServer) {
+			s.LANTargets["testdev"] = LANTarget{LocalKey: "lk", Password: "pw", IP: "192.0.2.10", Protocol: "3.3"}
+		}},
+		{"protocol unknown", "hd", func(s *RTSPServer) {
+			s.LANTargets["testdev"] = LANTarget{LocalKey: "lk", Password: "pw", IP: "192.0.2.10"}
 		}},
 	}
 	for _, tc := range cases {
@@ -231,7 +238,19 @@ func TestIneligibleStreamsSkipLAN(t *testing.T) {
 			if a.lanBuilt.Load() != 0 || a.cloudStarted.Load() != 1 {
 				t.Fatalf("lan built %d, cloud started %d; want 0 and 1", a.lanBuilt.Load(), a.cloudStarted.Load())
 			}
+			// Not a LAN failure: no cool-down, and no probe of the LAN every 5 minutes.
+			if server.lanCoolingDown("testdev") || promoteTimer(cs) != nil {
+				t.Fatalf("cooling down %v, promotion armed %v; want neither",
+					server.lanCoolingDown("testdev"), promoteTimer(cs) != nil)
+			}
 		})
+	}
+}
+
+func TestLANProtocol35IsEligible(t *testing.T) {
+	cs, _ := newLANStream(t, newLANServer(), "hd") // the fixture's target speaks 3.5
+	if ok, reason := cs.lanEligible(); !ok {
+		t.Fatalf("lanEligible() = false, %q; want true for protocol 3.5", reason)
 	}
 }
 
