@@ -77,33 +77,28 @@ func storedUID(u storage.UserSession) string {
 // cloudFallbackUser decides what a failed cloud check means: with LAN targets
 // and this account's stored add-on user the bridge can still serve LAN
 // streams, otherwise the original error stands. The data dir holds every
-// account's user, so with a configured uid only the matching one is taken;
-// without it only a sole add-on user is, and it must carry a uid. Returns the
-// user and the uid for LAN sessions.
-func cloudFallbackUser(cloudErr error, cfgUID string, targets map[string]rtsp.LANTarget, stored []storage.UserSession) (*storage.UserSession, string, error) {
-	if len(targets) == 0 {
-		return nil, "", cloudErr
+// account's user, so only the one with the configured uid is taken; a config
+// without uid predates LAN streaming and has no LAN targets anyway.
+func cloudFallbackUser(cloudErr error, cfgUID string, targets map[string]rtsp.LANTarget, stored []storage.UserSession) (*storage.UserSession, error) {
+	if len(targets) == 0 || cfgUID == "" {
+		return nil, cloudErr
 	}
-	var match []*storage.UserSession
 	for i := range stored {
-		if stored[i].Region != "addon" {
-			continue
-		}
-		if cfgUID == "" || storedUID(stored[i]) == cfgUID {
-			match = append(match, &stored[i])
+		if stored[i].Region == "addon" && storedUID(stored[i]) == cfgUID {
+			return &stored[i], nil
 		}
 	}
-	if len(match) == 0 || (cfgUID == "" && len(match) != 1) {
-		return nil, "", cloudErr
+	return nil, cloudErr
+}
+
+// lanUID is the account id LAN offers carry: the integration's uid, or the
+// cloud's when the config has none. The cloud and MQTT always use the cloud's
+// user id, the value tested there (WHITEPAPER); differ says the two disagree.
+func lanUID(cfgUID, cloudUID string) (uid string, differ bool) {
+	if cfgUID == "" {
+		return cloudUID, false
 	}
-	uid := cfgUID
-	if uid == "" {
-		uid = storedUID(*match[0])
-	}
-	if uid == "" {
-		return nil, "", cloudErr
-	}
-	return match[0], uid, nil
+	return cfgUID, cloudUID != "" && cloudUID != cfgUID
 }
 
 // verifyCloud checks API access and fetches the user.
@@ -271,27 +266,22 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	client.PackageName = cfg.PackageName
 
 	core.Logger.Info().Msgf("Tuya API host: %s", apiHost)
-	if cfg.UID != "" {
-		client.UID = cfg.UID
-	}
 	targets := lanTargets(cfg.Cameras)
 
 	var userKey string
 	userInfo, err := verifyCloud(client)
 	if err != nil {
 		stored, _ := storageManager.ListUsers()
-		fallback, uid, ferr := cloudFallbackUser(err, cfg.UID, targets, stored)
+		fallback, ferr := cloudFallbackUser(err, cfg.UID, targets, stored)
 		if ferr != nil {
 			return ferr
 		}
 		core.Logger.Warn().Msgf("Cloud unreachable, serving LAN streams until it returns: %v", err)
 		userKey = fallback.UserKey
-		client.UID = uid
+		client.UID = cfg.UID // MQTTManager takes the cloud's user id once the cloud answers
 	} else {
 		core.Logger.Info().Msgf("User: %s (%s)", userInfo.Nickname, utils.MaskEmail(userInfo.Email))
-		if cfg.UID == "" {
-			client.UID = userInfo.ID
-		}
+		client.UID = userInfo.ID
 		userKey = "addon_" + strings.ReplaceAll(strings.ReplaceAll(userInfo.Email, "@", "_at_"), ".", "_")
 		user := &storage.UserSession{
 			Email:  userInfo.Email,
@@ -346,7 +336,11 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	server.MobileClient = client
 	server.Talkback = cfg.Talkback
 	server.LanStreaming = lanStreamingEnabled(cfg)
-	server.UID = client.UID
+	uid, differ := lanUID(cfg.UID, client.UID)
+	if differ {
+		core.Logger.Warn().Msg("The integration's uid differs from the cloud's user id: the cloud uses the latter, LAN offers the former")
+	}
+	server.UID = uid
 	server.LANTargets = targets
 	core.Logger.Info().Msgf("LAN streaming %t, %d cameras with LAN targets", server.LanStreaming, len(targets))
 	if cfg.Talkback {

@@ -54,7 +54,11 @@ func (m *MQTTManager) connect(deviceId string) (*tuya.MQTTClient, error) {
 	}
 
 	ecode := m.mobileClient.Ecode
-	uid := m.mobileClient.UID
+	// The cloud's user id, not the configured uid that LAN offers carry.
+	uid := userInfo.ID
+	if uid == "" {
+		uid = m.mobileClient.UID
+	}
 	mqttDerived := m.mobileClient.DeriveMQTTConfig(ecode)
 	mqttUsername := m.mobileClient.DeriveMQTTUsername(m.mobileClient.SID, ecode, m.mobileClient.PartnerIdentity)
 	mqttClientID := m.mobileClient.DeriveMQTTClientID(uid)

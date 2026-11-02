@@ -488,28 +488,44 @@ func TestCloudFallbackUser(t *testing.T) {
 		targets map[string]rtsp.LANTarget
 		stored  []storage.UserSession
 		wantKey string // empty: the original error
-		wantUID string
 	}{
-		{"configured uid picks the matching user", "ub", targets, []storage.UserSession{a, b}, "addon_b", "ub"},
-		{"configured uid without a match fails", "uz", targets, []storage.UserSession{a, b}, "", ""},
-		{"no uid and two users fails", "", targets, []storage.UserSession{a, b}, "", ""},
-		{"no uid and one user takes it with its uid", "", targets, []storage.UserSession{other, a}, "addon_a", "ua"},
-		{"no uid and a user without uid fails", "", targets, []storage.UserSession{{Region: "addon", UserKey: "addon_n"}}, "", ""},
-		{"no LAN targets fails", "ua", nil, []storage.UserSession{a}, "", ""},
-		{"no stored add-on user fails", "ua", targets, []storage.UserSession{other}, "", ""},
+		{"configured uid picks the matching user", "ub", targets, []storage.UserSession{a, b}, "addon_b"},
+		{"configured uid skips other regions", "ua", targets, []storage.UserSession{other, a}, "addon_a"},
+		{"configured uid without a match fails", "uz", targets, []storage.UserSession{a, b}, ""},
+		{"no uid fails, even with a sole add-on user", "", targets, []storage.UserSession{a}, ""},
+		{"no LAN targets fails", "ua", nil, []storage.UserSession{a}, ""},
+		{"no stored add-on user fails", "ua", targets, []storage.UserSession{other}, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			u, uid, err := cloudFallbackUser(errCloud, c.uid, c.targets, c.stored)
+			u, err := cloudFallbackUser(errCloud, c.uid, c.targets, c.stored)
 			if c.wantKey == "" {
 				if u != nil || !errors.Is(err, errCloud) {
 					t.Errorf("got %+v, %v; want the original error", u, err)
 				}
 				return
 			}
-			if err != nil || u == nil || u.UserKey != c.wantKey || uid != c.wantUID {
-				t.Errorf("got %+v, %q, %v", u, uid, err)
+			if err != nil || u == nil || u.UserKey != c.wantKey {
+				t.Errorf("got %+v, %v", u, err)
 			}
 		})
+	}
+}
+
+func TestLanUID(t *testing.T) {
+	cases := []struct {
+		cfgUID, cloudUID, want string
+		differ                 bool
+	}{
+		{"u1", "u1", "u1", false},
+		{"", "u1", "u1", false},  // a config without uid takes the cloud's
+		{"u1", "", "u1", false},  // the cloud returned no id
+		{"u1", "u2", "u1", true}, // LAN offers keep the integration's uid
+	}
+	for _, c := range cases {
+		got, differ := lanUID(c.cfgUID, c.cloudUID)
+		if got != c.want || differ != c.differ {
+			t.Errorf("lanUID(%q, %q) = %q, %v; want %q, %v", c.cfgUID, c.cloudUID, got, differ, c.want, c.differ)
+		}
 	}
 }
