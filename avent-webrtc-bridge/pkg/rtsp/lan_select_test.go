@@ -393,3 +393,43 @@ func TestStreamCreatedWithoutCloud(t *testing.T) {
 		t.Fatalf("getOrCreateStream with the cloud down: %v", err)
 	}
 }
+
+// The WAN is down and a LAN blip started the cool-down: when the cloud fails
+// as well, the clients reconnect at once and only a cool-down that alone
+// kept the stream off the LAN ends, so their next start tries the LAN.
+func TestCloudFailureEndsTheCooldown(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		configure func(*RTSPServer)
+		cleared   bool
+	}{
+		{"LAN eligible but cooling down", func(*RTSPServer) {}, true},
+		{"talkback on", func(s *RTSPServer) { s.Talkback = true }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel() // each waits out the 3 s between cloud attempts
+			server := newLANServer()
+			tc.configure(server)
+			server.lanCooldowns["testdev"] = time.Now().Add(lanCooldownPeriod)
+			cs, clientConn := newLANStream(t, server, "hd")
+			a := fakeAttempts(t, cs, nil)
+			cs.cloudStart = func() error {
+				a.cloudStarted.Add(1)
+				return errors.New("cloud down")
+			}
+
+			begin(cs)
+
+			if a.lanBuilt.Load() != 0 || a.cloudStarted.Load() != 2 {
+				t.Fatalf("lan built %d, cloud started %d; want 0 and 2", a.lanBuilt.Load(), a.cloudStarted.Load())
+			}
+			expectClosed(t, clientConn)
+			if active, connecting, _ := streamState(cs); active || connecting {
+				t.Fatalf("active=%v connecting=%v after both paths failed", active, connecting)
+			}
+			if cooling := server.lanCoolingDown("testdev"); cooling == tc.cleared {
+				t.Fatalf("cooling down = %v, want %v", cooling, !tc.cleared)
+			}
+		})
+	}
+}

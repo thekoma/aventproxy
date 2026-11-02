@@ -724,9 +724,19 @@ func (cs *CameraStream) startStream() {
 		cs.mutex.Unlock()
 	}
 
+	// Nothing streams. The clients are closed so they reconnect now rather
+	// than at their own timeout, and a cool-down that alone kept this stream
+	// off the LAN ends: with no working cloud there is nothing to wait for.
 	cs.mutex.Lock()
-	cs.stopStreamInternal()
+	if ok, reason := cs.lanEligible(); !ok && reason == "cooling down" {
+		cs.server.cooldownMutex.Lock()
+		delete(cs.server.lanCooldowns, cs.camera.DeviceID)
+		cs.server.cooldownMutex.Unlock()
+		core.Logger.Info().Msgf("The cloud failed too for %s, trying the LAN again on the next start", cs.camera.DeviceName)
+	}
+	clients := cs.teardownLocked()
 	cs.mutex.Unlock()
+	closeClients(clients)
 }
 
 func (cs *CameraStream) stopStream() {
