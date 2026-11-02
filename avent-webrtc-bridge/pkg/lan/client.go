@@ -11,14 +11,16 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 const (
 	// startTimeout caps the handshake when the caller's context does not.
 	startTimeout = 20 * time.Second
-	// mediaIdleTimeout is how long a media conversation may stay silent before
-	// the stream counts as dead; audio alone arrives about 50 times a second.
+	// mediaIdleTimeout is how long every media conversation may stay silent
+	// before the stream counts as dead; audio alone arrives about 50 times a
+	// second.
 	mediaIdleTimeout = 3 * time.Second
 	loginPacing      = 120 * time.Millisecond
 )
@@ -39,8 +41,9 @@ type ClientConfig struct {
 	OnVideo func(*VideoFrame)
 	OnAudio func(*AudioFrame)
 	// OnClosed reports, once, a stream that died while open: a media read
-	// failed or stayed idle for mediaIdleTimeout, or the keep-alive failed. It
-	// is not called after Close or once the Start context has ended.
+	// failed, no conversation delivered media for mediaIdleTimeout, or the
+	// signalling session failed. It is not called after Close or once the
+	// Start context has ended.
 	OnClosed func(error)
 }
 
@@ -55,6 +58,9 @@ type Client struct {
 	cancel context.CancelFunc
 	// closers is everything Start opened, closed in reverse order by Close.
 	closers []io.Closer
+	// lastMedia is when any conversation last delivered a media message, in
+	// Unix nanoseconds.
+	lastMedia atomic.Int64
 }
 
 // mediaReader is what consume needs from a KCP conversation.
@@ -65,7 +71,15 @@ type mediaReader interface {
 
 // NewClient prepares a client; nothing touches the network until Start.
 func NewClient(cfg ClientConfig) *Client {
-	return &Client{cfg: cfg}
+	c := &Client{cfg: cfg}
+	c.markMedia()
+	return c
+}
+
+func (c *Client) markMedia() { c.lastMedia.Store(time.Now().UnixNano()) }
+
+func (c *Client) mediaDeadline() time.Time {
+	return time.Unix(0, c.lastMedia.Load()).Add(mediaIdleTimeout)
 }
 
 var candidateRE = regexp.MustCompile(`candidate:(\S+) (\d+) (\S+) (\d+) (\S+) (\d+) typ (\S+)`)
@@ -163,6 +177,7 @@ func (c *Client) connect(life, setup context.Context, ip net.IP) error {
 	if err := login(setup, control, aesKey, LoginToken(c.cfg.Password, c.cfg.LocalKey)); err != nil {
 		return err
 	}
+	c.markMedia() // the idle clock starts with the stream, not with NewClient
 	go c.attachMedia(life, router, peer, aesKey)
 	go c.keepAlive(life, session)
 	return nil
@@ -262,16 +277,25 @@ func login(ctx context.Context, control io.Writer, aesKey []byte, token string) 
 
 // consume reads one media conversation until it fails, handing each message to
 // the callbacks.
+//
+// The idle deadline is client-wide: a conversation that stays quiet is fine
+// while another delivers, and the stream is dead only when all of them are.
 func (c *Client) consume(ctx context.Context, r mediaReader, aesKey []byte) error {
 	buf := make([]byte, 65535)
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := r.SetReadDeadline(time.Now().Add(mediaIdleTimeout)); err != nil {
+		if err := r.SetReadDeadline(c.mediaDeadline()); err != nil {
 			return c.fail(ctx, err)
 		}
 		n, err := r.Read(buf)
+		if isTimeout(err) {
+			if time.Now().Before(c.mediaDeadline()) {
+				continue // another conversation delivered meanwhile
+			}
+			return c.fail(ctx, fmt.Errorf("lan: no media for %v: %w", mediaIdleTimeout, err))
+		}
 		if err != nil {
 			return c.fail(ctx, fmt.Errorf("lan: media read: %w", err))
 		}
@@ -283,6 +307,7 @@ func (c *Client) consume(ctx context.Context, r mediaReader, aesKey []byte) erro
 		if !ok {
 			continue
 		}
+		c.markMedia()
 		switch cmd {
 		case CmdMediaVideo:
 			if c.cfg.OnVideo != nil {
@@ -297,7 +322,12 @@ func (c *Client) consume(ctx context.Context, r mediaReader, aesKey []byte) erro
 }
 
 // keepAlive holds the signalling session open; the monitor drops an idle one.
+// Nothing else reads the session after the handshake, so it also drains it:
+// heartbeat replies and pushes would otherwise fill the socket buffer over
+// hours of streaming.
 func (c *Client) keepAlive(ctx context.Context, s *Session) {
+	go func() { c.fail(ctx, fmt.Errorf("lan: signalling session: %w", s.Drain())) }()
+
 	ticker := time.NewTicker(HeartbeatInterval)
 	defer ticker.Stop()
 	for {

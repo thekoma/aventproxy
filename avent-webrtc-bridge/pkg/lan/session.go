@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"sync"
@@ -227,6 +228,19 @@ func nextPrefix(buf []byte) int {
 // Heartbeat pings the monitor so it does not drop an idle session.
 func (s *Session) Heartbeat() error {
 	return s.sendWithKey(s.Key, CmdHeartbeat, nil)
+}
+
+// Drain discards whatever the monitor sends until the connection fails, so
+// replies and pushes nobody reads cannot fill the socket buffer. It returns
+// io.EOF when the monitor closes the connection.
+func (s *Session) Drain() error {
+	if err := s.conn.SetReadDeadline(time.Time{}); err != nil {
+		return err
+	}
+	if _, err := io.Copy(io.Discard, s.conn); err != nil {
+		return err
+	}
+	return io.EOF
 }
 
 // Close shuts the connection down.

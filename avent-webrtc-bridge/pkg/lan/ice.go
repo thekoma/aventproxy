@@ -130,11 +130,10 @@ func iceConnect(ctx context.Context, sock *net.UDPConn, peer *net.UDPAddr, local
 			return err
 		}
 		n, from, err := sock.ReadFromUDP(buf)
+		if isTimeout(err) {
+			continue
+		}
 		if err != nil {
-			var netErr net.Error
-			if errors.As(err, &netErr) && netErr.Timeout() {
-				continue
-			}
 			return err
 		}
 		if !isSTUN(buf[:n]) {
@@ -158,6 +157,13 @@ func iceConnect(ctx context.Context, sock *net.UDPConn, peer *net.UDPAddr, local
 			}
 		}
 	}
+}
+
+// isTimeout reports a read deadline passing, as opposed to a failed
+// connection. kcp-go's timeout unwraps to a net.Error too.
+func isTimeout(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 // hostCandidate renders the SDP line for a socket the monitor can reach.
