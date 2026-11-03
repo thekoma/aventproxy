@@ -234,9 +234,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     bridge_path = Path(hass.config.path(bridge_config_filename(entry.entry_id)))
 
     def _read_previous() -> str:
+        # Unreadable or undecodable both mean no seed. Raising here would fail
+        # setup before the try below, leaking the aiohttp session.
         try:
             return bridge_path.read_text()
-        except OSError:
+        except (OSError, ValueError):
             return ""
 
     previous = previous_lan_values(await hass.async_add_executor_job(_read_previous))
