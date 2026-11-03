@@ -461,6 +461,19 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         """
         return self.data is not None and self.lan_serves_state and self.alerts_need_the_cloud
 
+    @property
+    def alerts_heard(self) -> bool:
+        """Whether an alert raised now would reach the motion, sound and crying sensors.
+
+        Below 3.4, and on a 3.4+ monitor that has not reported DPS 212, alerts
+        arrive only through the cloud poll. While a LAN session covers a failing
+        poll everything the session pushes stays usable, but those sensors would
+        sit at "off" while deaf: a cry alert that looks healthy. They read
+        unavailable instead until the cloud answers again. Behind a paused 3.4+
+        poll alerts push over the LAN, so they stay available.
+        """
+        return not self._cloud_failing or self.cloud_poll_pausable
+
     @callback
     def _adopt_local_key(self, key: str | None) -> None:
         """Take a local key the cloud rotated, for the LAN session and the bridge.

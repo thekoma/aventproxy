@@ -617,3 +617,66 @@ class TestATuyaErrorIsAnAnswer:
         assert asyncio.run(coordinator._async_update_data()) == STATE
         assert coordinator.config_entry.reauths == 1
         assert coordinator._cloud_failing is True
+
+
+@pytest.fixture
+def platforms(make):
+    """binary_sensor and sensor, loaded into the same stand-in package as the coordinator."""
+    import importlib
+
+    from .ha_stand_in import PKG
+
+    return importlib.import_module(f"{PKG}.binary_sensor"), importlib.import_module(f"{PKG}.sensor")
+
+
+class TestDeafAlertsReadUnavailable:
+    """A covered cloud failure must not leave a poll-fed alert sensor looking healthy."""
+
+    def _refresh(self, coordinator):
+        """_async_update_data, and the success Home Assistant records when it returns."""
+        data = asyncio.run(coordinator._async_update_data())
+        coordinator.last_update_success = True
+        return data
+
+    def _alerts(self, binary, coordinator):
+        return [cls(coordinator, "cam") for cls in (
+            binary.AventMotionDetected, binary.AventSoundDetected, binary.AventCryDetected,
+        )]
+
+    def test_on_3_3_the_alerts_go_unavailable_and_temperature_stays(self, make, platforms):
+        binary, sensor = platforms
+        coordinator = make(3.3, api=FakeApi(device_error=aiohttp.ClientError("cloud down")))
+        alerts = self._alerts(binary, coordinator)
+        temperature = sensor.AventTemperatureSensor(coordinator, "cam")
+        lullaby = binary.AventLullabyPlaying(coordinator, "cam")
+        assert all(alert.available for alert in alerts)
+
+        assert self._refresh(coordinator) == STATE
+        assert temperature.available
+        assert temperature.native_value == 23.45
+        assert lullaby.available
+        assert not any(alert.available for alert in alerts)
+
+        coordinator.api.device_error = None
+        self._refresh(coordinator)
+        assert all(alert.available for alert in alerts)
+
+    def test_behind_a_paused_3_5_poll_the_alerts_stay_available(self, make, platforms):
+        # The alerts push over the LAN there, so a failing signal call deafens nothing.
+        binary, sensor = platforms
+        coordinator = make(3.5, api=FakeApi(rssi_error=aiohttp.ClientError("cloud down")))
+        alerts = self._alerts(binary, coordinator)
+        assert self._refresh(coordinator) == STATE
+        assert coordinator._cloud_failing
+        assert all(alert.available for alert in alerts)
+        assert sensor.AventTemperatureSensor(coordinator, "cam").available
+
+    def test_a_3_5_monitor_without_dps_212_is_treated_as_poll_fed(self, make, platforms):
+        # Its alerts may come in 250 and 141, which nothing shows pushing on 3.4+ (see M5).
+        binary, _ = platforms
+        coordinator = make(
+            3.5, data={"138": False, "207": 2345}, api=FakeApi(device_error=aiohttp.ClientError("cloud down"))
+        )
+        alerts = self._alerts(binary, coordinator)
+        self._refresh(coordinator)
+        assert not any(alert.available for alert in alerts)
