@@ -72,14 +72,14 @@ func (cs *CameraStream) newLANSource(forwarder *RTPForwarder) lanStreamer {
 // cloud must not start: the LAN took the stream, or the stream was stopped
 // meanwhile. cs.mutex is released while the attempt waits for the first
 // frame, so a Stop cancels the attempt instead of waiting for it.
-func (cs *CameraStream) tryLAN() (done bool) {
+func (cs *CameraStream) tryLAN(gen uint64) (done bool) {
 	if ok, reason := cs.lanEligible(); !ok {
 		core.Logger.Info().Msgf("Not using the LAN for %s: %s", cs.camera.DeviceName, reason)
 		return false
 	}
 
 	cs.mutex.Lock()
-	if cs.active || !cs.connecting {
+	if cs.superseded(gen) {
 		cs.mutex.Unlock()
 		return true
 	}
@@ -105,8 +105,8 @@ func (cs *CameraStream) tryLAN() (done bool) {
 		core.Logger.Warn().Msgf("LAN failed for %s: %v, using the cloud", cs.camera.DeviceName, err)
 		return false
 	}
-	cs.connecting = false
-	cs.active = true
+	cs.connecting.Store(false)
+	cs.active.Store(true)
 	if len(cs.clients) == 0 { // the last client left during the attempt
 		cs.scheduleShutdown()
 	}

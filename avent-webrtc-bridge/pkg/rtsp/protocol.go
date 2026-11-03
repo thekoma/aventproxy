@@ -117,7 +117,7 @@ func (s *RTSPServer) handleRTSPProtocol(client *RTSPClient) {
 		// Check for interleaved RTP (backchannel)
 		firstByte, err := client.reader.Peek(1)
 		if err != nil {
-			if client.stream.active && !errors.Is(err, syscall.ECONNRESET) {
+			if client.stream.active.Load() && !errors.Is(err, syscall.ECONNRESET) {
 				core.Logger.Error().Err(err).Msg("Error peeking connection")
 			}
 			break
@@ -135,7 +135,7 @@ func (s *RTSPServer) handleRTSPProtocol(client *RTSPClient) {
 		// Handle regular RTSP request
 		request, err := s.parseRTSPRequestFromReader(client.reader)
 		if err != nil {
-			if client.stream.active && !errors.Is(err, syscall.ECONNRESET) {
+			if client.stream.active.Load() && !errors.Is(err, syscall.ECONNRESET) {
 				core.Logger.Error().Err(err).Msg("Error parsing RTSP request")
 			}
 			break

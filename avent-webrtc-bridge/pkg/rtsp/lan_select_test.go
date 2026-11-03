@@ -113,15 +113,15 @@ func newLANStream(t *testing.T, server *RTSPServer, resolution string) (*CameraS
 // begin runs startStream as AddClient does, in the caller's goroutine.
 func begin(cs *CameraStream) {
 	cs.mutex.Lock()
-	cs.connecting = true
+	gen := cs.claimStart()
 	cs.mutex.Unlock()
-	cs.startStream()
+	cs.startStream(gen)
 }
 
 func streamState(cs *CameraStream) (active, connecting bool, lan lanStreamer) {
 	cs.mutex.RLock()
 	defer cs.mutex.RUnlock()
-	return cs.active, cs.connecting, cs.lan
+	return cs.active.Load(), cs.connecting.Load(), cs.lan
 }
 
 func TestLANSuccessSkipsCloud(t *testing.T) {
@@ -392,7 +392,7 @@ func TestClientLeavingDuringLANAttemptSchedulesShutdown(t *testing.T) {
 
 	cs.mutex.RLock()
 	defer cs.mutex.RUnlock()
-	if !cs.active || cs.lan == nil {
+	if !cs.active.Load() || cs.lan == nil {
 		t.Fatal("expected the stream on the LAN")
 	}
 	if cs.shutdownTimer == nil {

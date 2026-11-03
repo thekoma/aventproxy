@@ -42,7 +42,7 @@ func waitStreamRemoved(t *testing.T, server *RTSPServer, streamId string) {
 
 func TestHandleBridgeErrorClosesClientsAndClearsActive(t *testing.T) {
 	server, stream := newTestCameraStream(t)
-	stream.active = true
+	stream.active.Store(true)
 
 	clientConn, serverConn := net.Pipe()
 	defer clientConn.Close()
@@ -57,8 +57,8 @@ func TestHandleBridgeErrorClosesClientsAndClearsActive(t *testing.T) {
 	stream.handleBridgeError(errors.New("WebRTC connection failed/closed"))
 
 	stream.mutex.RLock()
-	active := stream.active
-	connecting := stream.connecting
+	active := stream.active.Load()
+	connecting := stream.connecting.Load()
 	stream.mutex.RUnlock()
 	if active || connecting {
 		t.Fatalf("expected inactive stream after error, active=%v connecting=%v", active, connecting)
@@ -76,7 +76,7 @@ func TestHandleBridgeErrorClosesClientsAndClearsActive(t *testing.T) {
 
 func TestHandleBridgeErrorReentrancy(t *testing.T) {
 	server, stream := newTestCameraStream(t)
-	stream.active = true
+	stream.active.Store(true)
 
 	clientConn, serverConn := net.Pipe()
 	defer clientConn.Close()
@@ -93,7 +93,7 @@ func TestHandleBridgeErrorReentrancy(t *testing.T) {
 	stream.handleBridgeError(errors.New("second"))
 
 	stream.mutex.RLock()
-	active := stream.active
+	active := stream.active.Load()
 	handling := stream.handlingError
 	stream.mutex.RUnlock()
 	if active {
@@ -108,14 +108,14 @@ func TestHandleBridgeErrorReentrancy(t *testing.T) {
 
 func TestRemoveStreamSkipsReplacementInstance(t *testing.T) {
 	server, oldStream := newTestCameraStream(t)
-	oldStream.active = true
+	oldStream.active.Store(true)
 
 	// Simulate teardown scheduling async remove, then a fast reconnect
 	// registering a new CameraStream under the same streamId.
 	oldStream.stopStreamInternal()
 
 	replacement := NewCameraStream(oldStream.camera, oldStream.resolution, oldStream.user, nil, server)
-	replacement.active = true
+	replacement.active.Store(true)
 	server.mutex.Lock()
 	server.streams[replacement.streamId] = replacement
 	server.mutex.Unlock()
@@ -130,7 +130,8 @@ func TestRemoveStreamSkipsReplacementInstance(t *testing.T) {
 		t.Fatalf("stale removeStream deleted replacement stream")
 	}
 
-	// Cleanup of the live instance still works.
+	// Cleanup of the replacement, once it has stopped, still works.
+	replacement.active.Store(false)
 	server.removeStream(replacement)
 	server.mutex.RLock()
 	_, exists := server.streams[replacement.streamId]
@@ -142,7 +143,7 @@ func TestRemoveStreamSkipsReplacementInstance(t *testing.T) {
 
 func TestAddClientRestartsAfterBridgeError(t *testing.T) {
 	_, stream := newTestCameraStream(t)
-	stream.active = true
+	stream.active.Store(true)
 
 	started := make(chan struct{}, 1)
 	stream.startStreamOverride = func() {
@@ -169,7 +170,7 @@ func TestAddClientRestartsAfterBridgeError(t *testing.T) {
 	}
 
 	stream.mutex.RLock()
-	connecting := stream.connecting
+	connecting := stream.connecting.Load()
 	stream.mutex.RUnlock()
 	if !connecting {
 		t.Fatal("expected connecting=true after AddClient on inactive stream")
@@ -182,7 +183,7 @@ func TestReplaceBridgeReattachesErrorHandler(t *testing.T) {
 	// fresh bridge with the handler attached, otherwise the next WebRTC failure
 	// is never noticed and the stream stays active with dead video (issue #68).
 	_, stream := newTestCameraStream(t)
-	stream.active = true
+	stream.active.Store(true)
 
 	first := stream.webrtcBridge
 	if first == nil || first.errorHandler() == nil {
