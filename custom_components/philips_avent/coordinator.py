@@ -161,11 +161,13 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
 
     @property
     def lan_serves_state(self) -> bool:
-        """Whether the live LAN session carries this monitor without the cloud.
+        """Whether the live LAN session negotiated 3.4 or up (see lan_policy.keyed_protocol).
 
-        Only a session that negotiated 3.4 or up: it answers the baseline query
-        and pushes alarms in DPS 212 (see lan_policy.keyed_protocol). On 3.3 the
-        cloud stays in the loop exactly as before.
+        Such a session answers the baseline query and pushes alarms in DPS 212.
+        On its own that does not take the cloud out of the loop:
+        `cloud_poll_pausable` also needs DPS 212 in the monitor's state, and
+        both the paused poll and the end of the cloud mirror follow it. On 3.3
+        the cloud stays in the loop exactly as before.
         """
         return self._lan_client is not None and keyed_protocol(self._lan_client.session_version)
 
@@ -342,17 +344,19 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
     async def set_dps(self, dps: dict, *, optimistic: dict | None = None) -> dict:
         """Send a DPS command, over the LAN when there is a session for it.
 
-        On a 3.4+ session a command the LAN delivered is done: the monitor reports
-        the change on that same session, so repeating it through the cloud only
-        sends the write over the internet again (fork a59b77f). Below 3.4 a LAN
-        success is mirrored to the cloud as before, except relative lullaby steps
-        (`mirror_dps_to_cloud`). A command the LAN could not deliver goes through
-        the cloud on any protocol.
+        While the cloud poll is paused behind a 3.4+ session
+        (`cloud_poll_pausable`), a command the LAN delivered is done: the monitor
+        reports the change on that same session, so repeating it through the
+        cloud only sends the write over the internet again (fork a59b77f).
+        Whenever the cloud is still polled, a LAN success is mirrored to it as
+        before, except relative lullaby steps (`mirror_dps_to_cloud`), so a poll
+        cannot hand back a cloud state that never heard of the change. A command
+        the LAN could not deliver goes through the cloud on any protocol.
 
         `optimistic` carries values the monitor reports back under another key
         than the one written, such as the lullaby track in DPS 248.
         """
-        local_only = self.lan_serves_state
+        local_only = self.cloud_poll_pausable
         if self._lan_client and self._lan_client.connected:
             result = await self._lan_client.set_dps(dps, repeatable=mirror_dps_to_cloud(dps))
             if result:

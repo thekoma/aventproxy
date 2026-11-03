@@ -125,6 +125,16 @@ class TestCommands:
         assert coordinator.api.published == []
         assert coordinator.data["138"] is True
 
+    def test_a_3_5_session_still_polled_keeps_the_mirror(self, make):
+        # No DPS 212 yet, so the cloud is still polled: without the mirror the
+        # next poll could hand back a cloud state that never heard of the command.
+        coordinator = make(3.5, data={"138": False, "207": 2345})
+        asyncio.run(coordinator.set_dps({"138": True}))
+        assert coordinator._lan_client.sent == [{"138": True}]
+        assert coordinator.api.published == [{"138": True}]
+        asyncio.run(coordinator.set_dps({"201": "next"}))
+        assert coordinator.api.published == [{"138": True}]
+
     def test_a_command_the_lan_could_not_deliver_goes_through_the_cloud(self, make):
         for version in (3.3, 3.5):
             coordinator = make(version, delivered=False)
