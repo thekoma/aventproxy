@@ -289,3 +289,23 @@ func TestDeviceChannelClientID(t *testing.T) {
 		}
 	}
 }
+
+// The moto route's frames arrive on the MQTT dispatch goroutine every camera
+// shares: the receiver must return even when the session reads nothing.
+func TestReceiverNeverBlocksTheDispatch(t *testing.T) {
+	r := newSignalRig(t, false)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ { // well past the queue
+			r.moto.say(r.session, lan.TypeCandidate)
+		}
+		r.moto.say(r.session, lan.TypeDisconnect)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the receiver blocked the dispatch goroutine")
+	}
+	_ = r.sig.Close()
+}
