@@ -17,7 +17,7 @@ Part of this is in the integration and part in this card, so update both to dev3
 - On 3.3, LAN pushes no longer hold off the cloud poll. Frequent pushes (SenseIQ) could delay it, and with it every motion and sound alert, which arrive only through that poll.
 - A pushed update that landed during the LAN keep-alive was thrown away. It is now kept.
 - A command that never left over the LAN now goes through the cloud. A lullaby next or previous is no longer sent twice after an unclear error.
-- While the integration's LAN session is up, a cloud outage leaves the entities available. On 3.3 the motion and sound sensors still need the cloud to fire.
+- While the integration's LAN session is up, a cloud outage leaves the entities available. On 3.3, Motion, Sound and Crying Detected read unavailable until the cloud is back, because their alerts come only from the cloud.
 - A re-paired monitor (new local key) is picked up without restarting Home Assistant.
 - New Baby Moving sensor. Sleep stage now knows Out of bed and Settling.
 - Bridge, for Frigate, go2rtc and other RTSP viewers:
@@ -31,9 +31,13 @@ Part of this is in the integration and part in this card, so update both to dev3
 - `speaker_off`, on by default here. Once a cloud session connects, the bridge asks the monitor to keep its speaker off. Two-way audio overrides it, and LAN-signalled streams never send it. The stable and beta cards do not send it.
 - `webrtc_audio`. `recvonly` (the default) asks the monitor for audio as before. `none` asks for video only, to see whether the monitor needs audio to open its speaker. RTSP viewers then get a silent audio track.
 
-After updating, check that `speaker_off` shows as on in this card's Configuration tab. To tell whether it works, pause Frigate and any other viewer, start a lullaby, open the camera for a minute, then close it. The lullaby should keep playing. When the session ends, about 30 s after the last viewer leaves, the bridge log shows `Cloud session for <camera> carried … video and N audio packets`. N should be above zero. If N is 0, turn `speaker_off` off to get the audio back. Either way, please report what you saw on #72.
+After updating, check that `speaker_off` shows as on in this card's Configuration tab. To tell whether it works, pause Frigate and any other viewer, start a lullaby, then open the camera for a minute. The lullaby should keep playing. Ten seconds after the session connects, the bridge log says one of two things:
+- `Audio from <camera> still flows with its speaker kept closed: N packets in 10s`: good.
+- A warning, `No audio from <camera> since asking the monitor to keep its speaker closed`: the request muted the stream. Turn `speaker_off` off to get the audio back.
 
-**Log wording.** The bridge names each stream by its signalling: `Streaming <camera> with cloud signalling` or `… with LAN signalling`. The old wording was "over the cloud" and "over the LAN". The video of a cloud-signalled stream already travels over your LAN when the monitor is reachable; only the signalling goes through Tuya. New bridge lines: `Offer to …`, `Answer from …`, `Asked <camera> to keep its speaker off (issue #72)`, `Cloud session for … carried …`, and `Cloud sessions: audio …, speaker off …` at start. New integration lines: `Cloud poll for <camera> paused` and `resumed`, `Cloud for <camera> failed …` and `Cloud for <camera> answers again`.
+Either way, please report what you saw on #72.
+
+**Log wording.** The bridge names each stream by its signalling: `Streaming <camera> with cloud signalling` or `… with LAN signalling`. The old wording was "over the cloud" and "over the LAN". The video of a cloud-signalled stream already travels over your LAN when the monitor is reachable; only the signalling goes through Tuya. New bridge lines: `Offer to …`, `Answer from …`, `Asked <camera> to keep its speaker off (issue #72)`, the 10 s audio check above, `Cloud session for … carried … packets` when a session ends, and `Cloud sessions: audio …, speaker off …` at start. New integration lines: `Cloud poll for <camera> paused` and `resumed`, `Cloud for <camera> failed …` and `Cloud for <camera> answers again`.
 
 If something broke after this update, open an issue with your monitor model, firmware, the integration diagnostics and the bridge log.
 

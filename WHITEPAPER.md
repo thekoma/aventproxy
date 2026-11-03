@@ -939,6 +939,9 @@ gate is the version the live session negotiated. A monitor that announces 3.5 bu
   - While a session that has proven its key is up, a failing cloud poll leaves the entities
     available, with one warning and one recovery line. On 3.3 a session proves its key with its
     first decrypted push.
+  - The exception is a monitor whose alerts come only through the poll: one below 3.4, or a 3.4+
+    monitor that has not reported DPS 212. There the motion, sound and crying sensors read
+    unavailable until the cloud answers, because they cannot hear anything in the meantime.
 
 ---
 
@@ -1410,7 +1413,7 @@ Three outcomes are possible:
 - it fixes the problem;
 - it mutes the viewer's audio instead, if Tuya's "speaker" means the listening side.
 
-Every cloud session therefore logs what it negotiated (`Offer to …`, `Answer from …`) and, when it ends, `Cloud session for <camera> carried <V> video and <A> audio packets`. A lullaby that keeps playing while that audio count stays above zero would confirm the hypothesis. The second option, `webrtc_audio: none`, leaves audio out of the offer altogether. It tells whether the monitor needs a negotiated audio section before it opens its speaker. The stable and beta cards send no speaker command.
+Every cloud session therefore logs what it negotiated (`Offer to …`, `Answer from …`) and, when it ends, `Cloud session for <camera> carried <V> video and <A> audio packets`. An always-on consumer such as Frigate never ends its session, so the bridge also checks once, 10 seconds after the request. It logs `Audio from <camera> still flows with its speaker kept closed: <n> packets in 10s` if audio still arrives. If none does, it logs a warning that says to turn `speaker_off` off. A lullaby that keeps playing while audio keeps flowing would confirm the hypothesis. The second option, `webrtc_audio: none`, leaves audio out of the offer altogether. It tells whether the monitor needs a negotiated audio section before it opens its speaker. The stable and beta cards send no speaker command.
 
 If the speaker control does not help, the structural fix for 3.3 monitors would be to send the app's own `imm` offer over cloud MQTT and reuse the local path's KCP/AES media. That way every session would look like the app's. It is a larger change, and it needs fields nobody has tested on hardware.
 
