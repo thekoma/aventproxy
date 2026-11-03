@@ -558,3 +558,11 @@ class TestOneWarningAndOneRecoveryPerOutage:
         coordinator._rssi_refreshed_at = None
         assert self._poll(coordinator) == STATE
         assert len(self._messages(caplog, "INFO")) == 1
+
+
+def test_the_stand_in_leaves_no_modules_behind():
+    import sys
+
+    from .ha_stand_in import PKG
+
+    assert [name for name in sys.modules if name == PKG or name.startswith(f"{PKG}.")] == []

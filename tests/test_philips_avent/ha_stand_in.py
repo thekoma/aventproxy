@@ -6,7 +6,8 @@ monitor on protocol 3.3 does, so those tests load the real module here. The
 stand-in covers only the names the coordinator and the LAN client import.
 
 Never used where Home Assistant is installed: the stand-in must not shadow the
-real package. tinytuya is stubbed only when it is missing, as it is in CI.
+real package, so those tests are reported as skipped there, not run. tinytuya
+is stubbed only when it is missing, as it is in CI.
 """
 from __future__ import annotations
 
@@ -99,9 +100,15 @@ def _stand_in_modules() -> dict[str, types.ModuleType]:
 
 
 def load(monkeypatch, name: str) -> types.ModuleType:
-    """Import `<package>.<name>` with the stand-in in place, undone by `monkeypatch`."""
+    """Import `<package>.<name>` with the stand-in in place, undone by `monkeypatch`.
+
+    Every module of the package is registered with `monkeypatch` before the
+    import, so the ones it pulls in are removed again afterwards too.
+    """
     for key, mod in _stand_in_modules().items():
         monkeypatch.setitem(sys.modules, key, mod)
-    for key in [k for k in sys.modules if k.startswith(f"{PKG}.")]:
+    for path in PKG_DIR.glob("*.py"):
+        key = f"{PKG}.{path.stem}"
+        monkeypatch.setitem(sys.modules, key, None)
         monkeypatch.delitem(sys.modules, key)
     return importlib.import_module(f"{PKG}.{name}")

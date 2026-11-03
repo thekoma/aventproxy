@@ -286,3 +286,31 @@ class TestProven:
         client._disconnect()
         client.connected, client._version = True, 3.3
         assert not client.proven
+
+
+class TestBaselineOnlyOnAKeyedSession:
+    """The 3.3 invariant at run level: DP_QUERY goes out once on 3.5 and never on 3.3."""
+
+    @pytest.mark.parametrize(("version", "queries"), [(3.3, 0), (3.5, 1)])
+    def test_dp_query_only_on_a_keyed_session(self, lan, monkeypatch, version, queries):
+        published = []
+        client = lan.TuyaLANClient(FakeHass(), "dev", "key", lambda dps, baseline=False: published.append((dps, baseline)))
+        device = FakeDevice("dev", "10.0.0.7", "key", version)
+        device.status_result = {"dps": {"207": 2500}}
+        turns = [0]
+
+        async def connect():
+            client._device, client.connected, client._version = device, True, version
+            return True
+
+        def receive():
+            turns[0] += 1
+            if turns[0] >= 3:
+                client._stop_event.set()
+            return None
+
+        device.receive = receive
+        monkeypatch.setattr(client, "_connect", connect)
+        asyncio.run(client._run())
+        assert device.status_calls == queries
+        assert published == ([({"207": 2500}, True)] if queries else [])
