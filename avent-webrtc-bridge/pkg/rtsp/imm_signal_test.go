@@ -309,3 +309,41 @@ func TestReceiverNeverBlocksTheDispatch(t *testing.T) {
 	}
 	_ = r.sig.Close()
 }
+
+// M1: a moto answer that lands while the device channel is being dialled wins:
+// the offer is not sent again, and the new channel is let go at once.
+func TestMotoAnswerDuringTheDialDropsTheChannel(t *testing.T) {
+	r := newSignalRig(t, true)
+	r.dialHold = make(chan struct{})
+	r.offer(t)
+	deadline := time.After(2 * time.Second)
+	for r.dials.Load() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("never dialled")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	r.moto.say(r.session, lan.TypeAnswer)
+	close(r.dialHold)
+	r.waitDial(t)
+	deadline = time.After(2 * time.Second)
+	for !r.dev.isClosed() {
+		select {
+		case <-deadline:
+			t.Fatal("the device channel was kept after the moto answered")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	if got := r.dev.log(); len(got) != 0 {
+		t.Fatalf("device channel got %v after the moto answered", got)
+	}
+	r.candidate(t, "c9")
+	if got := r.dev.log(); len(got) != 0 {
+		t.Fatalf("a later frame reached the dropped channel: %v", got)
+	}
+	if f := nextFrame(t, r.frames); f.Header.Type != lan.TypeAnswer {
+		t.Fatalf("frame = %+v", f)
+	}
+	_ = r.sig.Close()
+}

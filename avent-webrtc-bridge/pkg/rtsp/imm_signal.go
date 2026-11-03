@@ -127,7 +127,9 @@ func (m *mqttSignaller) escalate() {
 	m.devMu.Lock()
 	defer m.devMu.Unlock()
 	m.mu.Lock()
-	if m.closed {
+	// The dial takes a second or two: the session may have ended meanwhile,
+	// or the moto answered late. Either way the offer must not go out again.
+	if m.closed || m.answered != "" {
 		m.mu.Unlock()
 		dev.Close()
 		return
