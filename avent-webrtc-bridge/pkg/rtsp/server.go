@@ -78,6 +78,10 @@ type RTSPServer struct {
 
 	cooldownMutex sync.Mutex
 	lanCooldowns  map[string]time.Time // device id -> end of its LAN cool-down
+
+	// newStream, if set, prepares every stream getOrCreateStream creates,
+	// before any client can reach it (tests only).
+	newStream func(*CameraStream)
 }
 
 // describeBind is the human-readable form of BindAddress for the log.
@@ -153,6 +157,10 @@ type RTSPClient struct {
 	backAudioRTPChannel  byte
 	backAudioRTCPChannel byte
 	setupCount           int
+
+	// attached is closed once the client has joined its stream, or was
+	// refused (see joinStream). Nil for a client that never joins one.
+	attached chan struct{}
 }
 
 type CameraStream struct {
@@ -177,6 +185,11 @@ type CameraStream struct {
 	// AddClient has not run yet. A count, not a flag: one client arriving
 	// must not hide another that is still on its way.
 	pending atomic.Int32
+
+	// stops counts the stops that dropped the forwarder's clients (written
+	// under mutex). A client compares it across its RTSP setup to learn
+	// whether a stop dropped it before it joined; see joinStream.
+	stops atomic.Uint64
 
 	// startGen numbers the stream's starts. A start that waited without the
 	// lock checks it, so it never acts on a newer start's behalf.
@@ -440,6 +453,7 @@ func (s *RTSPServer) handleConnection(conn net.Conn) {
 		sendRTSPResponse(conn, 500, "Internal Server Error", nil, "Failed to create stream")
 		return
 	}
+	stops := stream.stops.Load()
 
 	// Create RTSP client
 	client := &RTSPClient{
@@ -456,11 +470,15 @@ func (s *RTSPServer) handleConnection(conn net.Conn) {
 		audioRTPChannel:     2,
 		backAudioRTPChannel: 4,
 		setupCount:          0,
+		attached:            make(chan struct{}),
 	}
 
-	// Add client to server and stream
+	// The client joins its stream on the side, because the stream's lock is
+	// held for a whole cloud attempt, and none of the RTSP answers needs it:
+	// joining first made every client after the first wait for the attempt,
+	// so a camera that never answered stalled them all at DESCRIBE (#89, #97).
 	s.addClient(client)
-	stream.AddClient(client)
+	go s.joinStream(client, stops)
 
 	// Handle initial request
 	s.handleRTSPMethod(client, request)
@@ -521,6 +539,9 @@ func (s *RTSPServer) getOrCreateStream(camera *storage.CameraInfo, streamResolut
 
 	stream.attachBridgeErrorHandler()
 	stream.pending.Add(1)
+	if s.newStream != nil {
+		s.newStream(stream)
+	}
 
 	s.streams[streamId] = stream
 
@@ -555,6 +576,22 @@ func (s *RTSPServer) addClient(client *RTSPClient) {
 	s.clients[client.session] = client
 }
 
+// joinStream adds client to its stream, which starts the stream if it is idle.
+// stops is the stream's stop count from when the client was handed it. If a
+// stop came in between, it dropped the client from the forwarder, and the
+// teardown could not close a client the stream did not know yet: the client
+// is closed now, to reconnect to a fresh stream, rather than joined to one
+// that would never send it anything.
+func (s *RTSPServer) joinStream(client *RTSPClient, stops uint64) {
+	defer close(client.attached)
+	if client.stream.attach(client, stops) {
+		return
+	}
+	core.Logger.Info().Msgf("Closing RTSP client %s: the stream for %s stopped before the client could join it",
+		client.session, client.stream.camera.DeviceName)
+	_ = client.conn.Close()
+}
+
 func (s *RTSPServer) removeClient(sessionID string) {
 	s.mutex.Lock()
 	client, exists := s.clients[sessionID]
@@ -564,11 +601,15 @@ func (s *RTSPServer) removeClient(sessionID string) {
 	if !exists {
 		return
 	}
-	// The stream lock can be held for a whole connect, so never wait on it under s.mutex.
+	// The connection first: the stream's lock can be held for a whole
+	// connect, and the peer must not wait for it. Never under s.mutex either.
+	client.conn.Close()
 	if client.stream != nil {
+		if client.attached != nil {
+			<-client.attached // leaving before joining would leave a ghost behind
+		}
 		client.stream.RemoveClient(sessionID)
 	}
-	client.conn.Close()
 }
 
 func (s *RTSPServer) printAvailableEndpoints() error {
@@ -664,7 +705,24 @@ func NewCameraStream(camera *storage.CameraInfo, resolution string, user *storag
 func (cs *CameraStream) AddClient(client *RTSPClient) {
 	cs.mutex.Lock()
 	defer cs.mutex.Unlock()
+	cs.addClientLocked(client)
+}
 
+// attach is AddClient for a client handed the stream when its stop count was
+// stops. It refuses the client, and reports false, if the stream stopped
+// since: see joinStream.
+func (cs *CameraStream) attach(client *RTSPClient, stops uint64) bool {
+	cs.mutex.Lock()
+	defer cs.mutex.Unlock()
+	if cs.stops.Load() != stops {
+		cs.clientArrived()
+		return false
+	}
+	cs.addClientLocked(client)
+	return true
+}
+
+func (cs *CameraStream) addClientLocked(client *RTSPClient) {
 	// Cancel any pending shutdown
 	if cs.shutdownTimer != nil {
 		cs.shutdownTimer.Stop()
@@ -947,6 +1005,7 @@ func (cs *CameraStream) stopStreamInternal() {
 	wasActive := cs.active.Load()
 	cs.active.Store(false)
 	cs.connecting.Store(false)
+	cs.stops.Add(1) // the forwarder drops its clients below
 
 	// Cancel any pending shutdown
 	if cs.shutdownTimer != nil {
