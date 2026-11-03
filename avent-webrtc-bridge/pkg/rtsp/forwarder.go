@@ -478,25 +478,29 @@ func (rf *RTPForwarder) Stop() {
 		client.close()
 		delete(rf.clients, sessionID)
 	}
-	rf.resetMediaLocked()
+	// No client survives a stop, so the clocks may start over too.
+	rf.resetSourceLocked()
+	rf.videoTs, rf.audioTs = frameClock{}, audioClock{}
 
 	core.Logger.Trace().Msg("RTPForwarder stopped and all clients cleared")
 }
 
-// ResetMedia forgets the parameter sets, clocks and sequence offset of the
-// source that fed the forwarder so far, keeping the clients: the next packet
-// starts a new source, as when the cloud takes over from a failed LAN attempt.
+// ResetMedia forgets what belonged to the source that fed the forwarder so
+// far (its parameter sets and sequence offset), keeping the clients, as when
+// the cloud takes over from a failed LAN attempt. The clocks keep running:
+// they follow the wall clock, so timestamps stay monotonic for the clients
+// that stay attached across the change of source.
 func (rf *RTPForwarder) ResetMedia() {
 	rf.mutex.Lock()
 	defer rf.mutex.Unlock()
-	rf.resetMediaLocked()
+	rf.resetSourceLocked()
+	rf.videoTs.open = false // the old source's last picture ends here
 }
 
-func (rf *RTPForwarder) resetMediaLocked() {
+func (rf *RTPForwarder) resetSourceLocked() {
 	rf.firstVideoPacket = true
 	rf.firstAudioPacket = true
 	rf.spsPacket, rf.ppsPacket = nil, nil
-	rf.videoTs, rf.audioTs = frameClock{}, audioClock{}
 	rf.videoSeqOffset = 0
 }
 

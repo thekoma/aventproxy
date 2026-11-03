@@ -458,13 +458,19 @@ func TestCloudFailureEndsTheCooldown(t *testing.T) {
 }
 
 // The cloud fallback starts a new source on the forwarder the failed LAN
-// attempt fed: parameter sets and clocks from that attempt must not carry over.
+// attempt fed: that attempt's parameter sets must not carry over, while the
+// clocks keep running, since clients that set up during the attempt stay
+// attached and must never see timestamps go back.
 func TestFallbackForgetsTheLANAttemptsMedia(t *testing.T) {
 	server := newLANServer()
 	cs, _ := newLANStream(t, server, "hd")
+	lanVideo := &rtp.Packet{Payload: []byte{0x67, 0x42}} // an SPS, then nothing
+	lanAudio := &rtp.Packet{Header: rtp.Header{PayloadType: 0}, Payload: make([]byte, 160)}
 	var a *attempts
 	a = fakeAttempts(t, cs, func(context.Context) error {
-		a.lanFwd.ForwardVideoPacket(&rtp.Packet{Payload: []byte{0x67, 0x42}}) // an SPS, then nothing
+		a.lanFwd.ForwardVideoPacket(lanVideo)
+		a.lanFwd.ForwardAudioPacket(lanAudio)
+		time.Sleep(50 * time.Millisecond) // the attempt runs a while before it gives up
 		return fmt.Errorf("%w: %w", errNoFirstFrame, context.DeadlineExceeded)
 	})
 	t.Cleanup(cs.stopStream)
@@ -475,8 +481,20 @@ func TestFallbackForgetsTheLANAttemptsMedia(t *testing.T) {
 		t.Fatal("the cloud did not take over")
 	}
 	cs.forwarder.mutex.RLock()
-	defer cs.forwarder.mutex.RUnlock()
-	if cs.forwarder.spsPacket != nil || cs.forwarder.videoTs.started {
-		t.Fatal("the cloud stream inherited the failed LAN attempt's SPS and clock")
+	sps := cs.forwarder.spsPacket
+	cs.forwarder.mutex.RUnlock()
+	if sps != nil {
+		t.Fatal("the cloud stream inherited the failed LAN attempt's SPS")
+	}
+
+	cloudVideo := &rtp.Packet{Header: rtp.Header{Marker: true}, Payload: []byte{0x65, 0x88}}
+	cloudAudio := &rtp.Packet{Header: rtp.Header{PayloadType: 0}, Payload: make([]byte, 160)}
+	cs.forwarder.ForwardVideoPacket(cloudVideo)
+	cs.forwarder.ForwardAudioPacket(cloudAudio)
+	if int32(cloudVideo.Timestamp-lanVideo.Timestamp) <= 0 {
+		t.Errorf("video went back from %d to %d at the fallback", lanVideo.Timestamp, cloudVideo.Timestamp)
+	}
+	if int32(cloudAudio.Timestamp-lanAudio.Timestamp) <= 0 {
+		t.Errorf("audio went back from %d to %d at the fallback", lanAudio.Timestamp, cloudAudio.Timestamp)
 	}
 }
