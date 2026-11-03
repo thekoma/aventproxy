@@ -254,3 +254,31 @@ func TestPromotionIsNotLoggedAsAnError(t *testing.T) {
 		t.Fatalf("no info line about the LAN being back for %s in %q", name, lines)
 	}
 }
+
+// The cool-down can run out while the cloud attempt is still going: the probe
+// is then due at once, and the log must not promise it "in -1s".
+func TestPromotionDueDuringTheCloudAttempt(t *testing.T) {
+	server := newLANServer()
+	server.lanCooldowns["testdev"] = time.Now().Add(20 * time.Millisecond)
+	cs, _ := newLANStream(t, server, "hd")
+	cs.camera.DeviceName = fmt.Sprintf("Late Cam %d", time.Now().UnixNano())
+	probed := make(chan struct{}, 1)
+	a := fakeAttempts(t, cs, func(context.Context) error {
+		signal(probed)
+		return errors.New("still down")
+	})
+	cs.cloudStart = func() error {
+		a.cloudStarted.Add(1)
+		time.Sleep(700 * time.Millisecond) // a slow answer outlasts the cool-down
+		return nil
+	}
+	t.Cleanup(cs.stopStream)
+
+	begin(cs)
+	receive(t, probed, "the probe never ran after the cool-down ran out")
+	for _, line := range testLog.lines("Trying the LAN again for " + cs.camera.DeviceName) {
+		if strings.Contains(line, " in -") {
+			t.Fatalf("logged a negative delay: %s", line)
+		}
+	}
+}

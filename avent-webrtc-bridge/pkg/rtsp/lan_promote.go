@@ -29,7 +29,12 @@ func (cs *CameraStream) armPromotion() {
 	if cs.promoteTimer != nil {
 		cs.promoteTimer.Stop()
 	}
-	core.Logger.Info().Msgf("Trying the LAN again for %s in %v", cs.camera.DeviceName, delay.Round(time.Second))
+	if delay <= 0 { // the cool-down ran out while the cloud was starting
+		delay = 0
+		core.Logger.Info().Msgf("Trying the LAN again for %s now", cs.camera.DeviceName)
+	} else {
+		core.Logger.Info().Msgf("Trying the LAN again for %s in %v", cs.camera.DeviceName, delay.Round(time.Second))
+	}
 	var timer *time.Timer
 	timer = time.AfterFunc(delay, func() {
 		// Taken before timer is read: armPromotion's caller holds it while timer is set.
