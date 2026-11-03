@@ -63,6 +63,7 @@ type attempts struct {
 	cloudStarted atomic.Int32
 	lanFwd       *RTPForwarder // the forwarder the LAN source was built on
 	cloudFwd     *RTPForwarder // the forwarder the cloud attempt ran on
+	cloudBridge  *WebRTCBridge // the bridge the cloud attempt ran on
 }
 
 func fakeAttempts(t *testing.T, cs *CameraStream, lanStart func(context.Context) error) *attempts {
@@ -73,11 +74,12 @@ func fakeAttempts(t *testing.T, cs *CameraStream, lanStart func(context.Context)
 		return a.lan
 	}
 	cs.cloudStart = func() error {
-		if cs.webrtcBridge.OnError == nil {
+		if cs.webrtcBridge.errorHandler() == nil {
 			t.Error("cloud attempt on a bridge with no error handler")
 		}
 		a.cloudStarted.Add(1)
 		a.cloudFwd = cs.webrtcBridge.rtpForwarder
+		a.cloudBridge = cs.webrtcBridge
 		return nil
 	}
 	return a
@@ -152,7 +154,7 @@ func TestLANFailureFallsBackToCloud(t *testing.T) {
 	server := newLANServer()
 	cs, _ := newLANStream(t, server, "hd")
 	cs.bridgeStarted = true // a reused stream: the LAN attempt needs a fresh bridge
-	original := cs.webrtcBridge.rtpForwarder
+	original := cs.webrtcBridge
 	a := fakeAttempts(t, cs, func(context.Context) error {
 		return fmt.Errorf("%w: %w", errNoFirstFrame, context.DeadlineExceeded)
 	})
@@ -172,11 +174,11 @@ func TestLANFailureFallsBackToCloud(t *testing.T) {
 	if !a.lan.isStopped() {
 		t.Fatal("a failed LAN source must be stopped")
 	}
-	if a.lanFwd == original {
-		t.Fatal("the LAN attempt ran on the forwarder of a bridge that had already run")
+	if a.cloudBridge == original {
+		t.Fatal("the cloud fallback ran on a bridge that had already run")
 	}
-	if a.cloudFwd != a.lanFwd {
-		t.Fatal("the cloud fallback must reuse the forwarder clients set up on during the LAN attempt")
+	if a.lanFwd != cs.forwarder || a.cloudFwd != cs.forwarder {
+		t.Fatal("both attempts must feed the stream's forwarder, where clients set up during the LAN attempt are")
 	}
 }
 

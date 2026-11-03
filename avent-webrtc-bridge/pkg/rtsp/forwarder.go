@@ -28,10 +28,6 @@ type RTPForwarder struct {
 	clients map[string]*RTPClient
 	mutex   sync.RWMutex
 
-	// RTP session info
-	videoSSRC uint32
-	audioSSRC uint32
-
 	// Packet count
 	firstVideoPacket bool
 	firstAudioPacket bool
@@ -50,7 +46,9 @@ type RTPForwarder struct {
 	// sequence numbers of everything after them.
 	videoSeqOffset uint16
 
-	OnBackchannelAudio func(*rtp.Packet)
+	// backchannelSink takes talkback audio from the clients; see
+	// SetBackchannelSink.
+	backchannelSink func(*rtp.Packet)
 }
 
 type RTPClient struct {
@@ -88,8 +86,6 @@ type RTPClient struct {
 func NewRTPForwarder() *RTPForwarder {
 	return &RTPForwarder{
 		clients:          make(map[string]*RTPClient),
-		videoSSRC:        0, // Default SSRC for video
-		audioSSRC:        1, // Default SSRC for audio
 		firstVideoPacket: true,
 		firstAudioPacket: true,
 	}
@@ -467,21 +463,41 @@ func (rf *RTPForwarder) ForwardAudioPacket(packet *rtp.Packet) {
 	rf.forward(data, false)
 }
 
+// Stop drops every client and forgets the media state, so the stream that
+// owns the forwarder starts its next session clean.
 func (rf *RTPForwarder) Stop() {
-	// Reset SSRCs
-	rf.videoSSRC = 0
-	rf.audioSSRC = 1
+	rf.mutex.Lock()
+	defer rf.mutex.Unlock()
 
-	// Reset first packet flags
+	for sessionID, client := range rf.clients {
+		client.close()
+		delete(rf.clients, sessionID)
+	}
 	rf.firstVideoPacket = true
 	rf.firstAudioPacket = true
-
-	// Clear all clients
-	for sessionID := range rf.clients {
-		rf.RemoveClient(sessionID)
-	}
+	rf.spsPacket, rf.ppsPacket = nil, nil
+	rf.videoTs, rf.audioTs = frameClock{}, audioClock{}
+	rf.videoSeqOffset = 0
 
 	core.Logger.Trace().Msg("RTPForwarder stopped and all clients cleared")
+}
+
+// SetBackchannelSink sets where talkback audio from the clients goes: the
+// stream's current WebRTC bridge.
+func (rf *RTPForwarder) SetBackchannelSink(sink func(*rtp.Packet)) {
+	rf.mutex.Lock()
+	rf.backchannelSink = sink
+	rf.mutex.Unlock()
+}
+
+// ForwardBackchannel hands one talkback packet from a client to the sink.
+func (rf *RTPForwarder) ForwardBackchannel(packet *rtp.Packet) {
+	rf.mutex.RLock()
+	sink := rf.backchannelSink
+	rf.mutex.RUnlock()
+	if sink != nil {
+		sink(packet)
+	}
 }
 
 func (rf *RTPForwarder) GetClientCount() int {
@@ -532,10 +548,7 @@ func (rf *RTPForwarder) handleUDPBackchannelRTP(sessionID string, listener *net.
 			continue
 		}
 
-		// Forward to WebRTC bridge
-		if rf.OnBackchannelAudio != nil {
-			rf.OnBackchannelAudio(packet)
-		}
+		rf.ForwardBackchannel(packet)
 	}
 }
 

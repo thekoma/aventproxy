@@ -185,13 +185,13 @@ func TestReplaceBridgeReattachesErrorHandler(t *testing.T) {
 	stream.active = true
 
 	first := stream.webrtcBridge
-	if first == nil || first.OnError == nil {
+	if first == nil || first.errorHandler() == nil {
 		t.Fatal("expected a bridge with an error handler on a new stream")
 	}
 
 	stream.handleBridgeError(errors.New("WebRTC connection failed/closed"))
 
-	if first.OnError != nil {
+	if first.errorHandler() != nil {
 		t.Error("teardown should clear OnError on the failed bridge")
 	}
 
@@ -202,7 +202,7 @@ func TestReplaceBridgeReattachesErrorHandler(t *testing.T) {
 	if stream.webrtcBridge == first {
 		t.Fatal("expected a replacement bridge, got the stopped one")
 	}
-	if stream.webrtcBridge.OnError == nil {
+	if stream.webrtcBridge.errorHandler() == nil {
 		t.Fatal("replacement bridge must have the error handler attached")
 	}
 }

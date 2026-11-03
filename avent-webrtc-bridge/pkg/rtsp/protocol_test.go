@@ -62,7 +62,7 @@ func setupRequest(track, transport string) *RTSPRequest {
 // (fork a336350, which lost the audio track this way).
 func TestInterleavedMediaWaitsForPlay(t *testing.T) {
 	server, client, peer := newProtocolClient(t)
-	forwarder := client.stream.webrtcBridge.rtpForwarder
+	forwarder := client.stream.forwarder
 
 	for _, track := range []string{"video", "audio"} {
 		go server.handleSetup(client, setupRequest(track, "RTP/AVP/TCP;unicast;interleaved="+map[string]string{"video": "0-1", "audio": "2-3"}[track]))

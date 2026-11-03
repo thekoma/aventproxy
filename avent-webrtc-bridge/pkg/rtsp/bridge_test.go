@@ -31,7 +31,7 @@ func TestHandlePeerConnectionStateChangeUnblocksSDH264(t *testing.T) {
 // A Start that timed out waiting for the answer leaves a PeerConnection that
 // never connected; stopping the bridge must close it all the same.
 func TestStopClosesANeverConnectedBridge(t *testing.T) {
-	wb := NewWebRTCBridge(&storage.CameraInfo{DeviceName: "Nursery"}, "hd", nil, nil)
+	wb := NewWebRTCBridge(&storage.CameraInfo{DeviceName: "Nursery"}, "hd", nil, nil, nil)
 	pc, err := pion.NewPeerConnection(pion.Configuration{})
 	if err != nil {
 		t.Fatal(err)

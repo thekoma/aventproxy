@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	pion "github.com/pion/webrtc/v4"
@@ -44,6 +45,12 @@ type WebRTCBridge struct {
 	mqttClient     *tuya.MQTTClient
 	cameraClient   *tuya.MQTTCameraClient
 	rtpForwarder   *RTPForwarder
+	ownsForwarder  bool // the bridge made rtpForwarder, so Stop stops it
+
+	// SSRCs the camera announces for the HEVC datachannel transport: set on
+	// the datachannel's message goroutine, read for every packet.
+	videoSSRC atomic.Uint32
+	audioSSRC atomic.Uint32
 
 	// State
 	connected         bool
@@ -59,9 +66,11 @@ type WebRTCBridge struct {
 	cancel context.CancelFunc
 
 	// RTP forwarding
-	videoTrack  *pion.TrackRemote
-	audioTrack  *pion.TrackRemote
-	backchannel *pion.TrackLocalStaticRTP
+	videoTrack *pion.TrackRemote
+	audioTrack *pion.TrackRemote
+	// backchannel is set by pion's track callback and read for every
+	// talkback packet, on other goroutines.
+	backchannel atomic.Pointer[pion.TrackLocalStaticRTP]
 
 	// Talkback offers the camera two-way audio. Off by default: an offer with
 	// a sendrecv audio direction makes the camera set DPS 253 (app_talking),
@@ -73,27 +82,55 @@ type WebRTCBridge struct {
 	// Callbacks
 	OnVideoPacket func(packet *rtp.Packet)
 	OnAudioPacket func(packet *rtp.Packet)
-	OnError       func(error)
+
+	// onError is called from pion's and MQTT's goroutines while the stream
+	// sets and clears it, so it sits behind its own lock: wb.mutex is held
+	// for the whole of Start.
+	errMu   sync.Mutex
+	onError func(error)
 }
 
-func NewWebRTCBridge(camera *storage.CameraInfo, streamResolution string, user *storage.UserSession, storageManager *storage.StorageManager) *WebRTCBridge {
+// NewWebRTCBridge prepares a bridge that feeds forwarder. The forwarder
+// belongs to the caller, which stops it; a nil forwarder makes the bridge
+// create its own and stop it with itself.
+func NewWebRTCBridge(camera *storage.CameraInfo, streamResolution string, user *storage.UserSession, storageManager *storage.StorageManager, forwarder *RTPForwarder) *WebRTCBridge {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	owns := forwarder == nil
+	if owns {
+		forwarder = NewRTPForwarder()
+	}
 	wb := &WebRTCBridge{
 		camera:         camera,
 		resolution:     streamResolution,
 		user:           user,
-		rtpForwarder:   NewRTPForwarder(),
+		rtpForwarder:   forwarder,
+		ownsForwarder:  owns,
 		storageManager: storageManager,
 		connected:      false,
 		waiter:         utils.Waiter{},
 		ctx:            ctx,
 		cancel:         cancel,
 	}
+	wb.audioSSRC.Store(1) // the defaults the datachannel path matched before the camera names its own
 
-	wb.rtpForwarder.OnBackchannelAudio = wb.ForwardBackchannelAudioPacket
+	// Talkback from the forwarder's clients goes to the newest bridge.
+	forwarder.SetBackchannelSink(wb.ForwardBackchannelAudioPacket)
 
 	return wb
+}
+
+// SetOnError sets the handler for a failed session; nil detaches it.
+func (wb *WebRTCBridge) SetOnError(fn func(error)) {
+	wb.errMu.Lock()
+	wb.onError = fn
+	wb.errMu.Unlock()
+}
+
+func (wb *WebRTCBridge) errorHandler() func(error) {
+	wb.errMu.Lock()
+	defer wb.errMu.Unlock()
+	return wb.onError
 }
 
 func (wb *WebRTCBridge) SetMobileClient(client *tuya.MobileSDKClient) {
@@ -301,8 +338,9 @@ func (wb *WebRTCBridge) Stop() {
 		wb.mqttClient.Stop()
 	}
 
-	// Stop RTP forwarder
-	if wb.rtpForwarder != nil {
+	// Stop the RTP forwarder, unless it belongs to the stream: its clients
+	// stay attached across a bridge replacement.
+	if wb.ownsForwarder && wb.rtpForwarder != nil {
 		wb.rtpForwarder.Stop()
 	}
 
@@ -316,8 +354,8 @@ func (wb *WebRTCBridge) IsConnected() bool {
 }
 
 func (wb *WebRTCBridge) ForwardBackchannelAudioPacket(packet *rtp.Packet) {
-	if wb.backchannel != nil {
-		_ = wb.backchannel.WriteRTP(packet)
+	if track := wb.backchannel.Load(); track != nil {
+		_ = track.WriteRTP(packet)
 	}
 }
 
@@ -377,9 +415,9 @@ func (wb *WebRTCBridge) setupPeerConnection(webRTCConfig *tuya.WebRTCConfig) err
 				}
 
 				switch packet.SSRC {
-				case wb.rtpForwarder.videoSSRC:
+				case wb.videoSSRC.Load():
 					wb.rtpForwarder.ForwardVideoPacket(packet)
-				case wb.rtpForwarder.audioSSRC:
+				case wb.audioSSRC.Load():
 					wb.rtpForwarder.ForwardAudioPacket(packet)
 				}
 			}
@@ -430,7 +468,7 @@ func (wb *WebRTCBridge) setupPeerConnection(webRTCConfig *tuya.WebRTCConfig) err
 							"audio-backchannel", "pion",
 						)
 						tr.Sender().ReplaceTrack(localTrack)
-						wb.backchannel = localTrack
+						wb.backchannel.Store(localTrack)
 						core.Logger.Trace().Msgf("Setup backchannel track")
 						break
 					}
@@ -542,7 +580,9 @@ func (wb *WebRTCBridge) setupMQTTCameraClient(webRTCConfig *tuya.WebRTCConfig) {
 
 	wb.cameraClient.HandleDisconnect = func() {
 		wb.handleError(errors.New("camera client disconnected"))
+		wb.mutex.Lock()
 		wb.connected = false
+		wb.mutex.Unlock()
 	}
 }
 
@@ -700,8 +740,8 @@ func (wb *WebRTCBridge) probe(msg pion.DataChannelMessage) (bool, error) {
 			return false, err
 		}
 
-		wb.rtpForwarder.videoSSRC = recvMessage.Video.SSRC
-		wb.rtpForwarder.audioSSRC = recvMessage.Audio.SSRC
+		wb.videoSSRC.Store(recvMessage.Video.SSRC)
+		wb.audioSSRC.Store(recvMessage.Audio.SSRC)
 
 		completeMsg, _ := json.Marshal(tuya.DataChannelMessage{
 			Type: "complete",
@@ -728,8 +768,8 @@ func (wb *WebRTCBridge) sendMessageToDataChannel(message []byte) error {
 }
 
 func (wb *WebRTCBridge) handleError(err error) {
-	if wb.OnError != nil {
+	if onError := wb.errorHandler(); onError != nil {
 		wb.waiter.Done(err)
-		wb.OnError(err)
+		onError(err)
 	}
 }

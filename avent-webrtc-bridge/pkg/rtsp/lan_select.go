@@ -83,13 +83,12 @@ func (cs *CameraStream) tryLAN() (done bool) {
 		cs.mutex.Unlock()
 		return true
 	}
-	// A fallback reuses this bridge, so clients set up during the attempt
-	// stay attached to its forwarder.
+	// A cloud fallback needs a bridge that has not run yet.
 	if cs.bridgeStarted {
 		cs.replaceBridge()
 	}
-	// The current bridge's forwarder is the one RTSP clients attach to at SETUP.
-	source := cs.lanFactory(cs.webrtcBridge.rtpForwarder)
+	// The stream's forwarder is the one RTSP clients attach to at SETUP.
+	source := cs.lanFactory(cs.forwarder)
 	// Set before Start, so a death between Start and the commit below reaches
 	// lanDied, whose teardown cancels the attempt.
 	cs.lan = source

@@ -175,11 +175,8 @@ func (s *RTSPServer) handleInterleavedRTP(client *RTSPClient) error {
 			return fmt.Errorf("failed to parse backchannel RTP packet: %v", err)
 		}
 
-		// Forward to WebRTC bridge
-		if client.stream != nil && client.stream.webrtcBridge != nil &&
-			client.stream.webrtcBridge.rtpForwarder != nil &&
-			client.stream.webrtcBridge.rtpForwarder.OnBackchannelAudio != nil {
-			client.stream.webrtcBridge.rtpForwarder.OnBackchannelAudio(packet)
+		if client.stream != nil {
+			client.stream.forwarder.ForwardBackchannel(packet)
 		}
 	}
 
@@ -393,8 +390,8 @@ func (s *RTSPServer) handleSetup(client *RTSPClient, request *RTSPRequest) {
 			core.Logger.Trace().Msgf("Setup audio track - Client RTP port: %d, RTCP port: %d", clientRTPPort, clientRTCPPort)
 		} else if isBackchannel {
 			// For backchannel, setup the server listener and get actual server port
-			if client.stream != nil && client.stream.webrtcBridge != nil {
-				port, err := client.stream.webrtcBridge.rtpForwarder.SetupUDPBackchannel(
+			if client.stream != nil {
+				port, err := client.stream.forwarder.SetupUDPBackchannel(
 					client.session, clientRTPPort, localIP(client.conn))
 				if err != nil {
 					core.Logger.Error().Err(err).Msg("Failed to setup UDP backchannel")
@@ -424,7 +421,7 @@ func (s *RTSPServer) handleSetup(client *RTSPClient, request *RTSPRequest) {
 
 		// Add/update UDP client with current ports after video and audio setup
 		if isVideoTrack || isAudioTrack {
-			err := client.stream.webrtcBridge.rtpForwarder.AddUDPClient(client.session,
+			err := client.stream.forwarder.AddUDPClient(client.session,
 				remoteIP(client.conn), client.videoRTPPort, client.audioRTPPort)
 			if err != nil {
 				core.Logger.Error().Err(err).Msg("Error adding UDP RTP client")
@@ -473,7 +470,7 @@ func (s *RTSPServer) handlePlay(client *RTSPClient, request *RTSPRequest) {
 
 	// Only now may media share the socket, and only behind the response above.
 	if client.transportMode == TransportTCP {
-		err := client.stream.webrtcBridge.rtpForwarder.AddTCPClient(client.session, client.conn,
+		err := client.stream.forwarder.AddTCPClient(client.session, client.conn,
 			client.videoRTPChannel, client.audioRTPChannel, client.backAudioRTPChannel)
 		if err != nil {
 			core.Logger.Error().Err(err).Msg("Error adding TCP RTP client")
