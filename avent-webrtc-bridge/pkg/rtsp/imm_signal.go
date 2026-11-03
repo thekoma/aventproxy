@@ -205,7 +205,10 @@ func (m *mqttSignaller) receiver(via string) func(json.RawMessage) {
 
 // deviceChannelTag replaces the shared connection's client id suffix, so the
 // device channel is a connection of its own (the app tags its connections the
-// same way: <package>_mb_<phone>_<uid hash>_<tag>).
+// same way: <package>_mb_<phone>_<uid hash>_<tag>). The id names the account,
+// not the camera: every camera's imm session shares the one connection
+// (tuya.DeviceChannelPool), because a broker drops the older connection when
+// a newer one arrives under the same id.
 const deviceChannelTag = "_IMM"
 
 // deviceChannelClientID derives the device channel's client id from the
@@ -231,10 +234,12 @@ func devicePV(mc *tuya.MobileSDKClient, deviceID string) string {
 	return dev.PV
 }
 
-// dialIMMDeviceChannel opens the device channel with the account's mobile MQTT
-// identity, as the shared connection does, under a client id of its own: a
-// broker that refuses this publish can then only drop this connection, never
-// the one every camera's webrtc session shares.
+// dialIMMDeviceChannel opens a session on the account's device channel, with
+// the account's mobile MQTT identity, as the shared webrtc connection does,
+// under a client id of its own: a broker that refuses this publish can then
+// only drop the device channel, never the connection every camera's webrtc
+// session shares. The connection is dialled by the first camera that needs it
+// and closed when the last one lets go.
 func dialIMMDeviceChannel(mc *tuya.MobileSDKClient, deviceID, localKey string, onData func(json.RawMessage)) (immChannel, error) {
 	info, err := mc.GetUserInfo()
 	if err != nil {
