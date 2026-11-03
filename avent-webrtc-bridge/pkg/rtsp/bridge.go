@@ -547,6 +547,10 @@ func offerMedias(talkback bool, audio string) []*utils.Media {
 	}
 }
 
+// speakerAudioCheckDelay is how long after the speaker-off request the bridge
+// checks that the session still carries audio.
+var speakerAudioCheckDelay = 10 * time.Second
+
 // cameraControls is the part of the MQTT camera client the bridge drives once
 // the connection is up.
 type cameraControls interface {
@@ -583,6 +587,30 @@ func (wb *WebRTCBridge) sendSessionControls() {
 		return
 	}
 	core.Logger.Info().Msgf("Asked %s to keep its speaker off (issue #72)", wb.camera.DeviceName)
+	go wb.checkAudioAfterSpeakerOff(wb.audioPackets.Load(), speakerAudioCheckDelay)
+}
+
+// checkAudioAfterSpeakerOff says, once, whether audio kept flowing after the
+// speaker-off request. If Tuya's "speaker" means the viewer's audio rather
+// than the monitor's loudspeaker, the request mutes the stream, and the count
+// logged at Stop is never reached by an always-on consumer such as Frigate.
+func (wb *WebRTCBridge) checkAudioAfterSpeakerOff(before uint64, after time.Duration) {
+	var ended <-chan struct{}
+	if wb.ctx != nil {
+		ended = wb.ctx.Done()
+	}
+	select {
+	case <-ended:
+		return
+	case <-time.After(after):
+	}
+	if n := wb.audioPackets.Load() - before; n > 0 {
+		core.Logger.Info().Msgf("Audio from %s still flows with its speaker kept closed: %d packets in %v (issue #72)",
+			wb.camera.DeviceName, n, after)
+		return
+	}
+	core.Logger.Warn().Msgf("No audio from %s since asking the monitor to keep its speaker closed; "+
+		"set speaker_off to false on the Dev card if you need audio (issue #72)", wb.camera.DeviceName)
 }
 
 func (wb *WebRTCBridge) setupMQTTCameraClient(webRTCConfig *tuya.WebRTCConfig) {
