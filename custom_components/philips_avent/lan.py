@@ -62,6 +62,8 @@ class TuyaLANClient:
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         self._rekeyed = False
+        # Set once the live session has decrypted a frame; see `proven`.
+        self._exchanged = False
         self.connected: bool = False
 
     @property
@@ -73,6 +75,17 @@ class TuyaLANClient:
     def protocol(self) -> str:
         """The protocol published with `ip`, such as "3.3"; "" when unknown."""
         return self._address.protocol
+
+    @property
+    def proven(self) -> bool:
+        """Whether the live session has shown that it holds the right key.
+
+        From 3.4 up the handshake proves it. Below, a connect is bare TCP, so it
+        takes a frame that decrypted: until then a 3.5 monitor on an unconfirmed
+        3.3 fallback, or a 3.3 monitor straight after a key rotation, would look
+        live while delivering nothing.
+        """
+        return self.connected and (keyed_protocol(self._version) or self._exchanged)
 
     @property
     def session_version(self) -> float | None:
@@ -124,6 +137,7 @@ class TuyaLANClient:
                 _LOGGER.debug("Ignoring error while closing the LAN socket: %s", ex)
             self._device = None
         self.connected = False
+        self._exchanged = False
 
     async def _discover_device(self) -> tuple[str | None, float | None]:
         """Find the monitor on the LAN, keeping the protocol version it announces."""
@@ -343,9 +357,11 @@ class TuyaLANClient:
                         data.get("Error", err_code),
                     )
                 else:
-                    # A real exchange: the connection is healthy.
+                    # A real exchange: the connection is healthy, and on 3.3
+                    # a frame that decrypted proves the key as well.
                     failures = 0
                     payload_errors = 0
+                    self._exchanged = True
 
                     if data.get("dps"):
                         self._publish(data["dps"])
@@ -361,6 +377,7 @@ class TuyaLANClient:
                     await self._interruptible_sleep(reconnect_delay(failures))
                     continue
                 if pushed:
+                    self._exchanged = True
                     self._publish(pushed)
                 last_heartbeat = now
                 last_data = now

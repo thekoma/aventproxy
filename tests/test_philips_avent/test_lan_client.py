@@ -232,3 +232,52 @@ class TestSessionUp:
 
     def test_no_callback_is_fine(self, lan):
         make_client(lan)._announce_session()
+
+
+class TestProven:
+    """Below 3.4 a connect is bare TCP; a decrypted frame proves the key (review M7)."""
+
+    def _run_once(self, lan, monkeypatch, version, frames):
+        seen = []
+        client = lan.TuyaLANClient(FakeHass(), "dev", "key", lambda dps, baseline=False: seen.append(client.proven))
+        device = FakeDevice("dev", "10.0.0.7", "key", version)
+        queue = list(frames)
+
+        def receive():
+            if not queue:
+                client._stop_event.set()
+                return None
+            return queue.pop(0)
+
+        device.receive = receive
+
+        async def connect():
+            client._device, client.connected, client._version = device, True, version
+            return True
+
+        monkeypatch.setattr(client, "_connect", connect)
+        asyncio.run(client._run())
+        return client, seen
+
+    def test_a_3_3_connect_proves_nothing_until_a_frame_decrypts(self, lan, monkeypatch):
+        client, _ = self._run_once(lan, monkeypatch, 3.3, [{"Error": "Unexpected Payload", "Err": "904"}])
+        assert client.connected and not client.proven
+
+    def test_a_decrypted_push_proves_a_3_3_session_before_it_is_published(self, lan, monkeypatch):
+        client, seen = self._run_once(lan, monkeypatch, 3.3, [{"dps": {"207": 2500}}])
+        assert seen == [True]
+        assert client.proven
+
+    def test_a_keyed_handshake_is_proof_enough(self, lan, monkeypatch):
+        client, _ = self._run_once(lan, monkeypatch, 3.5, [])
+        assert client.proven
+
+    def test_a_dropped_session_has_to_prove_itself_again(self, lan):
+        client = make_client(lan)
+        client._device, client.connected, client._version, client._exchanged = (
+            FakeDevice("dev", "10.0.0.7", "key"), True, 3.3, True,
+        )
+        assert client.proven
+        client._disconnect()
+        client.connected, client._version = True, 3.3
+        assert not client.proven

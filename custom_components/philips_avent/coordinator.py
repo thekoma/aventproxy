@@ -146,6 +146,15 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         return self._lan_client is not None and self._lan_client.connected
 
     @property
+    def lan_live(self) -> bool:
+        """Whether a LAN session is up and has proven its key (TuyaLANClient.proven).
+
+        This, not a bare connect, is what keeps the entities available through a
+        cloud failure.
+        """
+        return self._lan_client is not None and self._lan_client.proven
+
+    @property
     def lan_serves_state(self) -> bool:
         """Whether the live LAN session carries this monitor without the cloud.
 
@@ -243,9 +252,10 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         Undoes a failed poll's verdict as soon as a session comes up or a push
         arrives, without waiting for the next tick. While the session stays up a
         failing poll no longer raises (`_cover_cloud_failure`), so this cannot
-        flap.
+        flap. Only a session that proved its key counts, so neither a bare 3.3
+        connect nor a lullaby state settling after the session dropped can do it.
         """
-        if self.data is None or self.last_update_success:
+        if self.data is None or self.last_update_success or not self.lan_live:
             return
         self.last_update_success = True
         if notify:
@@ -477,7 +487,7 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         except (UpdateFailed, ConfigEntryAuthFailed, aiohttp.ClientError, TimeoutError, ValueError) as err:
             # Without a live LAN session availability follows the poll, and Home
             # Assistant logs the failure and the recovery once each.
-            if self.data is None or not self.lan_connected:
+            if self.data is None or not self.lan_live:
                 self._cloud_failing = False
                 raise
             self._cover_cloud_failure(err)

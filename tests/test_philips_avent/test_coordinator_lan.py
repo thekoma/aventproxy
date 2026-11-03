@@ -29,6 +29,8 @@ class FakeEntry:
 class FakeLan:
     def __init__(self, version: float | None, delivered: bool = True, protocol: str = ""):
         self.connected = version is not None
+        # A connected fake has proven its key unless a test says otherwise.
+        self.proven = self.connected
         self.session_version = version
         self.protocol = protocol
         self.delivered = delivered
@@ -414,7 +416,7 @@ class TestCloudFailureBehindALanSession:
     def test_a_dropped_session_hands_availability_back_to_the_poll(self, make):
         coordinator = make(3.3, api=FakeApi(device_error=aiohttp.ClientError("cloud down")))
         assert asyncio.run(coordinator._async_update_data()) == STATE
-        coordinator._lan_client.connected = False
+        coordinator._lan_client.connected = coordinator._lan_client.proven = False
         with pytest.raises(aiohttp.ClientError):
             asyncio.run(coordinator._async_update_data())
 
@@ -436,3 +438,34 @@ class TestCloudFailureBehindALanSession:
         before = coordinator.listener_updates
         coordinator._mark_lan_live()
         assert coordinator.listener_updates == before
+
+
+class TestOnlyAProvenSessionCounts:
+    """A bare 3.3 connect proves neither the key nor the version (review M7, M3)."""
+
+    def test_an_unproven_session_does_not_cover_a_failing_poll(self, make):
+        coordinator = make(3.3, api=FakeApi(device_error=aiohttp.ClientError("cloud down")))
+        coordinator._lan_client.proven = False
+        with pytest.raises(aiohttp.ClientError):
+            asyncio.run(coordinator._async_update_data())
+        coordinator._lan_client.proven = True
+        assert asyncio.run(coordinator._async_update_data()) == STATE
+
+    def test_an_unproven_session_does_not_restore_availability(self, make):
+        coordinator = make(3.3)
+        coordinator._lan_client.proven = False
+        coordinator.last_update_success = False
+        coordinator._mark_lan_live()
+        assert coordinator.last_update_success is False
+
+    def test_a_lullaby_settling_after_the_session_dropped_leaves_availability_alone(self, make):
+        import time
+
+        coordinator = make(3.3)
+        coordinator._lan_client.connected = coordinator._lan_client.proven = False
+        coordinator.last_update_success = False
+        coordinator._pending_lullaby = "playing"
+        coordinator._pending_lullaby_since = time.monotonic() - 60
+        coordinator._commit_lullaby_state()
+        assert coordinator.data["246"] == "playing"
+        assert coordinator.last_update_success is False
