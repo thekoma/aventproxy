@@ -46,6 +46,11 @@ RSSI_INTERVAL = timedelta(minutes=5)
 SLEEP_DAY_INTERVAL = timedelta(minutes=15)
 
 
+def _session_rejected(err: TuyaAPIError) -> bool:
+    """Whether the cloud refused the stored session, which only a reauth fixes."""
+    return "SID_INVALID" in str(err) or "USER_SESSION_LOSS" in str(err)
+
+
 class PhilipsAventCoordinator(DataUpdateCoordinator):
     """Polls camera DPS values, with optional LAN push for real-time updates."""
 
@@ -316,7 +321,14 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         self._rssi_refreshed_at = now
         try:
             rssi_data = await self.api.get_rssi(self.camera_id)
-        except (TuyaAPIError, aiohttp.ClientError, TimeoutError) as err:
+        except TuyaAPIError as err:
+            # Behind a paused poll this is the one regular cloud call left, so a
+            # refused session must still reach the reauth flow from here.
+            if _session_rejected(err):
+                raise ConfigEntryAuthFailed(f"Authentication failed: {err}") from err
+            _LOGGER.debug("WiFi signal refresh failed for %s: %s", self.camera_name, err)
+            return
+        except (aiohttp.ClientError, TimeoutError) as err:
             # A failed reading must not fail the DPS poll it rides along with,
             # nor the tick that stands in for one behind a LAN session.
             _LOGGER.debug("WiFi signal refresh failed for %s: %s", self.camera_name, err)
@@ -414,6 +426,6 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
                 return {**self.data, **api_dps}
             return api_dps
         except TuyaAPIError as err:
-            if "SID_INVALID" in str(err) or "USER_SESSION_LOSS" in str(err):
+            if _session_rejected(err):
                 raise ConfigEntryAuthFailed(f"Authentication failed: {err}") from err
             raise UpdateFailed(f"Error fetching data: {err}") from err

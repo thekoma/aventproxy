@@ -140,6 +140,15 @@ class TestPoll:
         coordinator = make(3.5, api=FakeApi(rssi_error=aiohttp.ClientError("down")))
         assert asyncio.run(coordinator._async_update_data()) == STATE
 
+    def test_a_refused_session_still_reaches_reauth_behind_a_paused_poll(self, make):
+        import sys
+
+        coordinator = make(3.5)
+        module = sys.modules[type(coordinator).__module__]
+        coordinator.api.rssi_error = module.TuyaAPIError("SID_INVALID", "session invalid")
+        with pytest.raises(module.ConfigEntryAuthFailed):
+            asyncio.run(coordinator._async_update_data())
+
 
 class TestBaseline:
     def test_a_baseline_updates_state_without_counting_as_a_push(self, make):
