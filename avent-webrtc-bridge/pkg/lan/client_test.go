@@ -2,6 +2,7 @@ package lan
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -396,5 +397,40 @@ func TestCloseAbortsStart(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("Start still blocked a second after Close")
+	}
+}
+
+// A stream that goes quiet says so in a way the imm step label can read; the
+// text is the one the LAN log has always shown.
+func TestQuietStreamIsErrMediaIdle(t *testing.T) {
+	rec := newRecorder()
+	c := rec.client()
+	c.lastMedia.Store(int64(-mediaIdleTimeout)) // already past the idle deadline
+	go c.consume(context.Background(), newChanMedia(), testKey)
+	err := rec.waitClosed(t, 2*time.Second)
+	if !errors.Is(err, ErrMediaIdle) {
+		t.Fatalf("err = %v, want ErrMediaIdle", err)
+	}
+	if !strings.HasPrefix(err.Error(), "lan: no media for 3s: ") {
+		t.Errorf("text = %q", err)
+	}
+}
+
+// A start that its context ends keeps the step it stopped at (review M2).
+func TestStartEndedKeepsTheStep(t *testing.T) {
+	cloud := newFakeCloud()
+	c := NewClient(ClientConfig{DeviceID: "dev", UID: "uid", Signaller: cloud, HandshakeTimeout: 5 * time.Second})
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		cloud.await(time.Second) // the offer
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+	err := c.Start(ctx)
+	if !errors.Is(err, ErrNoAnswer) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want both the cancellation and ErrNoAnswer", err)
+	}
+	if !strings.HasPrefix(err.Error(), "lan: start ended: context canceled (") {
+		t.Errorf("text = %q", err)
 	}
 }

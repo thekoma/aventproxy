@@ -25,6 +25,11 @@ const (
 	loginPacing      = 120 * time.Millisecond
 )
 
+// ErrMediaIdle is a stream on which no conversation delivered a readable media
+// message for mediaIdleTimeout: after the login on a start, or at any time on a
+// live stream.
+var ErrMediaIdle = errors.New("no media")
+
 // ClientConfig names the monitor and where its media goes. Any callback may
 // be nil, in which case that stream is discarded. Callbacks run on the
 // client's own goroutines: media on the conversation's reader, OnClosed on
@@ -138,7 +143,9 @@ func (c *Client) Start(ctx context.Context) error {
 	}
 	if err := connect(ctx, setup, ip); err != nil {
 		if cerr := ctx.Err(); cerr != nil {
-			err = fmt.Errorf("lan: start ended: %w (%v)", cerr, err)
+			// Both wrapped, so the step the handshake stopped at (cloud.go's
+			// errors) stays visible to errors.Is. The text is unchanged.
+			err = fmt.Errorf("lan: start ended: %w (%w)", cerr, err)
 		}
 		_ = c.Close()
 		return err
@@ -352,7 +359,7 @@ func (c *Client) consume(ctx context.Context, r mediaReader, aesKey []byte) erro
 			if time.Now().Before(c.mediaDeadline()) {
 				continue // another conversation delivered meanwhile
 			}
-			return c.fail(ctx, fmt.Errorf("lan: no media for %v: %w", mediaIdleTimeout, err))
+			return c.fail(ctx, fmt.Errorf("lan: %w for %v: %w", ErrMediaIdle, mediaIdleTimeout, err))
 		}
 		if err != nil {
 			return c.fail(ctx, fmt.Errorf("lan: media read: %w", err))

@@ -149,6 +149,7 @@ func immStep(err error) string {
 		{errIMMNoMedia, "no media after login"},
 		{errIMMNoVideo, "no video"},
 		{errIMMNoKeyframe, "no SPS/IDR"},
+		{lan.ErrMediaIdle, "no media after login"},
 		{lan.ErrEnded, "ended by the monitor"},
 	}
 	for _, s := range steps {

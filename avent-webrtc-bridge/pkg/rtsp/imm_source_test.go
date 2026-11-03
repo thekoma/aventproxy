@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -333,5 +334,36 @@ func TestIMMPrepareWiresTheDeviceChannel(t *testing.T) {
 	}
 	if cfg.Signaller.(*mqttSignaller).device != nil {
 		t.Error("no opener, yet a device channel")
+	}
+}
+
+// The review's probe (M2): the attempt deadline, not the handshake timeout,
+// ends a start that waits for an answer. The log must still say "no answer".
+func TestIMMAttemptDeadlineKeepsTheStep(t *testing.T) {
+	cloud := immCloud{deviceID: "testdev", deviceName: "Test Cam", api: &fakeCloudAPI{rtc: testRTCConfig()}, broker: fakeBroker(&fakeChannel{})}
+	src := newIMMSource("testdev", "Test Cam", LANTarget{}, NewRTPForwarder(), cloud) // the real lan.Client
+	t.Cleanup(src.Stop)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	err := src.Start(ctx)
+	if err == nil {
+		t.Fatal("a start nobody answers must fail")
+	}
+	if got := immStep(err); got != "no answer" {
+		t.Fatalf("immStep = %q for %v, want \"no answer\"", got, err)
+	}
+}
+
+// Media that opens but never parses runs into the client's idle timeout
+// before the first-frame wait: that is "no media after login" (M2).
+func TestIMMMediaIdleIsNamed(t *testing.T) {
+	src, _ := newTestIMMSource(t, func(cfg lan.ClientConfig) error {
+		go cfg.OnClosed(fmt.Errorf("lan: %w for 3s: i/o timeout", lan.ErrMediaIdle))
+		return nil
+	})
+	src.frameWait = 2 * time.Second
+	err := src.Start(context.Background())
+	if got := immStep(err); got != "no media after login" {
+		t.Fatalf("immStep = %q for %v", got, err)
 	}
 }
