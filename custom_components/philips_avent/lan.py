@@ -234,6 +234,17 @@ class TuyaLANClient:
         it cannot change a setting. Sent only on a keyed session, where the
         monitor answers it (`keyed_protocol`); a 3.3 session leaves it
         unanswered, which would cost a socket timeout on every connect.
+
+        tinytuya's status() returns the first frame with a payload whatever its
+        command, so a push landing between the query and its answer (a SenseIQ
+        status comes every few seconds) is taken for the baseline, and the
+        answer then arrives as an ordinary push. That swap is harmless only
+        because the alert keys are absent from the answer, as both the #51
+        capture and the fork's SCD973/26 show: the answer arriving as a push
+        fires nothing. A DPS 212 alarm taken for the baseline still fires, since
+        the sensors judge 212 by its own timestamp; a 250 or 141 marker would be
+        lost, and on 3.4+ those stayed empty. Telling the frames apart would
+        mean reading tinytuya's raw messages for their command.
         """
         try:
             result = self._device.status()
