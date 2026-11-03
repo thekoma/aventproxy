@@ -14,10 +14,12 @@ from homeassistant.core import HomeAssistant
 from .lan_policy import (
     PROTOCOL_VERSION_DEFAULT,
     AddressPublisher,
+    baseline_dps,
     confirmed_protocol,
     data_stale,
     heartbeat_due,
     heartbeat_outcome,
+    keyed_protocol,
     lan_write_delivered,
     parse_protocol_version,
     reconnect_delay,
@@ -39,7 +41,7 @@ class TuyaLANClient:
         hass: HomeAssistant,
         device_id: str,
         local_key: str,
-        on_dps_update: Callable[[dict[str, Any]], None],
+        on_dps_update: Callable[[dict[str, Any], bool], None],
         on_address_change: Callable[[str], None] | None = None,
         last_ip: str | None = None,
         last_protocol: str = "",
@@ -104,8 +106,8 @@ class TuyaLANClient:
     def _try_direct_connect(self, ip: str, version: float) -> tinytuya.Device | None:
         """Try connecting directly to a known IP via TCP handshake only.
 
-        Don't send status() or updatedps() — this IPC device doesn't
-        respond to DP_QUERY and updatedps() crashes the firmware.
+        Don't send updatedps() — it crashes this firmware. DP_QUERY goes out
+        once the session is up, and only on 3.4 and up; see `_query_baseline`.
 
         `_get_socket` answers True or a tinytuya error code, and from 3.4 up that
         covers the session-key negotiation, so the caller learns whether this
@@ -178,12 +180,44 @@ class TuyaLANClient:
         self._ip = None
         return False
 
-    def _publish(self, dps: dict[str, Any]) -> None:
-        """Hand pushed state to the coordinator, on the event loop."""
+    def _query_baseline(self) -> dict[str, Any] | None:
+        """Read the monitor's whole DPS set on the session that just came up.
+
+        A read and only a read: DP_QUERY (command 10) carries no data points, so
+        it cannot change a setting. Sent only on a keyed session, where the
+        monitor answers it (`keyed_protocol`); a 3.3 session leaves it
+        unanswered, which would cost a socket timeout on every connect.
+        """
         try:
-            self._on_dps_update(dps)
+            result = self._device.status()
+        except Exception as ex:  # noqa: BLE001 - tinytuya raises socket and decode errors alike
+            _LOGGER.debug("LAN baseline query failed: %s", ex)
+            return None
+        dps = baseline_dps(result)
+        if dps is None:
+            _LOGGER.debug(
+                "LAN baseline query returned no state: %s",
+                result.get("Error") if isinstance(result, dict) else result,
+            )
+        return dps
+
+    async def _load_baseline(self) -> None:
+        """Publish the full local state, so it need not wait for the cloud."""
+        dps = await self._hass.async_add_executor_job(self._query_baseline)
+        if dps:
+            _LOGGER.debug("LAN baseline for %s carries %d keys", self._device_id, len(dps))
+            self._publish(dps, baseline=True)
+
+    def _publish(self, dps: dict[str, Any], *, baseline: bool = False) -> None:
+        """Hand state to the coordinator, on the event loop.
+
+        A baseline is the answer to the query sent when the session came up:
+        state, not news, so the coordinator does not treat it as an event.
+        """
+        try:
+            self._on_dps_update(dps, baseline)
         except Exception:
-            _LOGGER.exception("Error in DPS update callback")
+            _LOGGER.exception("Error in DPS %s callback", "baseline" if baseline else "update")
 
     def _send_heartbeat(self) -> tuple[bool, dict[str, Any] | None]:
         """Ping the device on the persistent socket.
@@ -223,6 +257,10 @@ class TuyaLANClient:
                     failures += 1
                     await self._interruptible_sleep(reconnect_delay(failures))
                     continue
+                # Before the receive loop, so the query never shares the socket
+                # with a keep-alive.
+                if keyed_protocol(self._version):
+                    await self._load_baseline()
                 last_data = time.monotonic()
                 last_heartbeat = last_data
                 payload_errors = 0

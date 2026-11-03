@@ -121,6 +121,31 @@ def reconnect_delay(consecutive_failures: int, delay: float = RECONNECT_DELAY) -
 PROTOCOL_VERSION_DEFAULT = 3.3
 SUPPORTED_PROTOCOL_VERSIONS = (3.1, 3.2, 3.3, 3.4, 3.5)
 
+# From 3.4 up the session is keyed, and on such a session an SCD973/26 answered
+# DP_QUERY with all 37 keys and pushed its alarm record in DPS 212 within 0.2 to
+# 2.4 seconds (fork c3d0b83 and 619981b, measured at 3.5). A 3.3 session does
+# neither: the query goes unanswered and 212 never arrives. The maintainer's
+# SCD973 on firmware 1.4.0 speaks 3.3, so everything gated here leaves it as it
+# was.
+KEYED_PROTOCOL_MIN_VERSION = 3.4
+
+
+def keyed_protocol(version: float | None) -> bool:
+    """Whether a session at `version` carries the monitor's state on its own."""
+    return version is not None and version >= KEYED_PROTOCOL_MIN_VERSION
+
+
+def baseline_dps(result: object) -> dict | None:
+    """The state in an answer to DP_QUERY, or None when it carries none.
+
+    An error frame, an empty answer or a timeout all give None: the session goes
+    on as before and the cloud poll keeps the baseline it already provided.
+    """
+    if not isinstance(result, dict) or "Err" in result:
+        return None
+    dps = result.get("dps")
+    return dps if isinstance(dps, dict) and dps else None
+
 
 def parse_protocol_version(value: object) -> float | None:
     """Read the protocol version out of a discovery broadcast.

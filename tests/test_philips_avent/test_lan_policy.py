@@ -1,6 +1,7 @@
 """Tests for the LAN keep-alive and reconnect policy (issue #62)."""
 
 from lan_policy import (
+    KEYED_PROTOCOL_MIN_VERSION,
     DATA_TIMEOUT,
     HEARTBEAT_INTERVAL,
     LAN_ERR_CONNECT,
@@ -9,10 +10,12 @@ from lan_policy import (
     MAX_PAYLOAD_ERRORS,
     PROTOCOL_VERSION_DEFAULT,
     RECONNECT_DELAY,
+    baseline_dps,
     data_stale,
     heartbeat_due,
     heartbeat_outcome,
     is_connection_error,
+    keyed_protocol,
     lan_write_delivered,
     parse_protocol_version,
     reconnect_delay,
@@ -182,3 +185,36 @@ class TestLanWriteDelivered:
         # A repeated relative step would advance the lullaby twice (issue #91).
         assert lan_write_delivered({"Error": "Timeout Waiting for Device", "Err": "902"})
         assert lan_write_delivered({"Error": "Unexpected Payload from Device", "Err": LAN_ERR_PAYLOAD})
+
+
+class TestKeyedProtocol:
+    """What a session carries on its own depends on the protocol it negotiated (fork c3d0b83, 619981b)."""
+
+    def test_3_4_and_up_are_keyed(self):
+        assert KEYED_PROTOCOL_MIN_VERSION == 3.4
+        assert keyed_protocol(3.4)
+        assert keyed_protocol(3.5)
+
+    def test_3_3_keeps_todays_behaviour(self):
+        # The maintainer's SCD973 on firmware 1.4.0 speaks 3.3.
+        assert not keyed_protocol(3.3)
+        assert not keyed_protocol(PROTOCOL_VERSION_DEFAULT)
+        assert not keyed_protocol(3.1)
+
+    def test_no_session_is_not_keyed(self):
+        assert not keyed_protocol(None)
+
+
+class TestBaselineDps:
+    """A DP_QUERY answer becomes the baseline; anything else leaves the session alone."""
+
+    def test_the_answer_is_the_state(self):
+        assert baseline_dps({"dps": {"207": 2570, "158": 70}, "t": 1}) == {"207": 2570, "158": 70}
+
+    def test_an_error_frame_carries_no_state(self):
+        assert baseline_dps({"Error": "Timeout Waiting for Device", "Err": "902"}) is None
+        assert baseline_dps({"Error": "x", "Err": LAN_ERR_PAYLOAD, "dps": {"207": 1}}) is None
+
+    def test_nothing_or_junk_carries_no_state(self):
+        for result in (None, {}, {"dps": {}}, {"dps": "x"}, "x"):
+            assert baseline_dps(result) is None
