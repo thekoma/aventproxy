@@ -368,15 +368,9 @@ func (s *RTSPServer) handleSetup(client *RTSPClient, request *RTSPRequest) {
 		responseTransport = fmt.Sprintf("RTP/AVP/TCP;unicast;interleaved=%d-%d",
 			rtpChannel, rtcpChannel)
 
-		// For TCP, add/update client after each setup
-		err := client.stream.webrtcBridge.rtpForwarder.AddTCPClient(client.session, client.conn,
-			client.videoRTPChannel, client.audioRTPChannel, client.backAudioRTPChannel)
-		if err != nil {
-			core.Logger.Error().Err(err).Msg("Error adding TCP RTP client")
-			sendRTSPResponse(client.conn, 500, "Internal Server Error", nil,
-				"Failed to setup RTP forwarding")
-			return
-		}
+		// The forwarder learns about this client at PLAY. Interleaved media
+		// shares the socket the client is still setting its tracks up on, so
+		// any sent now lands where the next SETUP response belongs.
 
 	} else if strings.Contains(transport, "RTP/AVP") {
 		// UDP mode
@@ -490,6 +484,16 @@ func (s *RTSPServer) handlePlay(client *RTSPClient, request *RTSPRequest) {
 	}
 
 	sendRTSPResponse(client.conn, 200, "OK", headers, "")
+
+	// Only now may media share the socket, and only behind the response above.
+	if client.transportMode == TransportTCP {
+		err := client.stream.webrtcBridge.rtpForwarder.AddTCPClient(client.session, client.conn,
+			client.videoRTPChannel, client.audioRTPChannel, client.backAudioRTPChannel)
+		if err != nil {
+			core.Logger.Error().Err(err).Msg("Error adding TCP RTP client")
+			return
+		}
+	}
 
 	core.Logger.Info().Msgf("Starting RTSP stream for client %s", client.session)
 }
