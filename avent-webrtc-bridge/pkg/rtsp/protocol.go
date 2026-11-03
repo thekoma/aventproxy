@@ -8,13 +8,14 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/pion/rtp"
@@ -67,16 +68,7 @@ func sendRTSPResponse(conn net.Conn, statusCode int, status string, headers map[
 
 	responseStr := response.String()
 
-	fmt.Println()
-	core.Logger.Trace().Msgf("Sending RTSP response:")
-	re := regexp.MustCompile(`\r\n|\r|\n`)
-	lines := re.Split(responseStr, -1)
-	for _, line := range lines {
-		if line != "" {
-			fmt.Println(line)
-		}
-	}
-	fmt.Println()
+	core.Logger.Trace().Msgf("Sending RTSP response: %d %s", statusCode, status)
 
 	_, err := conn.Write([]byte(responseStr))
 	return err
@@ -125,7 +117,7 @@ func (s *RTSPServer) handleRTSPProtocol(client *RTSPClient) {
 		// Check for interleaved RTP (backchannel)
 		firstByte, err := client.reader.Peek(1)
 		if err != nil {
-			if client.stream.active && !strings.Contains(err.Error(), "connection reset by peer") {
+			if client.stream.active && !errors.Is(err, syscall.ECONNRESET) {
 				core.Logger.Error().Err(err).Msg("Error peeking connection")
 			}
 			break
@@ -143,7 +135,7 @@ func (s *RTSPServer) handleRTSPProtocol(client *RTSPClient) {
 		// Handle regular RTSP request
 		request, err := s.parseRTSPRequestFromReader(client.reader)
 		if err != nil {
-			if client.stream.active && !strings.Contains(err.Error(), "connection reset by peer") {
+			if client.stream.active && !errors.Is(err, syscall.ECONNRESET) {
 				core.Logger.Error().Err(err).Msg("Error parsing RTSP request")
 			}
 			break
@@ -198,7 +190,7 @@ func (s *RTSPServer) parseRTSPRequestFromReader(reader *bufio.Reader) (*RTSPRequ
 	// Read request line
 	line, _, err := reader.ReadLine()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read request line: %v", err)
+		return nil, fmt.Errorf("failed to read request line: %w", err)
 	}
 
 	parts := strings.Split(string(line), " ")
@@ -217,7 +209,7 @@ func (s *RTSPServer) parseRTSPRequestFromReader(reader *bufio.Reader) (*RTSPRequ
 	for {
 		line, _, err := reader.ReadLine()
 		if err != nil {
-			return nil, fmt.Errorf("failed to read header: %v", err)
+			return nil, fmt.Errorf("failed to read header: %w", err)
 		}
 
 		lineStr := string(line)
@@ -243,13 +235,7 @@ func (s *RTSPServer) parseRTSPRequestFromReader(reader *bufio.Reader) (*RTSPRequ
 		}
 	}
 
-	fmt.Println()
-	core.Logger.Trace().Msg("Received RTSP request:")
-	fmt.Printf("%s %s %s\n", request.Method, request.URL, request.Version)
-	for key, value := range request.Headers {
-		fmt.Printf("%s: %s\n", key, value)
-	}
-	fmt.Println()
+	core.Logger.Trace().Msgf("Received RTSP request: %s %s (CSeq %d)", request.Method, request.URL, request.CSeq)
 
 	return request, nil
 }
