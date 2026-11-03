@@ -107,7 +107,14 @@ func bindingResponse(req *stun.Message, from *net.UDPAddr, local iceCreds) (*stu
 // peers is asked again before every round, so candidates that trickle in
 // while the checks run are tried too; on the LAN it always returns the one
 // candidate the answer named. A response is matched to its check by
-// transaction id, so the candidate returned is the one the check went to.
+// transaction id, so the candidate returned is the one the check went to, and
+// a response to no check of ours is ignored.
+//
+// A candidate that rejects its check is not checked again. The checks end at
+// once only when every candidate known has rejected, which on the LAN, with
+// its single candidate, is the first rejection, as it always was; otherwise
+// the others keep their chance, and the last rejection is what ctx's end
+// reports.
 //
 // The monitor's response is deliberately not authenticated: it omits the
 // integrity attribute, so its arrival on the pair is the only signal available.
@@ -118,13 +125,21 @@ func iceConnect(ctx context.Context, sock *net.UDPConn, peers func() []*net.UDPA
 
 	buf := make([]byte, 2048)
 	sent := map[[stun.TransactionIDSize]byte]*net.UDPAddr{}
+	rejected := map[string]bool{}
+	var lastRejection error
 	next := time.Now()
 	for {
 		if err := ctx.Err(); err != nil {
+			if lastRejection != nil {
+				return nil, lastRejection
+			}
 			return nil, fmt.Errorf("lan: no answer to the ICE checks: %w", err)
 		}
 		if time.Now().After(next) {
 			for _, peer := range peers() {
+				if rejected[peer.String()] {
+					continue
+				}
 				req, err := bindingRequest(local, remote)
 				if err != nil {
 					return nil, err
@@ -159,18 +174,33 @@ func iceConnect(ctx context.Context, sock *net.UDPConn, peers func() []*net.UDPA
 			if peer, ok := sent[msg.TransactionID]; ok {
 				return peer, nil
 			}
-			return from, nil
 		case stun.ClassRequest:
 			if resp, err := bindingResponse(msg, from, local); err == nil {
 				_, _ = sock.WriteToUDP(resp.Raw, from)
 			}
 		case stun.ClassErrorResponse:
+			peer, ok := sent[msg.TransactionID]
 			var code stun.ErrorCodeAttribute
-			if err := code.GetFrom(msg); err == nil {
-				return nil, fmt.Errorf("lan: monitor rejected the ICE check: %d %s", code.Code, code.Reason)
+			if !ok || code.GetFrom(msg) != nil {
+				continue
+			}
+			rejected[peer.String()] = true
+			lastRejection = fmt.Errorf("lan: monitor rejected the ICE check: %d %s", code.Code, code.Reason)
+			if allRejected(peers(), rejected) {
+				return nil, lastRejection
 			}
 		}
 	}
+}
+
+// allRejected reports whether every candidate has rejected its check.
+func allRejected(peers []*net.UDPAddr, rejected map[string]bool) bool {
+	for _, p := range peers {
+		if !rejected[p.String()] {
+			return false
+		}
+	}
+	return true
 }
 
 // onePeer is the candidate list of a LAN session: the answer names one.
