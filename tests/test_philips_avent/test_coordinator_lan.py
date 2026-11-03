@@ -171,3 +171,17 @@ class TestAlertDetectors:
 
     def test_without_a_lan_client_nothing_is_paired(self, make):
         assert not make(None).alert_detectors_exclusive
+
+
+class TestOptimisticEcho:
+    """Entities never write into coordinator.data; the coordinator echoes a command itself."""
+
+    def test_a_track_choice_shows_under_the_key_the_monitor_reports_it(self, make):
+        for version in (None, 3.3, 3.5):
+            coordinator = make(version)
+            before = coordinator.data
+            echo = {"248": '{"bizcode":"phi-no-bm","id":3542155,"errcode":0}'}
+            asyncio.run(coordinator.set_dps({"202": "{}", "201": "play"}, optimistic=echo))
+            assert coordinator.data["248"] == echo["248"]
+            assert coordinator.data["246"] == "playing"
+            assert "248" not in before

@@ -258,7 +258,23 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Lullaby state settled at %r for %s", value, self.camera_name)
         self.async_set_updated_data({**self.data, DPS_LULLABY_STATE: value})
 
-    async def set_dps(self, dps: dict) -> dict:
+    @callback
+    def _apply_optimistic(self, dps: dict, extra: dict | None = None) -> None:
+        """Show a command's effect before the monitor confirms it.
+
+        Always a new dict: entities never write into `data` themselves.
+        """
+        if self.data is None:
+            return
+        optimistic = {str(k): v for k, v in dps.items()}
+        lullaby_cmd = optimistic.get(DPS_LULLABY_CONTROL)
+        if lullaby_cmd in LULLABY_STATE_MAP:
+            optimistic[DPS_LULLABY_STATE] = LULLABY_STATE_MAP[lullaby_cmd]
+        if extra:
+            optimistic.update(extra)
+        self.async_set_updated_data({**self.data, **optimistic})
+
+    async def set_dps(self, dps: dict, *, optimistic: dict | None = None) -> dict:
         """Send a DPS command, over the LAN when there is a session for it.
 
         On a 3.4+ session a command the LAN delivered is done: the monitor reports
@@ -267,28 +283,21 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         success is mirrored to the cloud as before, except relative lullaby steps
         (`mirror_dps_to_cloud`). A command the LAN could not deliver goes through
         the cloud on any protocol.
+
+        `optimistic` carries values the monitor reports back under another key
+        than the one written, such as the lullaby track in DPS 248.
         """
         local_only = self.lan_serves_state
         if self._lan_client and self._lan_client.connected:
             result = await self._lan_client.set_dps(dps)
             if result:
                 _LOGGER.debug("DPS sent via LAN for %s: %s", self.camera_name, dps)
-                if self.data is not None:
-                    optimistic = {str(k): v for k, v in dps.items()}
-                    lullaby_cmd = optimistic.get(DPS_LULLABY_CONTROL)
-                    if lullaby_cmd in LULLABY_STATE_MAP:
-                        optimistic[DPS_LULLABY_STATE] = LULLABY_STATE_MAP[lullaby_cmd]
-                    self.async_set_updated_data({**self.data, **optimistic})
+                self._apply_optimistic(dps, optimistic)
                 if not local_only and mirror_dps_to_cloud(dps):
                     with contextlib.suppress(TuyaAPIError):
                         await self.api.set_dps(self.camera_id, dps)
                 return result
-        if self.data is not None:
-            optimistic = {str(k): v for k, v in dps.items()}
-            lullaby_cmd = optimistic.get(DPS_LULLABY_CONTROL)
-            if lullaby_cmd in LULLABY_STATE_MAP:
-                optimistic[DPS_LULLABY_STATE] = LULLABY_STATE_MAP[lullaby_cmd]
-            self.async_set_updated_data({**self.data, **optimistic})
+        self._apply_optimistic(dps, optimistic)
         return await self.api.set_dps(self.camera_id, dps)
 
     async def _refresh_rssi(self) -> None:
