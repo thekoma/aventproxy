@@ -289,14 +289,21 @@ Found in the fork while reading it, each worth its own small change:
 
 - `lan.py` heartbeat with `nowait=False` can swallow a pushed alert in place of
   the ack (fork `8c4fc03`); our code is unchanged from 2026.8.0.
+  Done in dev3: `088dbe2`, on every protocol.
 - SenseIQ stage codes `o` and `i` are not mapped, so the stage reads `None`.
+  Done in dev3: `3474482` (out of bed, settling).
 - Motion and sound switches should turn each other off; the monitor runs one
   detector at a time.
+  Done in dev3: `099aef7`, only once the LAN session has confirmed 3.4 or up.
 - `select.py` mutates `coordinator.data` in place.
+  Done in dev3: `7f5bd5d`.
 - `manifest.json` does not declare the `ffmpeg` dependency `camera.py` uses.
+  Done in dev3: `b55bbfb`.
 - Bridge: media sent before PLAY, UDP sent to localhost instead of the client
   address, no lock on the MQTT camera map, missing locks in `Stop` and stream
   cleanup, `ECONNREFUSED` not dropping the client.
+  Done in dev3: `15a837a` and `cc33b42` (PLAY), `cd46309` (UDP address),
+  `1814f8a` (MQTT map), `f2dd2f0` (locks), `fee0f84` (`ECONNREFUSED`).
 
 ## Left to the builder
 
@@ -317,3 +324,5 @@ Found in the fork while reading it, each worth its own small change:
 - gitleaks covers only the P2P password, not LAN addresses.
 - The bridge's own startup check of the cloud may fail when LAN targets and a stored session exist.
 - The bridge config also carries the protocol the integration's session negotiated (`lan_protocol`), and the bridge skips the LAN below 3.5: an SCD973 on firmware 1.4.0 speaks 3.3, and without the fork's discovery check every LAN attempt waited out the deadline.
+- The cool-down can end early (`18cf794`). When both cloud attempts of a start fail as well, that start clears the camera's cool-down, so the next start tries the LAN again instead of waiting on a cloud that is not there.
+- The cloud path's media already flows over the LAN whenever ICE picks the monitor's host candidate. A capture on the maintainer's SCD973 showed every media packet coming from the monitor's LAN address, with none through the TURN relay. What the two paths differ in is signalling. From dev3 the bridge log therefore names them "with cloud signalling" and "with LAN signalling" (`f6a071e`). The Intent's "the video stays inside the house" is wrong as a benefit of this work. What the LAN path does add is a stream that starts with no cloud call: through a cloud or WAN outage, and with an expired session.
