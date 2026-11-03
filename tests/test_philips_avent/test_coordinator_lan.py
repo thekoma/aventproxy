@@ -162,6 +162,24 @@ class TestPoll:
         coordinator = make(3.5, api=FakeApi(rssi_error=aiohttp.ClientError("down")))
         assert asyncio.run(coordinator._async_update_data()) == STATE
 
+    def test_an_html_error_page_keeps_the_entities_available(self, make):
+        import json
+
+        error = json.JSONDecodeError("Expecting value", "<html>502 Bad Gateway</html>", 0)
+        coordinator = make(3.5, api=FakeApi(rssi_error=error))
+        assert asyncio.run(coordinator._async_update_data()) == STATE
+
+    def test_an_empty_signal_answer_keeps_the_last_reading(self, make):
+        coordinator = make(3.5)
+        coordinator.rssi = -70
+
+        async def null_answer(dev_id):
+            return None
+
+        coordinator.api.get_rssi = null_answer
+        assert asyncio.run(coordinator._async_update_data()) == STATE
+        assert coordinator.rssi == -70
+
     def test_a_refused_session_still_reaches_reauth_behind_a_paused_poll(self, make):
         import sys
 

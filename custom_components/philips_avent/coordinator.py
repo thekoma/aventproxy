@@ -365,12 +365,14 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
                 raise ConfigEntryAuthFailed(f"Authentication failed: {err}") from err
             _LOGGER.debug("WiFi signal refresh failed for %s: %s", self.camera_name, err)
             return
-        except (aiohttp.ClientError, TimeoutError) as err:
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
             # A failed reading must not fail the DPS poll it rides along with,
-            # nor the tick that stands in for one behind a LAN session.
+            # nor the tick that stands in for one behind a LAN session. A load
+            # balancer's HTML error page arrives as a JSON ValueError.
             _LOGGER.debug("WiFi signal refresh failed for %s: %s", self.camera_name, err)
             return
-        self.rssi = rssi_data.get("value")
+        if isinstance(rssi_data, dict):
+            self.rssi = rssi_data.get("value")
 
     async def _refresh_sleep_day(self) -> None:
         """Fetch and decode the SenseIQ nightly sleep summary, throttled.
