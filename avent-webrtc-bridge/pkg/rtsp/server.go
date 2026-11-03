@@ -392,7 +392,16 @@ type ServerStats struct {
 	TotalStreams int  `json:"totalStreams"`
 }
 
+// Accept errors are retried after a back-off between these bounds, as
+// net/http does, so a failure that persists (no file descriptors left) neither
+// spins the loop nor floods the log.
+const (
+	acceptRetryMin = 5 * time.Millisecond
+	acceptRetryMax = time.Second
+)
+
 func (s *RTSPServer) acceptConnections(listener net.Listener) {
+	var delay time.Duration
 	// running is written under s.mutex by Stop, so it is read through
 	// IsRunning here rather than directly.
 	for s.IsRunning() {
@@ -402,11 +411,19 @@ func (s *RTSPServer) acceptConnections(listener net.Listener) {
 		default:
 			conn, err := listener.Accept()
 			if err != nil {
-				if s.IsRunning() {
-					core.Logger.Error().Err(err).Msg("Error accepting connection")
+				if !s.IsRunning() {
+					continue
+				}
+				core.Logger.Error().Err(err).Msg("Error accepting connection")
+				delay = min(max(2*delay, acceptRetryMin), acceptRetryMax)
+				select {
+				case <-s.ctx.Done():
+					return
+				case <-time.After(delay):
 				}
 				continue
 			}
+			delay = 0
 
 			// Handle connection in goroutine
 			go s.handleConnection(conn)

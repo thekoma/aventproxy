@@ -1,10 +1,13 @@
 package rtsp
 
 import (
+	"errors"
 	"net"
 	"strconv"
+	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // listenOnEphemeral binds a TCP listener with reuseAddrControl on an OS-chosen
@@ -69,4 +72,52 @@ func TestReuseAddrAllowsImmediateRebind(t *testing.T) {
 		t.Fatalf("re-bind on port %d failed: %v", port, err)
 	}
 	ln2.Close()
+}
+
+// failingListener fails every Accept, as a listener out of file descriptors
+// does, until it is closed.
+type failingListener struct {
+	calls  atomic.Int32
+	closed chan struct{}
+}
+
+func (l *failingListener) Accept() (net.Conn, error) {
+	if l.calls.Add(1) > 1000 { // enough to tell a spin from a back-off
+		<-l.closed
+		return nil, net.ErrClosed
+	}
+	return nil, errors.New("accept: too many open files")
+}
+
+func (l *failingListener) Close() error   { close(l.closed); return nil }
+func (l *failingListener) Addr() net.Addr { return &net.TCPAddr{} }
+
+// An Accept that keeps failing must not spin the loop and flood the log.
+func TestAcceptBacksOffWhileItFails(t *testing.T) {
+	s := NewRTSPServer(0, nil)
+	s.mutex.Lock()
+	s.running = true
+	s.mutex.Unlock()
+	l := &failingListener{closed: make(chan struct{})}
+	done := make(chan struct{})
+	go func() {
+		s.acceptConnections(l)
+		close(done)
+	}()
+
+	time.Sleep(300 * time.Millisecond)
+	n := l.calls.Load()
+	s.mutex.Lock()
+	s.running = false
+	s.mutex.Unlock()
+	s.cancel()
+	l.Close()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the accept loop did not end with the server")
+	}
+	if n > 20 {
+		t.Fatalf("%d accepts in 300 ms: the loop spins on a failing listener", n)
+	}
 }
