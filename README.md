@@ -98,7 +98,7 @@ The country matters: a Philips/Tuya account lives in one regional server, and th
 
 ### Running the bridge outside Home Assistant
 
-Two-way audio is off by default. Asking the camera for it makes the monitor stop a playing lullaby and restart it from the beginning when you close the stream, so listening does not imply talking. If a client of yours really talks back through the RTSP stream, turn on **Two-way audio (talkback)** under Configure. On some monitors a stream pauses a playing lullaby even with two-way audio off ([#72](https://github.com/thekoma/aventproxy/issues/72)). The Dev card runs an experiment on this through its `speaker_off` and `webrtc_audio` options, described in its changelog.
+Two-way audio is off by default. Asking the camera for it makes the monitor stop a playing lullaby and restart it from the beginning when you close the stream, so listening does not imply talking. If a client of yours really talks back through the RTSP stream, turn on **Two-way audio (talkback)** under Configure. On some monitors a stream pauses a playing lullaby even with two-way audio off ([#72](https://github.com/thekoma/aventproxy/issues/72)). The Dev card runs an experiment on this through its `speaker_off` and `webrtc_audio` options, described in its changelog, and through `cloud_transport` (see [imm over cloud signalling](#imm-over-cloud-signalling-dev-card-experimental)).
 
 If you don't run the add-on but host the bridge yourself, in its own container or on another machine, tell the integration where to find it: **Settings → Integrations → Philips Avent → Configure → Bridge host**. It defaults to `localhost`, which is only correct when the bridge shares the network with Home Assistant. A wrong host makes the camera entity flap between `Unavailable` and `Idle`, because Home Assistant marks a camera unavailable while its stream cannot be opened.
 
@@ -186,6 +186,15 @@ The monitor must speak Tuya LAN protocol 3.5. Monitors on 3.3 (seen on an SCD973
 If no H.264 video arrives within 4 seconds of a LAN attempt, the same start falls back to cloud signalling and that camera skips the LAN for 5 minutes. An HEVC monitor ends up here. A LAN stream that dies restarts on the cloud with the same 5-minute wait. If cloud signalling fails as well, the wait is cleared, so the next start tries the LAN again. Once the 5 minutes are over, a stream on the cloud checks the LAN in the background and moves its viewers back, with one short reconnect. RTSP clients see the same H.264 video and PCMU/8000 audio either way.
 
 The **LAN streaming** option in the integration options is on by default. Turn it off if a stream stopped working after an update, and open an issue with your monitor model and the bridge log. While it is off, the bridge config holds no local key or P2P password.
+
+#### imm over cloud signalling (Dev card, experimental)
+
+The Dev card has a `cloud_transport` option for streams that do not take the LAN, such as every stream from a 3.3 monitor. `webrtc`, the default, is the cloud session the bridge has always used. With `imm`, the bridge first tries the Philips app's own transport (imm, AES/KCP) with cloud signalling: the offer and answer go through Tuya's broker and the media takes the LAN path's code. It may help with a lullaby that pauses when you open the stream ([#72](https://github.com/thekoma/aventproxy/issues/72)), and with monitors that send no video over webrtc ([#59](https://github.com/thekoma/aventproxy/issues/59)). Nobody has tried it on a monitor yet.
+
+- The first version reaches the monitor on your local network only. If no H.264 video arrives, the same start falls back to the webrtc session, and that camera skips imm for 5 minutes. A start can take up to 14 seconds before it falls back.
+- Talkback and `/sd` streams always use webrtc.
+- The bridge fetches the local key and the P2P password it needs from the cloud, so it does not depend on the integration's **LAN streaming** option.
+- The log says `Streaming <camera> with imm over cloud signalling`. Otherwise one warning names the step that failed, such as `no answer`, `ICE timeout` or `no SPS/IDR`, before `using webrtc cloud signalling`.
 
 ### Local control and alerts
 

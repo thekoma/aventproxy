@@ -975,7 +975,7 @@ subscribe topic the capture reads `msid`; the bridge subscribes with the account
 `msid` is a different derived string (see section 12), which suggests either the app uses one and
 we use the other, or the broker accepts both.
 
-A later note, from the issue #72 work (section 21): the app's own offers are probably `imm`, not `webrtc`. Its P2P SDK only *accepts* `webrtc` offers, from third-party clients. The frame above probably came from the `aventlocal` client, which used aiortc. Read its `mode` as what a third-party client sends. This is inference from the app's libraries, not a capture.
+A later note, from the issue #72 work (section 21): the app's own offers are probably `imm`, not `webrtc`. Its P2P SDK only *accepts* `webrtc` offers, from third-party clients. The frame above probably came from the `aventlocal` client, which used aiortc. Read its `mode` as what a third-party client sends. This is inference from the app's libraries, not a capture. The libraries also show where the app sends its own frames: on the device's regular MQTT channel, encrypted with the local key, rather than on the `/av/moto` topic above (section 21).
 
 `msg.token` is the **ICE-server list** (`rtc.config.get → p2p_config.ices`), not a string. `auth`, `motoId`, and the ICE servers all come from the `smartlife.m.rtc.config.get` call introduced in section 9.
 
@@ -1415,7 +1415,21 @@ Three outcomes are possible:
 
 Every cloud session therefore logs what it negotiated (`Offer to …`, `Answer from …`) and, when it ends, `Cloud session for <camera> carried <V> video and <A> audio packets`. An always-on consumer such as Frigate never ends its session, so the bridge also checks once, 10 seconds after the request. It logs `Audio from <camera> still flows with its speaker kept closed: <n> packets in 10s` if audio still arrives. If none does, it logs a warning that says to turn `speaker_off` off. A lullaby that keeps playing while audio keeps flowing would confirm the hypothesis. The second option, `webrtc_audio: none`, leaves audio out of the offer altogether. It tells whether the monitor needs a negotiated audio section before it opens its speaker. The stable and beta cards send no speaker command.
 
-If the speaker control does not help, the structural fix for 3.3 monitors would be to send the app's own `imm` offer over cloud MQTT and reuse the local path's KCP/AES media. That way every session would look like the app's. It is a larger change, and it needs fields nobody has tested on hardware.
+If the speaker control does not help, the structural fix for 3.3 monitors would be to send the app's own `imm` offer over cloud MQTT and reuse the local path's KCP/AES media. That way every session would look like the app's.
+
+### imm over cloud signalling (2026.11.0-dev4, Dev card, experimental)
+
+*Untested on hardware. Everything below comes from disassembling the app's `libThingP2PSDK.so` and decompiling single Java classes (app 1.9.1), and from the LAN capture in section 16.*
+
+The Dev card's `cloud_transport: imm` option builds that fix. For a stream that does not take the LAN, the bridge first sends an imm offer through the cloud broker, then runs the local path's ICE, KCP, login and media code. If that fails, the same start falls back to the webrtc session and the camera skips imm for 5 minutes.
+
+**The offer is the LAN one, with a different path.** The P2P SDK builds every offer and answer in one routine: header `from`, `to`, `sessionid`, `moto_id`, `type`, `trace_id`, `is_pre`, `p2p_skill`, `security_level`; msg `sdp`, `preconnect`, `token` (the ICE servers), and `udp_token`, `tcp_token` and `log` when it has them. It never adds `mode`, `auth` or `stream_type`. Its send routine then adds `path`: `lan` on the 6668 session, `mqtt` through the cloud. The receiving parser treats an offer whose `mode` is not `webrtc` as imm, and reads a missing or unknown `path` as `mqtt`. So the bridge sends the offer of section 20 with `path: "mqtt"`, the real `moto_id` and the ICE servers from `rtc.config.get`. Candidates trickle as separate `candidate` frames, as on the LAN, and may also appear in the answer's SDP. The bridge reads both, and uses only the monitor's IPv4 host candidates: the first version reaches the monitor on the local network, with no relay.
+
+**The channel is a guess.** The app does not publish these frames on `/av/moto/<motoId>/u/<devId>`. Its Java layer hands them to `publishDevice`, the device's regular MQTT channel, which is encrypted with the local key. The bridge sends them on the `/av/moto` topic its webrtc sessions use, because that channel is known to reach the monitor's P2P SDK, and the SDK parses a frame the same way whichever route brought it. Whether the monitor's firmware answers an imm offer from that channel is the main unknown. If it does not, the log says `no answer`, and the next step would be to send the offer the way the app does.
+
+**The media needs two credentials,** the local key and the P2P password, for the login `md5(password + "||" + localKey)`. `rtc.config.get`, which every cloud session already calls, returns both, so the bridge does not depend on the integration's LAN data. The session sends the same six startup messages as the LAN path: `StartPreview`, with no talk command 8. It sends no 312 `speaker` request either, because that is a webrtc-mode control. Like the webrtc session, it logs its audio after 10 seconds and its message counts when it ends.
+
+**Reading the log.** A working session says `Streaming <camera> with imm over cloud signalling`. A failed one logs one warning naming the step: `cloud setup`, `refused` (the monitor sent a disconnect), `no answer`, `answer unusable`, `answer without usable candidate`, `ICE timeout`, `login refused or one-way path` (no reply at all after the login), `no media after login`, `no video` or `no SPS/IDR`. The offer and the answer are logged through the same SDP summary as the webrtc ones, which leaves out the ICE credentials and the aes-key.
 
 ---
 

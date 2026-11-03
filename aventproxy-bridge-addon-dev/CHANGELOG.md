@@ -13,6 +13,8 @@ Stay on the stable card unless you are testing, and use the beta card if you onl
 - A start that times out says what it waited for, on the `Failed to start WebRTC bridge` line: `the camera never answered the offer`, `the camera answered, but the connection to it never came up`, or, on HEVC, `connected, but the camera never confirmed the video codec`.
 - A connection that never sends a request is closed after 60 s, and the bridge backs off when accepting connections keeps failing instead of filling the log.
 
+**New option `cloud_transport`, for issues #72 and #59 (experimental, untested on a monitor).** `webrtc`, the default, changes nothing. With `imm`, a stream that does not take the LAN (every stream from a 3.3 monitor, for instance) first tries the Philips app's own transport with cloud signalling, and falls back to the webrtc session when that fails. The video comes over your local network, and the session sends what the app's live view sends, with no talk or speaker request, so a playing lullaby should keep playing. The log says `Streaming <camera> with imm over cloud signalling` when it works. When it does not, one warning names the step that failed (`no answer`, `ICE timeout`, `no SPS/IDR`…), and that camera stays on webrtc for 5 minutes. A start can take up to 14 seconds before the fallback. If you try it, please post that line on #72.
+
 ## Unreleased (dev3)
 
 Part of this is in the integration and part in this card, so update both to dev3.
