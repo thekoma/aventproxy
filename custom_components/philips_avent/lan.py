@@ -18,6 +18,7 @@ from .lan_policy import (
     data_stale,
     heartbeat_due,
     heartbeat_outcome,
+    lan_write_delivered,
     parse_protocol_version,
     reconnect_delay,
     should_reconnect,
@@ -287,13 +288,16 @@ class TuyaLANClient:
         """Send DPS command via a temporary LAN connection.
 
         Uses a separate short-lived socket so the persistent listener
-        is never disrupted. Sends each value individually — the device
-        ignores batched commands for certain codes (e.g. 201 + 202).
+        is never disrupted. Sends each value individually, in order — the
+        device ignores batched commands for certain codes (e.g. 201 + 202).
+
+        None when the command did not reach the monitor, so the caller can
+        send it through the cloud instead.
         """
         if not self._ip:
             return None
 
-        def _send():
+        def _send() -> dict | None:
             d = tinytuya.Device(
                 self._device_id,
                 self._ip,
@@ -303,16 +307,22 @@ class TuyaLANClient:
             d.set_socketTimeout(SOCKET_TIMEOUT)
             try:
                 for key, value in dps.items():
-                    d.set_value(key, value)
+                    result = d.set_value(key, value)
+                    if not lan_write_delivered(result):
+                        return result
+                return None
             finally:
                 d.close()
 
         try:
-            await self._hass.async_add_executor_job(_send)
-            return {"success": True}
+            refused = await self._hass.async_add_executor_job(_send)
         except Exception as ex:  # noqa: BLE001 - a failed command falls back to the cloud path
             _LOGGER.warning("LAN set_dps failed: %s", ex)
             return None
+        if refused is not None:
+            _LOGGER.warning("LAN command did not reach the monitor: %s", refused.get("Error"))
+            return None
+        return {"success": True}
 
     async def _interruptible_sleep(self, seconds: float) -> None:
         with contextlib.suppress(TimeoutError):

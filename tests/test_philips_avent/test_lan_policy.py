@@ -13,6 +13,7 @@ from lan_policy import (
     heartbeat_due,
     heartbeat_outcome,
     is_connection_error,
+    lan_write_delivered,
     parse_protocol_version,
     reconnect_delay,
     should_reconnect,
@@ -163,3 +164,21 @@ class TestHeartbeatOutcome:
 
     def test_junk_dps_is_not_published(self):
         assert heartbeat_outcome({"dps": "not a dict"}) == (True, None)
+
+
+class TestLanWriteDelivered:
+    """tinytuya returns a failed write as an error dict; the cloud mirror used to hide it."""
+
+    def test_a_reply_or_no_reply_counts_as_delivered(self):
+        assert lan_write_delivered(None)
+        assert lan_write_delivered({"dps": {"138": True}, "t": 1})
+
+    def test_no_socket_means_the_command_never_left(self):
+        assert not lan_write_delivered({"Error": "Network Error: Device Unreachable", "Err": LAN_ERR_OFFLINE})
+        assert not lan_write_delivered({"Error": "Network Error: Unable to Connect", "Err": LAN_ERR_CONNECT})
+        assert not lan_write_delivered({"Error": "Check device key or version", "Err": "914"})
+
+    def test_a_late_or_unreadable_reply_is_not_sent_twice(self):
+        # A repeated relative step would advance the lullaby twice (issue #91).
+        assert lan_write_delivered({"Error": "Timeout Waiting for Device", "Err": "902"})
+        assert lan_write_delivered({"Error": "Unexpected Payload from Device", "Err": LAN_ERR_PAYLOAD})
