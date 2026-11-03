@@ -410,3 +410,14 @@ func TestVideoCheckOfAStoppedSessionLeavesTheRestartAlone(t *testing.T) {
 	}
 	expectOpen(t, clientConn)
 }
+
+// A connection that never sends its first request must not hold a goroutine
+// and a socket for good.
+func TestSilentConnectionIsClosed(t *testing.T) {
+	old := requestReadTimeout
+	requestReadTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { requestReadTimeout = old })
+	h := newStallHarness(t, func(*CameraStream) error { return nil })
+
+	dialRTSP(t, h.port, "/cam1").expectClosedWithin(2 * time.Second)
+}

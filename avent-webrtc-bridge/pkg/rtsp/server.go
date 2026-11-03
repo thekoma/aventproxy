@@ -422,7 +422,12 @@ func (s *RTSPServer) handleConnection(conn net.Conn) {
 
 	reader := bufio.NewReader(conn)
 
-	// Parse initial RTSP request
+	// Parse initial RTSP request. A client that connects and never sends
+	// one would otherwise hold this goroutine and its socket for good: it is
+	// not in the client map yet, so not even Stop closes it.
+	if err := conn.SetReadDeadline(time.Now().Add(requestReadTimeout)); err != nil {
+		return
+	}
 	request, err := s.parseRTSPRequestFromReader(reader)
 	if err != nil {
 		core.Logger.Error().Err(err).Msg("Error parsing initial RTSP request")
