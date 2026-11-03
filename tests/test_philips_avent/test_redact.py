@@ -91,3 +91,28 @@ class TestSecretKeys:
         # Matching lower-cases the incoming key, so an upper-case entry here
         # would silently never match.
         assert all(key == key.lower() for key in SECRET_KEYS)
+
+
+class TestDiagnosticsShape:
+    """What diagnostics.py hands the redactor: the config entry and the cloud device record.
+
+    The fork found its diagnostics leaking `local_key` and `password` from the
+    camera list, because its redactor did not walk lists (fork e0a67d6).
+    """
+
+    def test_no_lan_credential_survives_the_dump(self):
+        entry = {
+            "email": "SECRET-email",
+            "password": "SECRET-account-password",
+            "sid": "SECRET-sid",
+            "cameras": [{
+                "id": "bf1camera", "name": "Nursery",
+                "localKey": "SECRET-lk1", "local_key": "SECRET-lk2",
+                "password": "SECRET-pw1", "p2p_password": "SECRET-pw2", "lan_ip": "SECRET-ip",
+            }],
+        }
+        device_info = {"devId": "bf1camera", "localKey": "SECRET-lk3", "ip": "SECRET-public-ip"}
+        dump = repr({"config_entry": redact_secrets(entry), "device_info": redact_secrets(device_info)})
+        assert "SECRET" not in dump
+        assert "Nursery" in dump
+        assert "bf1camera" in dump

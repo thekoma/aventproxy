@@ -66,8 +66,44 @@ class TestPermissions:
             return
         raise AssertionError("writing over a directory should raise")
 
+    def test_a_failed_write_leaves_no_temporary_file(self, tmp_path):
+        path = tmp_path / "bridge.json"
+        path.mkdir()
+        try:
+            write_bridge_config_file(path, {"sid": "s"})
+        except OSError:
+            pass
+        assert [p.name for p in tmp_path.iterdir()] == ["bridge.json"]
+
     # Note: write_bridge_config_file tightens the mode on the open descriptor
-    # before writing, so a pre-existing 0644 file never holds the new session
-    # while still world-readable. That ordering is not covered by a test —
-    # io.FileIO.write goes straight to the C write(), so it cannot be observed
-    # from Python without a thread race. The end state above is what's pinned.
+    # before writing, so the new session is never in a world-readable file.
+    # That ordering is not covered by a test — io.FileIO.write goes straight to
+    # the C write(), so it cannot be observed from Python without a thread race.
+    # The end state above is what's pinned.
+
+
+class TestAtomicReplace:
+    """run.sh polls the md5 every 10 s and restarts the bridge on any change (#73)."""
+
+    def test_a_reader_never_sees_a_truncated_file(self, tmp_path):
+        # A reader that opened the file before the write keeps reading the whole
+        # old content: the new file replaces it rather than being written into it.
+        path = tmp_path / "philips_avent_bridge_abc.json"
+        write_bridge_config_file(path, {"sid": "old", "padding": "x" * 200})
+        with path.open() as reader:
+            write_bridge_config_file(path, {"sid": "new"})
+            assert json.loads(reader.read())["sid"] == "old"
+        assert json.loads(path.read_text()) == {"sid": "new"}
+
+    def test_only_the_config_is_left_in_the_directory(self, tmp_path):
+        path = tmp_path / "philips_avent_bridge_abc.json"
+        write_bridge_config_file(path, {"sid": "s"})
+        write_bridge_config_file(path, {"sid": "s"})
+        assert [p.name for p in tmp_path.iterdir()] == ["philips_avent_bridge_abc.json"]
+
+    def test_the_same_config_gives_the_same_bytes(self, tmp_path):
+        path = tmp_path / "bridge.json"
+        write_bridge_config_file(path, {"sid": "s", "cameras": [{"camera_id": "a"}]})
+        first = path.read_bytes()
+        write_bridge_config_file(path, {"sid": "s", "cameras": [{"camera_id": "a"}]})
+        assert path.read_bytes() == first

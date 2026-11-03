@@ -3,17 +3,24 @@
 from lan_policy import (
     DATA_TIMEOUT,
     HEARTBEAT_INTERVAL,
+    KEYED_PROTOCOL_MIN_VERSION,
     LAN_ERR_CONNECT,
     LAN_ERR_OFFLINE,
     LAN_ERR_PAYLOAD,
     MAX_PAYLOAD_ERRORS,
     PROTOCOL_VERSION_DEFAULT,
     RECONNECT_DELAY,
+    baseline_dps,
     data_stale,
     heartbeat_due,
+    heartbeat_outcome,
     is_connection_error,
+    keyed_protocol,
+    lan_write_delivered,
     parse_protocol_version,
     reconnect_delay,
+    seeded_session,
+    session_candidates,
     should_reconnect,
     version_candidates,
 )
@@ -111,7 +118,7 @@ class TestShouldReconnect:
 class TestProtocolVersion:
     """Which local protocol version to speak (#51, #62).
 
-    The SCD953 announces 3.5 in its discovery broadcast while the client always
+    The SCD973/26 announces 3.5 in its discovery broadcast while the client always
     built a 3.3 session, and a session at the wrong version cannot read the
     frames the camera sends.
     """
@@ -139,3 +146,134 @@ class TestProtocolVersion:
         # session-key negotiation.
         for announced in (3.1, 3.4, 3.5, None):
             assert PROTOCOL_VERSION_DEFAULT in version_candidates(announced)
+
+
+class TestHeartbeatOutcome:
+    """The keep-alive reads the next frame with a payload, which can be a push (fork 8c4fc03)."""
+
+    def test_an_alert_read_in_place_of_the_ack_is_handed_back(self):
+        record = {"dps": {"212": "eyJjbWQiOiJpcGNfbW90aW9uIn0="}, "t": 1}
+        assert heartbeat_outcome(record) == (True, {"212": "eyJjbWQiOiJpcGNfbW90aW9uIn0="})
+
+    def test_a_plain_ack_carries_nothing(self):
+        assert heartbeat_outcome(None) == (True, None)
+        assert heartbeat_outcome({}) == (True, None)
+        assert heartbeat_outcome({"dps": {}}) == (True, None)
+
+    def test_a_connection_error_means_the_socket_is_gone(self):
+        assert heartbeat_outcome({"Error": "Network Error", "Err": LAN_ERR_CONNECT}) == (False, None)
+        assert heartbeat_outcome({"Error": "Offline", "Err": LAN_ERR_OFFLINE}) == (False, None)
+
+    def test_an_unreadable_ack_still_proves_the_socket_is_alive(self):
+        assert heartbeat_outcome({"Error": "Unexpected Payload", "Err": LAN_ERR_PAYLOAD}) == (True, None)
+
+    def test_junk_dps_is_not_published(self):
+        assert heartbeat_outcome({"dps": "not a dict"}) == (True, None)
+
+
+class TestLanWriteDelivered:
+    """tinytuya returns a failed write as an error dict; the cloud mirror used to hide it."""
+
+    def test_a_reply_or_no_reply_counts_as_delivered(self):
+        for repeatable in (True, False):
+            assert lan_write_delivered(None, repeatable=repeatable)
+            assert lan_write_delivered({"dps": {"138": True}, "t": 1}, repeatable=repeatable)
+
+    def test_a_socket_that_never_opened_means_the_command_never_left(self):
+        for repeatable in (True, False):
+            assert not lan_write_delivered(
+                {"Error": "Network Error: Device Unreachable", "Err": LAN_ERR_OFFLINE}, repeatable=repeatable
+            )
+            assert not lan_write_delivered({"Error": "Check device key or version", "Err": "914"}, repeatable=repeatable)
+
+    def test_an_ambiguous_error_sends_an_absolute_value_again(self):
+        # Sending the night light state twice is harmless; losing it is not.
+        assert not lan_write_delivered({"Error": "Network Error: Unable to Connect", "Err": LAN_ERR_CONNECT}, repeatable=True)
+        assert not lan_write_delivered({"Error": "Timeout Waiting for Device", "Err": "902"}, repeatable=True)
+
+    def test_an_ambiguous_error_never_repeats_a_lullaby_step(self):
+        # A step taken twice skips a track (issue #91); a lost one is preferred.
+        assert lan_write_delivered({"Error": "Network Error: Unable to Connect", "Err": LAN_ERR_CONNECT}, repeatable=False)
+        assert lan_write_delivered({"Error": "Timeout Waiting for Device", "Err": "902"}, repeatable=False)
+
+    def test_an_unreadable_reply_means_the_monitor_answered(self):
+        for repeatable in (True, False):
+            assert lan_write_delivered(
+                {"Error": "Unexpected Payload from Device", "Err": LAN_ERR_PAYLOAD}, repeatable=repeatable
+            )
+
+class TestKeyedProtocol:
+    """What a session carries on its own depends on the protocol it negotiated (fork c3d0b83, 619981b)."""
+
+    def test_3_4_and_up_are_keyed(self):
+        assert KEYED_PROTOCOL_MIN_VERSION == 3.4
+        assert keyed_protocol(3.4)
+        assert keyed_protocol(3.5)
+
+    def test_3_3_keeps_todays_behaviour(self):
+        # The maintainer's SCD973 on firmware 1.4.0 speaks 3.3.
+        assert not keyed_protocol(3.3)
+        assert not keyed_protocol(PROTOCOL_VERSION_DEFAULT)
+        assert not keyed_protocol(3.1)
+
+    def test_no_session_is_not_keyed(self):
+        assert not keyed_protocol(None)
+
+
+class TestBaselineDps:
+    """A DP_QUERY answer becomes the baseline; anything else leaves the session alone."""
+
+    def test_the_answer_is_the_state(self):
+        assert baseline_dps({"dps": {"207": 2570, "158": 70}, "t": 1}) == {"207": 2570, "158": 70}
+
+    def test_an_error_frame_carries_no_state(self):
+        assert baseline_dps({"Error": "Timeout Waiting for Device", "Err": "902"}) is None
+        assert baseline_dps({"Error": "x", "Err": LAN_ERR_PAYLOAD, "dps": {"207": 1}}) is None
+
+    def test_nothing_or_junk_carries_no_state(self):
+        for result in (None, {}, {"dps": {}}, {"dps": "x"}, "x"):
+            assert baseline_dps(result) is None
+
+
+class TestSeededSession:
+    """A restart may dial the last published pair before scanning, when a handshake can prove it."""
+
+    def test_a_keyed_pair_is_dialled_first(self):
+        assert seeded_session("192.168.1.9", "3.5") == ("192.168.1.9", 3.5)
+        assert seeded_session("192.168.1.9", "3.4") == ("192.168.1.9", 3.4)
+
+    def test_a_3_3_pair_still_scans_first(self):
+        # A 3.3 connect is bare TCP and proves neither the address nor the version.
+        assert seeded_session("192.168.1.9", "3.3") == (None, None)
+
+    def test_nothing_published_means_a_scan(self):
+        assert seeded_session(None, "") == (None, None)
+        assert seeded_session("", "3.5") == (None, None)
+        assert seeded_session("192.168.1.9", "") == (None, None)
+        assert seeded_session("192.168.1.9", "junk") == (None, None)
+
+
+class TestSessionCandidates:
+    """Which versions a (re)connect tries, and in what order."""
+
+    def test_a_3_3_monitor_is_unchanged(self):
+        # The maintainer's SCD973 on firmware 1.4.0: only ever 3.3.
+        for scanned in (True, False):
+            assert session_candidates(3.3, None, scanned=scanned) == [3.3]
+            assert session_candidates(3.3, 3.3, scanned=scanned) == [3.3]
+            assert session_candidates(None, 3.3, scanned=scanned) == [3.3]
+            assert session_candidates(None, None, scanned=scanned) == [PROTOCOL_VERSION_DEFAULT]
+
+    def test_after_a_scan_the_fallback_stays(self):
+        assert session_candidates(3.5, None, scanned=True) == [3.5, PROTOCOL_VERSION_DEFAULT]
+
+    def test_a_fallback_session_does_not_pin_the_monitor_to_3_3(self):
+        # One unconfirmed 3.3 session used to make every later reconnect start at 3.3.
+        assert session_candidates(3.5, 3.3, scanned=True) == [3.5, PROTOCOL_VERSION_DEFAULT]
+        assert session_candidates(3.5, 3.3, scanned=False) == [3.5]
+
+    def test_a_cached_address_is_trusted_only_through_a_handshake(self):
+        # A failed handshake there means a rescan, not a bare TCP session with
+        # whatever now answers at that address.
+        assert session_candidates(3.5, 3.5, scanned=False) == [3.5]
+        assert session_candidates(3.4, None, scanned=False) == [3.4]

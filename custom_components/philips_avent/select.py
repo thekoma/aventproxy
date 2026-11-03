@@ -86,14 +86,14 @@ class AventLullabySelect(CoordinatorEntity, SelectEntity):
         track_id = lullaby_track_id(option, self._current_track_id())
         if track_id is None:
             return
-        await self.coordinator.set_dps({
-            "202": json.dumps({"bizcode": "phi-no-bm", "id": track_id}),
-            DPS_LULLABY_CONTROL: "play",
-        })
-        self.coordinator.data["248"] = json.dumps(
-            {"bizcode": "phi-no-bm", "id": track_id, "errcode": 0}
+        # The monitor echoes the chosen track in DPS 248, not in the 202 written.
+        await self.coordinator.set_dps(
+            {
+                "202": json.dumps({"bizcode": "phi-no-bm", "id": track_id}),
+                DPS_LULLABY_CONTROL: "play",
+            },
+            optimistic={"248": json.dumps({"bizcode": "phi-no-bm", "id": track_id, "errcode": 0})},
         )
-        self.async_write_ha_state()
 
 
 class AventPlayModeSelect(CoordinatorEntity, SelectEntity):
@@ -120,8 +120,6 @@ class AventPlayModeSelect(CoordinatorEntity, SelectEntity):
         if mode is None:
             return
         await self.coordinator.set_dps({DPS_LULLABY_MODE: mode})
-        self.coordinator.data[DPS_LULLABY_MODE] = mode
-        self.async_write_ha_state()
 
 
 class AventTimerSelect(CoordinatorEntity, SelectEntity):
@@ -160,9 +158,5 @@ class AventTimerSelect(CoordinatorEntity, SelectEntity):
         seconds = TIMER_OPTIONS.get(option, 0)
         if seconds == 0:
             await self.coordinator.set_dps({self._dps_switch: False})
-            self.coordinator.data[self._dps_switch] = False
         else:
             await self.coordinator.set_dps({self._dps_switch: True, self._dps_timer: seconds})
-            self.coordinator.data[self._dps_switch] = True
-            self.coordinator.data[self._dps_timer] = seconds
-        self.async_write_ha_state()

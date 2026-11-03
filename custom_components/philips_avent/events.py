@@ -13,6 +13,10 @@ stayed off on several models while the Philips app got the notification (issues
   (from the diagnostics on #61). Its noise alert uses the same shape with
   `cmd: ipc_bang` (from the diagnostics on #42).
 
+Which of the two a monitor uses follows its firmware rather than its model: an
+SCD973/26 reported every alarm in DPS 212 and left 250 and 141 empty (fork
+619981b). Both paths are read on every monitor.
+
 DPS 212 carries its own timestamp, which makes it usable on the cloud poll as
 well: the value sticks around in device state, so freshness comes from the
 timestamp rather than from having seen the push arrive.
@@ -159,6 +163,21 @@ def cry_event_timestamp(raw: object) -> float | None:
     unmapped, because those are still in KNOWN_COMMANDS via SOUND_COMMANDS.
     """
     return alarm_event_timestamp(raw, CRY_COMMANDS)
+
+
+def alert_selection(turn_on: str, partner: str | None) -> dict[str, bool]:
+    """The write that turns an alert detector on, clearing its partner if it has one.
+
+    A monitor measured at protocol 3.5 detects motion or sound, never both, and
+    acts on whichever of DPS 134 and 139 was written last without clearing the
+    other, which then reads True while doing nothing (fork 04d6d28, SCD973/26).
+    The partner goes first and the requested switch last, because the LAN path
+    writes the values one by one in order. Turning a detector off is never
+    paired: it stops detection and leaves the other as it is.
+    """
+    if partner is None:
+        return {turn_on: True}
+    return {partner: False, turn_on: True}
 
 
 def poll_should_stay_fast(lan_connected: bool, has_alarm_record: bool) -> bool:
