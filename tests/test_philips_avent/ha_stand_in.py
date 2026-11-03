@@ -63,6 +63,24 @@ class UpdateFailed(Exception):
     pass
 
 
+class CoordinatorEntity:
+    """Home Assistant's CoordinatorEntity: available while the last refresh succeeded."""
+
+    def __init__(self, coordinator, context=None):
+        self.coordinator = coordinator
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.last_update_success
+
+
+class _Names:
+    """Stands in for HA's enums and constant groups: any attribute is its own name."""
+
+    def __getattr__(self, name):
+        return name.lower()
+
+
 class ConfigEntryAuthFailed(Exception):
     pass
 
@@ -85,6 +103,28 @@ def _stand_in_modules() -> dict[str, types.ModuleType]:
             "homeassistant.helpers.update_coordinator",
             DataUpdateCoordinator=DataUpdateCoordinator,
             UpdateFailed=UpdateFailed,
+            CoordinatorEntity=CoordinatorEntity,
+        ),
+        "homeassistant.helpers.entity_platform": module("homeassistant.helpers.entity_platform", AddEntitiesCallback=object),
+        "homeassistant.config_entries": module("homeassistant.config_entries", ConfigEntry=object),
+        "homeassistant.const": module(
+            "homeassistant.const",
+            SIGNAL_STRENGTH_DECIBELS_MILLIWATT="dBm",
+            EntityCategory=_Names(),
+            UnitOfTemperature=_Names(),
+            UnitOfTime=_Names(),
+        ),
+        "homeassistant.components": module("homeassistant.components"),
+        "homeassistant.components.binary_sensor": module(
+            "homeassistant.components.binary_sensor",
+            BinarySensorDeviceClass=_Names(),
+            BinarySensorEntity=type("BinarySensorEntity", (), {}),
+        ),
+        "homeassistant.components.sensor": module(
+            "homeassistant.components.sensor",
+            SensorDeviceClass=_Names(),
+            SensorEntity=type("SensorEntity", (), {}),
+            SensorStateClass=_Names(),
         ),
         "homeassistant.util": module("homeassistant.util"),
         "homeassistant.util.dt": module(

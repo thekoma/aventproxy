@@ -118,6 +118,11 @@ class AventMotionDetected(CoordinatorEntity, BinarySensorEntity):
         self._last_alarm_timestamp: float | None = None
 
     @property
+    def available(self) -> bool:
+        # Unavailable while the cloud that feeds it is down; see coordinator.alerts_heard.
+        return super().available and self.coordinator.alerts_heard
+
+    @property
     def is_on(self) -> bool:
         return self._is_on
 
@@ -262,6 +267,11 @@ class AventSoundDetected(CoordinatorEntity, BinarySensorEntity):
         self._last_alarm_timestamp: float | None = None
 
     @property
+    def available(self) -> bool:
+        # Unavailable while the cloud that feeds it is down; see coordinator.alerts_heard.
+        return super().available and self.coordinator.alerts_heard
+
+    @property
     def is_on(self) -> bool:
         return self._is_on
 
@@ -338,6 +348,11 @@ class AventCryDetected(CoordinatorEntity, BinarySensorEntity):
         self._is_on = False
         self._clear_unsub = None
         self._last_alarm_timestamp: float | None = None
+
+    @property
+    def available(self) -> bool:
+        # Unavailable while the cloud that feeds it is down; see coordinator.alerts_heard.
+        return super().available and self.coordinator.alerts_heard
 
     @property
     def is_on(self) -> bool:
