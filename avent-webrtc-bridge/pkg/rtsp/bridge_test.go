@@ -1,9 +1,11 @@
 package rtsp
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/pion/rtp"
 	pion "github.com/pion/webrtc/v4"
 
 	"avent-webrtc-bridge/pkg/storage"
@@ -44,5 +46,25 @@ func TestStopClosesANeverConnectedBridge(t *testing.T) {
 	}
 	if wb.ctx.Err() == nil {
 		t.Fatal("Stop left the bridge context running")
+	}
+}
+
+// Issue #72: whether audio keeps flowing once the monitor is asked to keep its
+// speaker closed is read from the session's packet counts, logged at Stop.
+func TestStopLogsTheSessionsPacketCounts(t *testing.T) {
+	name := fmt.Sprintf("Count Cam %d", time.Now().UnixNano())
+	wb := NewWebRTCBridge(&storage.CameraInfo{DeviceName: name}, "hd", nil, nil, nil)
+	pc, err := pion.NewPeerConnection(pion.Configuration{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wb.peerConnection = pc
+	wb.forwardVideo(&rtp.Packet{Payload: []byte{0x65, 0x88}})
+	wb.forwardVideo(&rtp.Packet{Payload: []byte{0x41, 0x9a}})
+	wb.forwardAudio(&rtp.Packet{Payload: make([]byte, 160)})
+
+	wb.Stop()
+	if lines := testLog.lines("Cloud session for " + name + " carried 2 video and 1 audio packets"); len(lines) != 1 {
+		t.Fatalf("want one packet-count line for %s, got %q", name, lines)
 	}
 }

@@ -52,6 +52,11 @@ type WebRTCBridge struct {
 	videoSSRC atomic.Uint32
 	audioSSRC atomic.Uint32
 
+	// Packets this session delivered, logged when it stops (issue #72: does
+	// audio keep flowing with the monitor's speaker kept closed?).
+	videoPackets atomic.Uint64
+	audioPackets atomic.Uint64
+
 	// State
 	connected         bool
 	stopped           bool
@@ -344,6 +349,8 @@ func (wb *WebRTCBridge) Stop() {
 		wb.rtpForwarder.Stop()
 	}
 
+	core.Logger.Info().Msgf("Cloud session for %s carried %d video and %d audio packets",
+		wb.camera.DeviceName, wb.videoPackets.Load(), wb.audioPackets.Load())
 	core.Logger.Info().Msgf("WebRTC bridge stopped for camera: %s", wb.camera.DeviceName)
 }
 
@@ -416,9 +423,9 @@ func (wb *WebRTCBridge) setupPeerConnection(webRTCConfig *tuya.WebRTCConfig) err
 
 				switch packet.SSRC {
 				case wb.videoSSRC.Load():
-					wb.rtpForwarder.ForwardVideoPacket(packet)
+					wb.forwardVideo(packet)
 				case wb.audioSSRC.Load():
-					wb.rtpForwarder.ForwardAudioPacket(packet)
+					wb.forwardAudio(packet)
 				}
 			}
 		})
@@ -519,7 +526,7 @@ func (wb *WebRTCBridge) setupMQTTCameraClient(webRTCConfig *tuya.WebRTCConfig) {
 	wb.pendingCandidates = nil
 
 	wb.cameraClient.HandleAnswer = func(answer tuya.AnswerFrame) {
-		core.Logger.Trace().Msgf("Received WebRTC answer")
+		core.Logger.Info().Msgf("Answer from %s: %s", wb.camera.DeviceName, summarizeSDP(answer.Sdp))
 
 		desc := pion.SessionDescription{
 			Type: pion.SDPTypePranswer,
@@ -616,7 +623,9 @@ func (wb *WebRTCBridge) createAndSendOffer() error {
 	re := regexp.MustCompile(`\r\na=extmap[^\r\n]*`)
 	offer = re.ReplaceAllString(offer, "")
 
-	core.Logger.Trace().Msgf("Sending WebRTC offer")
+	// The media sections only: the SDP's ICE credentials and fingerprint stay out.
+	core.Logger.Info().Msgf("Offer to %s: mode=webrtc stream_type=%d datachannel=%t talkback=%t %s",
+		wb.camera.DeviceName, wb.streamType, wb.isHEVC, wb.Talkback, summarizeSDP(offer))
 
 	// Send offer
 	if err := wb.cameraClient.SendOffer(offer, wb.resolution, wb.streamType, wb.isHEVC); err != nil {
@@ -650,7 +659,7 @@ func (wb *WebRTCBridge) handleVideoTrack(track *pion.TrackRemote) {
 				continue
 			}
 
-			wb.rtpForwarder.ForwardVideoPacket(packet)
+			wb.forwardVideo(packet)
 		}
 	}
 }
@@ -678,9 +687,21 @@ func (wb *WebRTCBridge) handleAudioTrack(track *pion.TrackRemote) {
 				continue
 			}
 
-			wb.rtpForwarder.ForwardAudioPacket(packet)
+			wb.forwardAudio(packet)
 		}
 	}
+}
+
+// forwardVideo hands one video packet from the camera to the forwarder.
+func (wb *WebRTCBridge) forwardVideo(packet *rtp.Packet) {
+	wb.videoPackets.Add(1)
+	wb.rtpForwarder.ForwardVideoPacket(packet)
+}
+
+// forwardAudio hands one audio packet from the camera to the forwarder.
+func (wb *WebRTCBridge) forwardAudio(packet *rtp.Packet) {
+	wb.audioPackets.Add(1)
+	wb.rtpForwarder.ForwardAudioPacket(packet)
 }
 
 func (wb *WebRTCBridge) createHTTPClient() *http.Client {
