@@ -107,8 +107,9 @@ func bindingResponse(req *stun.Message, from *net.UDPAddr, local iceCreds) (*stu
 // peers is asked again before every round, so candidates that trickle in
 // while the checks run are tried too; on the LAN it always returns the one
 // candidate the answer named. A response is matched to its check by
-// transaction id, so the candidate returned is the one the check went to, and
-// a response to no check of ours is ignored.
+// transaction id, so the candidate returned is the one the check went to; a
+// response that echoes no id of ours counts for the candidate it came from,
+// and one from any other address is ignored.
 //
 // A candidate that rejects its check is not checked again. The checks end at
 // once only when every candidate known has rejected, which on the LAN, with
@@ -171,7 +172,7 @@ func iceConnect(ctx context.Context, sock *net.UDPConn, peers func() []*net.UDPA
 		}
 		switch msg.Type.Class {
 		case stun.ClassSuccessResponse:
-			if peer, ok := sent[msg.TransactionID]; ok {
+			if peer := checked(sent, msg.TransactionID, from, peers()); peer != nil {
 				return peer, nil
 			}
 		case stun.ClassRequest:
@@ -179,9 +180,9 @@ func iceConnect(ctx context.Context, sock *net.UDPConn, peers func() []*net.UDPA
 				_, _ = sock.WriteToUDP(resp.Raw, from)
 			}
 		case stun.ClassErrorResponse:
-			peer, ok := sent[msg.TransactionID]
+			peer := checked(sent, msg.TransactionID, from, peers())
 			var code stun.ErrorCodeAttribute
-			if !ok || code.GetFrom(msg) != nil {
+			if peer == nil || code.GetFrom(msg) != nil {
 				continue
 			}
 			rejected[peer.String()] = true
@@ -191,6 +192,23 @@ func iceConnect(ctx context.Context, sock *net.UDPConn, peers func() []*net.UDPA
 			}
 		}
 	}
+}
+
+// checked names the candidate a response answers: the one its transaction id
+// went to, or else the candidate it came from. The second keeps dev3's LAN
+// behaviour for a monitor that does not echo the id (RFC 5389 says it must),
+// where a response from the one candidate always counted. A response from an
+// address we never checked answers nothing.
+func checked(sent map[[stun.TransactionIDSize]byte]*net.UDPAddr, tx [stun.TransactionIDSize]byte, from *net.UDPAddr, peers []*net.UDPAddr) *net.UDPAddr {
+	if peer, ok := sent[tx]; ok {
+		return peer
+	}
+	for _, p := range peers {
+		if p.IP.Equal(from.IP) && p.Port == from.Port {
+			return p
+		}
+	}
+	return nil
 }
 
 // allRejected reports whether every candidate has rejected its check.
