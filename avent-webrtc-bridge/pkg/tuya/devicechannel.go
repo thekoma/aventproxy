@@ -174,6 +174,18 @@ func (p *DeviceChannels) Open(cfg DeviceChannelConfig) (*DeviceChannel, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if c.lost || c.retired {
+		// The connection-lost handler may have run before the connection
+		// was in the map, so it could not take it out: do it here, with the
+		// device entries no session reads, or every later open for this
+		// account would find the dead connection.
+		if p.conns[c.id] == c {
+			delete(p.conns, c.id)
+		}
+		for id, subs := range c.devices {
+			if len(subs.sessions) == 0 {
+				delete(c.devices, id)
+			}
+		}
 		return nil, errors.New("device channel: the connection dropped while opening")
 	}
 	subs.localKey = d.localKey

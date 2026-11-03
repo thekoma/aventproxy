@@ -95,6 +95,9 @@ type fakePool struct {
 	brokers []*fakeDeviceBroker
 	lost    []mqtt.ConnectionLostHandler
 	next    func(b *fakeDeviceBroker)
+	// lostOnDial makes the next dial report the connection lost before it
+	// returns, that is, before Open has put it in the pool.
+	lostOnDial bool
 }
 
 func newFakePool() *fakePool {
@@ -107,7 +110,12 @@ func newFakePool() *fakePool {
 		}
 		fp.brokers = append(fp.brokers, b)
 		fp.lost = append(fp.lost, onLost)
+		lose := fp.lostOnDial
+		fp.lostOnDial = false
 		fp.mu.Unlock()
+		if lose {
+			onLost(b, errors.New("connection reset during the connect"))
+		}
 		return b, nil
 	}
 	return fp
@@ -378,5 +386,29 @@ func TestFailedSubscribeLeavesNoConnection(t *testing.T) {
 func TestDialDeviceChannelRefusesABadKey(t *testing.T) {
 	if _, err := DialDeviceChannel(DeviceChannelConfig{DeviceID: "d", LocalKey: "short"}); err == nil {
 		t.Fatal("a local key that is not 16 bytes must be refused before connecting")
+	}
+}
+
+// N3: a connection lost before Open put it in the pool must not stay there,
+// or every later open for the account fails.
+func TestConnectionLostBeforeItWasPooledDoesNotWedge(t *testing.T) {
+	fp := newFakePool()
+	fp.lostOnDial = true
+	if _, err := fp.Open(accountConfig("dev-a", nil)); err == nil {
+		t.Fatal("an open on a connection lost while opening must fail")
+	}
+	fp.DeviceChannels.mu.Lock()
+	pooled := len(fp.DeviceChannels.conns)
+	fp.DeviceChannels.mu.Unlock()
+	if pooled != 0 {
+		t.Fatalf("%d connections still pooled after the loss", pooled)
+	}
+	d, err := fp.Open(accountConfig("dev-a", nil))
+	if err != nil {
+		t.Fatalf("the next open failed: %v", err)
+	}
+	defer d.Close()
+	if n := fp.dials(); n != 2 {
+		t.Fatalf("dials = %d, want a fresh connection", n)
 	}
 }
