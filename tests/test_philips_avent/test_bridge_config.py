@@ -362,6 +362,60 @@ class TestFetchPasswords:
         assert out == {"cam": "pw"}
 
 
+class _CountingApi(_Api):
+    def __init__(self, result=None, error=None, delay=0.0):
+        super().__init__(result, error)
+        self.calls = []
+        self._delay = delay
+
+    async def get_rtc_config(self, dev_id):
+        import asyncio
+
+        self.calls.append(dev_id)
+        if self._delay:
+            await asyncio.sleep(self._delay)
+        return await super().get_rtc_config(dev_id)
+
+
+class TestFetchMissingPasswords:
+    """A setup that could not fetch the P2P password tries again on a later rewrite."""
+
+    def test_nothing_missing_means_no_call(self):
+        import asyncio
+
+        from lan_credentials import fetch_missing_passwords
+
+        api = _CountingApi({"password": "pw"})
+        assert asyncio.run(fetch_missing_passwords(api, ["cam"], {"cam": "pw"})) == {}
+        assert api.calls == []
+
+    def test_only_missing_cameras_are_fetched(self):
+        import asyncio
+
+        from lan_credentials import fetch_missing_passwords
+
+        api = _CountingApi({"password": "fresh"})
+        out = asyncio.run(fetch_missing_passwords(api, ["a", "b"], {"a": "pw", "b": ""}))
+        assert out == {"b": "fresh"}
+        assert api.calls == ["b"]
+
+    def test_a_failure_returns_nothing_to_store(self):
+        import asyncio
+
+        from lan_credentials import fetch_missing_passwords
+
+        out = asyncio.run(fetch_missing_passwords(_CountingApi(error=RuntimeError("down")), ["cam"], {}))
+        assert out == {}
+
+    def test_a_hanging_cloud_is_cut_short(self):
+        import asyncio
+
+        from lan_credentials import fetch_missing_passwords
+
+        api = _CountingApi({"password": "late"}, delay=5)
+        assert asyncio.run(fetch_missing_passwords(api, ["cam"], {}, timeout=0.01)) == {}
+
+
 class TestPreviousLanValues:
     def test_reads_ip_protocol_and_password_per_camera(self):
         from payload import previous_lan_values

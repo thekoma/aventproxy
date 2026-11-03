@@ -32,7 +32,7 @@ from .const import (
     TUYA_SIGNING_KEY,
 )
 from .coordinator import PhilipsAventCoordinator
-from .lan_credentials import fetch_p2p_passwords, lan_credentials
+from .lan_credentials import fetch_missing_passwords, fetch_p2p_passwords, lan_credentials
 from .payload import (
     BRIDGE_CONFIG_PREFIX,
     bridge_config_filename,
@@ -258,8 +258,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # False once setup failed or the entry unloaded: hass.data no longer holds this setup's data.
         return ready and hass.data.get(DOMAIN, {}).get(entry.entry_id) is data
 
-    async def _rewrite_bridge_config() -> None:
-        # One writer at a time; no API call, so this works while the cloud is down.
+    async def _rewrite_bridge_config(*, refetch: bool = True) -> None:
+        # One writer at a time. Its only cloud call, for a P2P password the setup
+        # could not fetch, is bounded, so a rewrite during an outage still writes.
+        if refetch and _live() and entry.options.get(CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING):
+            passwords.update(await fetch_missing_passwords(api, list(coordinators), passwords))
         async with write_lock:
             # A rewrite queued during the setup write can get the lock only after
             # that setup failed, and must not write for an entry that is gone.
@@ -301,7 +304,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
         hass.data.setdefault(DOMAIN, {})[entry.entry_id] = data
         ready = True
-        await _rewrite_bridge_config()
+        # The passwords were fetched just above; asking again here would only repeat a failure.
+        await _rewrite_bridge_config(refetch=False)
     except BaseException:
         ready = False
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
