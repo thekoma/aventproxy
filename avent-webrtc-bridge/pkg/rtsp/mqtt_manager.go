@@ -16,35 +16,51 @@ var mqttBackoffDelays = []time.Duration{2 * time.Second, 5 * time.Second, 15 * t
 // keep the stream waiting for good.
 const mqttHandshakeTimeout = 15 * time.Second
 
+// MQTTManager holds the one MQTT connection the cameras' cloud signalling
+// shares. One, not one per camera: every connection authenticates with the
+// same client id (derived from the phone's device id and the user's), and a
+// broker drops the older connection when another arrives with its id (MQTT
+// 3.1.1, 3.1.4-2). With two cameras, each camera's connect cut the other's
+// off, in the middle of its offer and answer if it was starting. The app
+// keeps one connection for all its devices too; sessions are told apart by
+// their session id (MQTTClient.AddCameraClient).
 type MQTTManager struct {
 	mobileClient *tuya.MobileSDKClient
-	clients      map[string]*tuya.MQTTClient // keyed by deviceId
+	client       *tuya.MQTTClient
 	mutex        sync.Mutex
+
+	// Seams for tests: connect, and (*tuya.MQTTClient).IsConnected.
+	connectFn func(deviceId string) (*tuya.MQTTClient, error)
+	connected func(*tuya.MQTTClient) bool
 }
 
 func NewMQTTManager(mobileClient *tuya.MobileSDKClient) *MQTTManager {
-	return &MQTTManager{
+	m := &MQTTManager{
 		mobileClient: mobileClient,
-		clients:      make(map[string]*tuya.MQTTClient),
+		connected:    (*tuya.MQTTClient).IsConnected,
 	}
+	m.connectFn = m.connect
+	return m
 }
 
+// GetClient returns the shared connection, connecting it first if it is down.
+// deviceId is the camera that needs it, for the log.
 func (m *MQTTManager) GetClient(deviceId string) (*tuya.MQTTClient, error) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	if client, exists := m.clients[deviceId]; exists && client.IsConnected() {
+	if m.client != nil && m.connected(m.client) {
 		core.Logger.Trace().Msgf("Reusing existing MQTT client for device %s", deviceId)
-		return client, nil
+		return m.client, nil
 	}
 
 	core.Logger.Info().Msgf("Creating new MQTT client for device %s", deviceId)
-	client, err := m.connect(deviceId)
+	client, err := m.connectFn(deviceId)
 	if err != nil {
 		return nil, err
 	}
 
-	m.clients[deviceId] = client
+	m.client = client
 	return client, nil
 }
 
@@ -105,14 +121,16 @@ func (m *MQTTManager) connect(deviceId string) (*tuya.MQTTClient, error) {
 	return nil, fmt.Errorf("MQTT connect failed after %d attempts: %v", len(mqttBackoffDelays), lastErr)
 }
 
+// InvalidateClient drops the shared connection, so the next GetClient
+// connects afresh. deviceId is the camera that found it broken, for the log.
 func (m *MQTTManager) InvalidateClient(deviceId string) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	if client, exists := m.clients[deviceId]; exists {
+	if m.client != nil {
 		core.Logger.Info().Msgf("Invalidating MQTT client for device %s (will reconnect on next use)", deviceId)
-		client.Stop()
-		delete(m.clients, deviceId)
+		m.client.Stop()
+		m.client = nil
 	}
 }
 
@@ -120,9 +138,9 @@ func (m *MQTTManager) Stop() {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	for deviceId, client := range m.clients {
-		core.Logger.Info().Msgf("Closing MQTT client for device %s", deviceId)
-		client.Stop()
+	if m.client != nil {
+		core.Logger.Info().Msg("Closing the MQTT client")
+		m.client.Stop()
+		m.client = nil
 	}
-	m.clients = make(map[string]*tuya.MQTTClient)
 }
