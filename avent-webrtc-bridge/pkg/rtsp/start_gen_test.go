@@ -128,3 +128,29 @@ func TestStopAndSweepWhileClientsComeAndGo(t *testing.T) {
 	}
 	<-done
 }
+
+// Two clients handed the same stream: the first one's AddClient must not
+// make the stream look unclaimed while the second one's is still to come.
+func TestRemoveStreamKeepsAStreamTwoClientsWereHanded(t *testing.T) {
+	server, cs := newTestCameraStream(t)
+	cs.startStreamOverride = func() {}
+	cs.active.Store(true)
+	for range 2 {
+		if got, _ := server.getOrCreateStream(cs.camera, cs.resolution, cs.user); got != cs {
+			t.Fatal("getOrCreateStream did not reuse the live stream")
+		}
+	}
+	cs.AddClient(&RTSPClient{session: "a", stream: cs}) // the first client arrives
+
+	cs.mutex.Lock()
+	cs.stopStreamInternal() // a teardown lands before the second client's AddClient
+	cs.mutex.Unlock()
+	server.removeStream(cs)
+
+	server.mutex.RLock()
+	got := server.streams[cs.streamId]
+	server.mutex.RUnlock()
+	if got != cs {
+		t.Fatal("the stream was dropped from the map while a client it was handed is still to arrive")
+	}
+}

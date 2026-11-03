@@ -173,7 +173,10 @@ type CameraStream struct {
 	// a stream lock that a whole connect can hold.
 	connecting atomic.Bool
 	active     atomic.Bool
-	pending    atomic.Bool // handed to a client by getOrCreateStream, AddClient not run yet
+	// pending counts the clients getOrCreateStream handed this stream whose
+	// AddClient has not run yet. A count, not a flag: one client arriving
+	// must not hide another that is still on its way.
+	pending atomic.Int32
 
 	// startGen numbers the stream's starts. A start that waited without the
 	// lock checks it, so it never acts on a newer start's behalf.
@@ -499,11 +502,11 @@ func (s *RTSPServer) getOrCreateStream(camera *storage.CameraInfo, streamResolut
 	// Check if stream already exists
 	streamId := fmt.Sprintf("%s-%s", camera.DeviceID, streamResolution)
 	if stream, exists := s.streams[streamId]; exists {
-		if stream.active.Load() || stream.connecting.Load() || stream.pending.Load() {
+		if stream.active.Load() || stream.connecting.Load() || stream.pending.Load() > 0 {
 			core.Logger.Trace().Msgf("Reusing existing stream for camera: %s", camera.DeviceName)
 			// Pending until the client's AddClient, so a stop that lands
 			// first cannot drop the stream from the map under it.
-			stream.pending.Store(true)
+			stream.pending.Add(1)
 			return stream, nil
 		}
 	}
@@ -517,7 +520,7 @@ func (s *RTSPServer) getOrCreateStream(camera *storage.CameraInfo, streamResolut
 	}
 
 	stream.attachBridgeErrorHandler()
-	stream.pending.Store(true)
+	stream.pending.Add(1)
 
 	s.streams[streamId] = stream
 
@@ -537,7 +540,7 @@ func (s *RTSPServer) removeStream(stream *CameraStream) {
 
 	// A stream that restarted, or that getOrCreateStream just handed to a
 	// client, stays: dropping it would leave it running outside the map.
-	if stream.active.Load() || stream.connecting.Load() || stream.pending.Load() {
+	if stream.active.Load() || stream.connecting.Load() || stream.pending.Load() > 0 {
 		return
 	}
 	if existing, exists := s.streams[stream.streamId]; exists && existing == stream {
@@ -671,7 +674,7 @@ func (cs *CameraStream) AddClient(client *RTSPClient) {
 
 	cs.clients[client.session] = client
 	cs.lastActivity = time.Now()
-	cs.pending.Store(false)
+	cs.clientArrived()
 
 	// Start stream if not active and not already connecting
 	if !cs.active.Load() && !cs.connecting.Load() {
@@ -680,6 +683,17 @@ func (cs *CameraStream) AddClient(client *RTSPClient) {
 			go cs.startStreamOverride()
 		} else {
 			go cs.startStream(gen)
+		}
+	}
+}
+
+// clientArrived takes one client off pending. A client attached without
+// getOrCreateStream (tests, mostly) finds it at zero and leaves it there.
+func (cs *CameraStream) clientArrived() {
+	for {
+		n := cs.pending.Load()
+		if n <= 0 || cs.pending.CompareAndSwap(n, n-1) {
+			return
 		}
 	}
 }
