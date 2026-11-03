@@ -19,9 +19,10 @@ STATE = {"138": False, "207": 2345}
 
 
 class FakeLan:
-    def __init__(self, version: float | None, delivered: bool = True):
+    def __init__(self, version: float | None, delivered: bool = True, protocol: str = ""):
         self.connected = version is not None
         self.session_version = version
+        self.protocol = protocol
         self.delivered = delivered
         self.sent: list[dict] = []
 
@@ -153,3 +154,20 @@ class TestBaseline:
         coordinator._on_lan_dps_update({"250": "motion_detection"})
         assert coordinator.lan_update_sequence == 1
         assert coordinator.last_lan_dps == {"250": "motion_detection"}
+
+
+class TestAlertDetectors:
+    """Pairing the alert switches follows the protocol the monitor confirmed, not the live session."""
+
+    def test_a_3_5_monitor_runs_one_detector(self, make):
+        coordinator = make(None)
+        coordinator._lan_client = FakeLan(None, protocol="3.5")
+        assert coordinator.alert_detectors_exclusive
+
+    def test_a_3_3_monitor_keeps_its_switches_independent(self, make):
+        coordinator = make(3.3)
+        coordinator._lan_client.protocol = "3.3"
+        assert not coordinator.alert_detectors_exclusive
+
+    def test_without_a_lan_client_nothing_is_paired(self, make):
+        assert not make(None).alert_detectors_exclusive

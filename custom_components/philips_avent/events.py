@@ -161,6 +161,21 @@ def cry_event_timestamp(raw: object) -> float | None:
     return alarm_event_timestamp(raw, CRY_COMMANDS)
 
 
+def alert_selection(turn_on: str, partner: str | None) -> dict[str, bool]:
+    """The write that turns an alert detector on, clearing its partner if it has one.
+
+    A monitor measured at protocol 3.5 detects motion or sound, never both, and
+    acts on whichever of DPS 134 and 139 was written last without clearing the
+    other, which then reads True while doing nothing (fork 04d6d28, SCD973/26).
+    The partner goes first and the requested switch last, because the LAN path
+    writes the values one by one in order. Turning a detector off is never
+    paired: it stops detection and leaves the other as it is.
+    """
+    if partner is None:
+        return {turn_on: True}
+    return {partner: False, turn_on: True}
+
+
 def poll_should_stay_fast(lan_connected: bool, has_alarm_record: bool) -> bool:
     """Whether the cloud poll must keep its short interval.
 
