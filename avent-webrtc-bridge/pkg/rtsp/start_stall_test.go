@@ -254,18 +254,24 @@ func TestTwoClientsOnAStartingCamera(t *testing.T) {
 }
 
 // Issue #89: a start that fails must close every client that came for it,
-// those that joined while it was failing too, and the next client must get a
-// fresh start rather than a stream that is already dead.
+// and the next client must get a fresh start rather than a stream that is
+// already dead. A client that came during the last attempt, its join held
+// behind that attempt's lock, never joins: the failed start takes the lock
+// back for its teardown before the woken join can run, so the join sees the
+// stop and is refused (joinStream). With that refusal disabled, this test
+// failed 40 runs out of 40.
 func TestClientsOfAFailedStartReconnectToAFreshOne(t *testing.T) {
 	shortRetry(t)
+	lastAttempt := make(chan struct{})
 	fail := make(chan struct{})
 	var attempts atomic.Int32
 	h := newStallHarness(t, func(cs *CameraStream) error {
 		switch attempts.Add(1) {
 		case 1:
-			<-fail // the camera never answers, until the test says so
 			return errors.New("no answer")
 		case 2:
+			close(lastAttempt)
+			<-fail // the camera never answers, until the test says so
 			return errors.New("no answer either")
 		default:
 			return nil
@@ -276,7 +282,8 @@ func TestClientsOfAFailedStartReconnectToAFreshOne(t *testing.T) {
 
 	first := dialRTSP(t, h.port, "/cam1")
 	first.play(time.Second)
-	second := dialRTSP(t, h.port, "/cam1") // joins while the start hangs
+	receive(t, lastAttempt, "the start never reached its last attempt")
+	second := dialRTSP(t, h.port, "/cam1") // its join waits behind the attempt
 	second.play(time.Second)
 
 	once.Do(func() { close(fail) })
