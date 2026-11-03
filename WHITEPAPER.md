@@ -1360,7 +1360,7 @@ Talkback and `/sd` streams stay on the cloud. An HEVC monitor tries the LAN, nev
 
 ## 21. Stream sessions and the lullaby (issue #72): a hypothesis under test
 
-*Nothing in this section has been confirmed on a monitor yet. It comes from the logs on [#72](https://github.com/thekoma/aventproxy/issues/72), from reading the Philips app's native libraries (app 1.9.1: strings and disassembly, no capture) and from our own code. DeutscheMark and bojanmk1 reported the problem, and their observations on #72 are what made it traceable.*
+*Nothing in this section has been confirmed on a monitor yet. It comes from the logs on [#72](https://github.com/thekoma/aventproxy/issues/72), from reading the Philips app's native libraries (app 1.9.1: strings and disassembly, no capture) and from our own code. Thanks to DeutscheMark and bojanmk1, whose reports and timings on #72 made it traceable.*
 
 ### What is observed
 
@@ -1375,7 +1375,7 @@ Neither the integration nor the bridge writes a DPS when a stream opens. The aud
 
 ### The hypothesis: the session mode
 
-The bridge negotiates its cloud sessions in `"mode": "webrtc"` (section 14). The app never does. In `libThingP2PSDK.so` the only `webrtc` string sits in the handler for *incoming* offers, which is how a browser or a smart display gets a session. The app itself offers `imm`, and then starts a preview with explicit control commands. `libThingCameraSDK.so` frames those commands as `magic 0x12345678 | requestId u32 | 0 u32 | cmd u16 | sub u16 | len u32 | payload`. Disassembly maps the numbers:
+The bridge negotiates its cloud sessions in `"mode": "webrtc"` (section 14). As far as its libraries show, the app never does. In `libThingP2PSDK.so` the only `webrtc` string sits in the handler for *incoming* offers, which is how a browser or a smart display gets a session. The app itself offers `imm`, and then starts a preview with explicit control commands. `libThingCameraSDK.so` frames those commands as `magic 0x12345678 | requestId u32 | 0 u32 | cmd u16 | sub u16 | len u32 | payload`. Disassembly maps the numbers:
 
 | cmd | Function |
 |-----|----------|
@@ -1406,7 +1406,7 @@ That is `StartPreview`, plus two queries and the authorisation, with no command 
 
 ### The experiment (2026.11.0-dev3, Dev card only)
 
-The Dev card's `speaker_off` option is on by default. With it, once a cloud session without talkback connects, the bridge sends the 312 `speaker` control with `cmdValue: 0`. That control is the webrtc-mode counterpart of command 8. `SendSpeaker` came with the tuya-ipc-terminal import and had never been called. The bridge logs `Asked <camera> to keep its speaker off (issue #72)`.
+The Dev card's `speaker_off` option is on by default. With it, once a cloud session without talkback connects, the bridge sends the 312 `speaker` control with `cmdValue: 0`. It is presumably the webrtc-mode counterpart of command 8. `SendSpeaker` came with the tuya-ipc-terminal import and had never been called. The bridge logs `Asked <camera> to keep its speaker off (issue #72)`.
 
 Three outcomes are possible:
 - the firmware ignores the control;
