@@ -205,7 +205,7 @@ func (wb *WebRTCBridge) Start() error {
 				return fmt.Errorf("failed to connect to MQTT: %v", err)
 			}
 
-			if err = wb.mqttClient.Connected.Wait(); err != nil {
+			if err = wb.mqttClient.Connected.WaitTimeout(mqttHandshakeTimeout); err != nil {
 				return fmt.Errorf("MQTT connection failed: %v", err)
 			}
 
@@ -247,7 +247,7 @@ func (wb *WebRTCBridge) Start() error {
 			return fmt.Errorf("failed to connect to MQTT: %v", err)
 		}
 
-		if err = wb.mqttClient.Connected.Wait(); err != nil {
+		if err = wb.mqttClient.Connected.WaitTimeout(mqttHandshakeTimeout); err != nil {
 			return fmt.Errorf("MQTT connection failed: %v", err)
 		}
 	}

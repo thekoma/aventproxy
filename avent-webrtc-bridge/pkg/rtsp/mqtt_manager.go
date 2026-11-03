@@ -11,6 +11,11 @@ import (
 
 var mqttBackoffDelays = []time.Duration{2 * time.Second, 5 * time.Second, 15 * time.Second, 30 * time.Second}
 
+// mqttHandshakeTimeout bounds the subscription that follows a connect. It runs
+// with the stream's lock held, so a broker that never acknowledges must not
+// keep the stream waiting for good.
+const mqttHandshakeTimeout = 15 * time.Second
+
 type MQTTManager struct {
 	mobileClient *tuya.MobileSDKClient
 	clients      map[string]*tuya.MQTTClient // keyed by deviceId
@@ -86,7 +91,7 @@ func (m *MQTTManager) connect(deviceId string) (*tuya.MQTTClient, error) {
 			continue
 		}
 
-		if err = client.Connected.Wait(); err != nil {
+		if err = client.Connected.WaitTimeout(mqttHandshakeTimeout); err != nil {
 			lastErr = err
 			client.Stop()
 			core.Logger.Warn().Err(err).Msgf("MQTT handshake attempt %d/%d failed for device %s", attempt+1, len(mqttBackoffDelays), deviceId)
