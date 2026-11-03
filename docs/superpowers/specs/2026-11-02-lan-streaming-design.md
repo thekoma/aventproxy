@@ -135,6 +135,8 @@ Summary of the fork's implementation, verified by reading its code
 - **LAN cool-down per camera.** Any LAN failure, at start or mid-stream, makes
   that camera skip the LAN for 5 minutes. A camera whose LAN never works (stale
   password, an untested model) then pays the 4 s once, not on every open.
+  (dev4: each further failure in a row doubles the skip, up to an hour; a LAN
+  stream that works resets it.)
 - **Every blocking step has a deadline**, the LAN attempt honours a context
   cancelled by `Stop()`, and no server-wide lock is held while it waits.
 - **Back to the LAN after a fallback.** Without this, a consumer that never
