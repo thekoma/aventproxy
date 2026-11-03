@@ -468,7 +468,8 @@ func (s *RTSPServer) handlePlay(client *RTSPClient, request *RTSPRequest) {
 
 	sendRTSPResponse(client.conn, 200, "OK", headers, "")
 
-	// Only now may media share the socket, and only behind the response above.
+	// Only now does media flow, and on TCP only behind the response above,
+	// since it shares the socket.
 	if client.transportMode == TransportTCP {
 		err := client.stream.forwarder.AddTCPClient(client.session, client.conn,
 			client.videoRTPChannel, client.audioRTPChannel, client.backAudioRTPChannel)
@@ -476,6 +477,8 @@ func (s *RTSPServer) handlePlay(client *RTSPClient, request *RTSPRequest) {
 			core.Logger.Error().Err(err).Msg("Error adding TCP RTP client")
 			return
 		}
+	} else if !client.stream.forwarder.Play(client.session) {
+		core.Logger.Warn().Msgf("PLAY from client %s before any SETUP of a media track", client.session)
 	}
 
 	core.Logger.Info().Msgf("Starting RTSP stream for client %s", client.session)

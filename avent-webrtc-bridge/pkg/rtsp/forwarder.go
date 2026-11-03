@@ -82,6 +82,10 @@ type RTPClient struct {
 
 	lastActivity time.Time
 
+	// playing is set by PLAY: media goes only to clients that asked for it,
+	// although a UDP client is registered at SETUP (its backchannel needs it).
+	playing bool
+
 	// failing is set while sends to this client fail with an error that is
 	// not a dead client's, so that streak is logged once, not per packet.
 	failing bool
@@ -209,6 +213,19 @@ func (rf *RTPForwarder) SetupUDPBackchannel(sessionID string, clientPort int, bi
 	return portPair.RTPPort, nil
 }
 
+// Play starts sending media to a client registered at SETUP. It reports
+// whether the forwarder knew the client.
+func (rf *RTPForwarder) Play(sessionID string) bool {
+	rf.mutex.Lock()
+	defer rf.mutex.Unlock()
+	client, ok := rf.clients[sessionID]
+	if ok {
+		client.playing = true
+	}
+	return ok
+}
+
+// AddTCPClient adds an interleaved client, at PLAY, and starts its media.
 func (rf *RTPForwarder) AddTCPClient(sessionID string, conn net.Conn, videoRTPChannel, audioRTPChannel, backAudioRTPChannel byte) error {
 	rf.mutex.Lock()
 	defer rf.mutex.Unlock()
@@ -221,6 +238,7 @@ func (rf *RTPForwarder) AddTCPClient(sessionID string, conn net.Conn, videoRTPCh
 		existingClient.audioRTPChannel = audioRTPChannel
 		existingClient.backAudioRTPChannel = backAudioRTPChannel
 		existingClient.lastActivity = time.Now()
+		existingClient.playing = true
 		return nil
 	}
 
@@ -232,6 +250,7 @@ func (rf *RTPForwarder) AddTCPClient(sessionID string, conn net.Conn, videoRTPCh
 		audioRTPChannel:     audioRTPChannel,
 		backAudioRTPChannel: backAudioRTPChannel,
 		lastActivity:        time.Now(),
+		playing:             true, // added at PLAY
 	}
 
 	rf.clients[sessionID] = client
@@ -317,6 +336,9 @@ func (rf *RTPForwarder) forward(data []byte, video bool) {
 	}
 	var dead []string
 	for sessionID, client := range rf.clients {
+		if !client.playing {
+			continue
+		}
 		client.lastActivity = time.Now()
 		if err := rf.send(client, video, data); err != nil {
 			if isDeadClientError(err) {

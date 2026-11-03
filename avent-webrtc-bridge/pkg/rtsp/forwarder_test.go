@@ -186,6 +186,7 @@ func TestUDPMediaGoesToTheClientAddress(t *testing.T) {
 	if err := rf.AddUDPClient("s1", ip, sink.LocalAddr().(*net.UDPAddr).Port, 0); err != nil {
 		t.Fatalf("add client: %v", err)
 	}
+	rf.Play("s1")
 	defer rf.RemoveClient("s1")
 	rf.ForwardVideoPacket(&rtp.Packet{Header: rtp.Header{SequenceNumber: 1, Marker: true}, Payload: []byte{0x65, 0x88}})
 
@@ -263,6 +264,7 @@ func TestRefusedUDPClientIsDropped(t *testing.T) {
 			if err := rf.AddUDPClient("s1", loopback, video, audio); err != nil {
 				t.Fatal(err)
 			}
+			rf.Play("s1")
 			waitClientCount(t, rf, 0, send)
 		})
 	}

@@ -2,6 +2,7 @@ package rtsp
 
 import (
 	"bufio"
+	"fmt"
 	"net"
 	"strings"
 	"testing"
@@ -91,5 +92,57 @@ func TestInterleavedMediaWaitsForPlay(t *testing.T) {
 	got := readInterleaved(t, peer.conn, 1)
 	if got[0].PayloadType != 0 {
 		t.Fatalf("got payload type %d on the audio channel", got[0].PayloadType)
+	}
+}
+
+// UDP media also waits for PLAY: SETUP registers the client (the UDP
+// backchannel SETUP needs that entry) but sends it nothing yet.
+func TestUDPMediaWaitsForPlay(t *testing.T) {
+	server, stream := newTestCameraStream(t)
+	ln, _ := listenOnEphemeral(t)
+	defer ln.Close()
+	peerEnd, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer peerEnd.Close()
+	serverEnd, err := ln.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverEnd.Close()
+	client := &RTSPClient{conn: serverEnd, session: "s1", stream: stream}
+	peer := &rtspPeer{conn: peerEnd, reader: bufio.NewReader(peerEnd)}
+
+	sink, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sink.Close()
+	port := sink.LocalAddr().(*net.UDPAddr).Port
+	received := func() bool {
+		stream.forwarder.ForwardVideoPacket(&rtp.Packet{Header: rtp.Header{Marker: true}, Payload: []byte{0x41, 0x9a}})
+		_ = sink.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		_, _, err := sink.ReadFromUDP(make([]byte, 1500))
+		return err == nil
+	}
+
+	go server.handleSetup(client, setupRequest("video", fmt.Sprintf("RTP/AVP;unicast;client_port=%d-%d", port, port+1)))
+	if status := peer.readResponse(t); status != "RTSP/1.0 200 OK" {
+		t.Fatalf("SETUP: %q", status)
+	}
+	if received() {
+		t.Fatal("UDP media arrived before PLAY")
+	}
+
+	go server.handlePlay(client, &RTSPRequest{Method: "PLAY", Headers: map[string]string{"Session": "s1"}})
+	if status := peer.readResponse(t); status != "RTSP/1.0 200 OK" {
+		t.Fatalf("PLAY: %q", status)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for !received() {
+		if time.Now().After(deadline) {
+			t.Fatal("no UDP media after PLAY")
+		}
 	}
 }
