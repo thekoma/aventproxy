@@ -96,12 +96,13 @@ func endsAccessUnit(payload []byte) bool {
 }
 
 // splitNAL fragments a payload only when it is a whole NAL that will not fit.
-// Anything already fragmented or aggregated is passed through untouched.
+// Anything already aggregated (24-27) or fragmented (28-29) is passed through
+// untouched.
 func splitNAL(payload []byte, p *codecs.H264Payloader) [][]byte {
 	if len(payload) <= lanRTPMTU {
 		return [][]byte{payload}
 	}
-	if payload[0]&0x1f >= 28 {
+	if payload[0]&0x1f >= 24 {
 		return [][]byte{payload}
 	}
 	if out := p.Payload(lanRTPMTU, payload); len(out) > 0 {
@@ -111,9 +112,11 @@ func splitNAL(payload []byte, p *codecs.H264Payloader) [][]byte {
 }
 
 // carriesSPSOrIDR reports whether a payload holds an SPS or the start of an
-// IDR, what an H.264 decoder needs before it shows anything. An HEVC header
-// byte has even low bits and an Annex-B start code reads as type 0, so
-// neither can pass for one.
+// IDR, what an H.264 decoder needs before it shows anything. An Annex-B start
+// code reads as type 0. An HEVC header byte has even low bits, so it never
+// reads as 5 or 7. It reads as 24 or 28 only for HEVC types that are reserved
+// or unspecified, which a camera does not send, and even then the inner check
+// below must pass too.
 func carriesSPSOrIDR(payload []byte) bool {
 	if len(payload) < 2 {
 		return false
