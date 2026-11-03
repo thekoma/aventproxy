@@ -206,6 +206,10 @@ func sendSignal(s *Session, iv []byte, frame SignalFrame) error {
 // ReadSignal returns the next 302 frame for sessionID, skipping
 // acknowledgements, status pushes and frames addressed to other sessions: the
 // monitor answers every LAN client, the phone app included.
+//
+// A disconnect that names no session is taken as ours. The only caller reads
+// while its offer is outstanding, and a refusal must end the attempt at once
+// rather than look like a timeout.
 func ReadSignal(s *Session, sessionID string, timeout time.Duration) (*SignalFrame, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -221,7 +225,11 @@ func ReadSignal(s *Session, sessionID string, timeout time.Duration) (*SignalFra
 		if err := json.Unmarshal(payload, &frame); err != nil {
 			continue // 32-byte acknowledgements are not JSON
 		}
-		if frame.Header.Type == "" || frame.Header.SessionID != sessionID {
+		if frame.Header.Type == "" {
+			continue
+		}
+		sessionless := frame.Header.Type == TypeDisconnect && frame.Header.SessionID == ""
+		if frame.Header.SessionID != sessionID && !sessionless {
 			continue
 		}
 		return &frame, nil

@@ -125,3 +125,29 @@ func TestReadSignalTimesOut(t *testing.T) {
 		t.Errorf("took %s", time.Since(start))
 	}
 }
+
+func TestReadSignalTakesASessionlessDisconnect(t *testing.T) {
+	client, monitor := pipeSessions()
+	defer client.Close()
+	defer monitor.Close()
+	iv := []byte("0123456789ab")
+
+	frame := func(sessionID string) []byte {
+		b, err := json.Marshal(SignalFrame{Header: SignalHeader{Type: TypeDisconnect, SessionID: sessionID}})
+		if err != nil {
+			t.Error(err)
+		}
+		return b
+	}
+	go func() {
+		_ = monitor.Send(CmdIPCLan302, iv, frame("other")) // another client's: skipped
+		_ = monitor.Send(CmdIPCLan302, iv, frame(""))      // a refusal that names no session: ours
+	}()
+	f, err := ReadSignal(client, "mine", time.Second)
+	if err != nil {
+		t.Fatalf("a disconnect without a session id read as %v; a refusal must not look like a timeout", err)
+	}
+	if f.Header.Type != TypeDisconnect || f.Header.SessionID != "" {
+		t.Fatalf("got %+v, want the sessionless disconnect", f.Header)
+	}
+}
