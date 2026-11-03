@@ -311,26 +311,28 @@ func isDeadClientError(err error) bool {
 }
 
 // send writes one marshalled packet to a client on the video or audio track.
-func (rf *RTPForwarder) send(client *RTPClient, video bool, data []byte) error {
+// sent is false when the client has no socket for that track (a UDP client
+// that set up only one of them), so nothing was written.
+func (rf *RTPForwarder) send(client *RTPClient, video bool, data []byte) (sent bool, err error) {
 	if client.transportMode == TransportTCP {
 		if client.tcpConn == nil {
-			return nil
+			return false, nil
 		}
 		channel := client.audioRTPChannel
 		if video {
 			channel = client.videoRTPChannel
 		}
-		return rf.sendInterleavedRTP(client.tcpConn, channel, data)
+		return true, rf.sendInterleavedRTP(client.tcpConn, channel, data)
 	}
 	conn := client.audioConn
 	if video {
 		conn = client.videoConn
 	}
 	if conn == nil {
-		return nil
+		return false, nil
 	}
-	_, err := conn.Write(data)
-	return err
+	_, err = conn.Write(data)
+	return true, err
 }
 
 // forward sends one marshalled packet to every client and drops the ones that
@@ -346,7 +348,8 @@ func (rf *RTPForwarder) forward(data []byte, video bool) {
 			continue
 		}
 		client.lastActivity = time.Now()
-		if err := rf.send(client, video, data); err != nil {
+		sent, err := rf.send(client, video, data)
+		if err != nil {
 			if isDeadClientError(err) {
 				dead = append(dead, sessionID)
 			} else if !client.failing {
@@ -355,6 +358,9 @@ func (rf *RTPForwarder) forward(data []byte, video bool) {
 				client.failing = true
 				core.Logger.Warn().Err(err).Msgf("Cannot send %s to client %s, not logging again until it recovers", track, sessionID)
 			}
+			continue
+		}
+		if !sent { // no socket for this track: nothing tried, nothing recovered
 			continue
 		}
 		if client.failing {

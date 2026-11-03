@@ -463,3 +463,38 @@ func TestAudioClockStaysNearTheWallClock(t *testing.T) {
 		})
 	}
 }
+
+// A UDP client that set up only video has no audio socket. Its audio
+// packets are not sends, so they must not count as the client recovering:
+// an unreachable video-only client alternated a WARN and an INFO per packet.
+func TestFailingClientRecoversOnlyOnARealSend(t *testing.T) {
+	session := fmt.Sprintf("video-only-%d", time.Now().UnixNano())
+	sink, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sink.Close()
+	video, err := net.DialUDP("udp", nil, sink.LocalAddr().(*net.UDPAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rf := NewRTPForwarder()
+	rf.clients[session] = &RTPClient{
+		sessionID: session, transportMode: TransportUDP, playing: true,
+		videoConn: video,
+		failing:   true, // its last video send failed
+	}
+	defer rf.RemoveClient(session)
+
+	for range 20 {
+		rf.ForwardAudioPacket(&rtp.Packet{Header: rtp.Header{PayloadType: 0}, Payload: make([]byte, 160)})
+	}
+	if lines := testLog.lines("Sending to client " + session + " again"); len(lines) != 0 {
+		t.Fatalf("audio it has no socket for counted as a recovery %d times", len(lines))
+	}
+
+	rf.ForwardVideoPacket(&rtp.Packet{Header: rtp.Header{Marker: true}, Payload: []byte{0x41, 0x9a}})
+	if lines := testLog.lines("Sending to client " + session + " again"); len(lines) != 1 {
+		t.Fatalf("a video send that worked logged %d recoveries, want 1", len(lines))
+	}
+}

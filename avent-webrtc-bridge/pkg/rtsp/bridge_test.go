@@ -233,3 +233,61 @@ func TestStreamBridgesTakeWebRTCAudio(t *testing.T) {
 		t.Fatal("a replacement bridge did not take WebRTCAudio from the server")
 	}
 }
+
+// The Dev card asks for the speaker off by default, and the session's audio
+// count only reaches the log at Stop, which an always-on consumer such as
+// Frigate never gets to. So the bridge checks once, a while after asking, and
+// says whether audio still flows (issue #72).
+func TestSpeakerOffChecksAudioOnce(t *testing.T) {
+	old := speakerAudioCheckDelay
+	speakerAudioCheckDelay = 50 * time.Millisecond
+	defer func() { speakerAudioCheckDelay = old }()
+
+	newSession := func(name string) *WebRTCBridge {
+		wb := NewWebRTCBridge(&storage.CameraInfo{DeviceName: name}, "hd", nil, nil, nil)
+		wb.SpeakerOff = true
+		wb.controls = &controlRecorder{}
+		t.Cleanup(wb.cancel)
+		return wb
+	}
+	unique := func(what string) string { return fmt.Sprintf("%s Cam %d", what, time.Now().UnixNano()) }
+
+	t.Run("no audio", func(t *testing.T) {
+		name := unique("Silent")
+		wb := newSession(name)
+		connect(wb)
+		waitUntil(t, func() bool { return len(testLog.lines("No audio from "+name)) == 1 },
+			"no warning for a session whose audio stopped after the speaker request")
+		if line := testLog.lines("No audio from " + name)[0]; !strings.Contains(line, `"level":"warn"`) ||
+			!strings.Contains(line, "speaker_off to false") {
+			t.Fatalf("want a warning that names the option: %s", line)
+		}
+	})
+	t.Run("audio flows", func(t *testing.T) {
+		name := unique("Talking")
+		wb := newSession(name)
+		connect(wb)
+		for range 3 {
+			wb.forwardAudio(&rtp.Packet{Header: rtp.Header{PayloadType: 0}, Payload: make([]byte, 160)})
+		}
+		waitUntil(t, func() bool { return len(testLog.lines("Audio from "+name)) == 1 },
+			"no confirmation for a session whose audio kept flowing")
+		if line := testLog.lines("Audio from " + name)[0]; !strings.Contains(line, `"level":"info"`) ||
+			!strings.Contains(line, "3 packets") {
+			t.Fatalf("want an info line with the count: %s", line)
+		}
+		if lines := testLog.lines("No audio from " + name); len(lines) != 0 {
+			t.Fatalf("warned although audio flowed: %q", lines)
+		}
+	})
+	t.Run("session ended first", func(t *testing.T) {
+		name := unique("Gone")
+		wb := newSession(name)
+		connect(wb)
+		wb.cancel() // what Stop does
+		time.Sleep(4 * speakerAudioCheckDelay)
+		if lines := testLog.lines("udio from " + name); len(lines) != 0 {
+			t.Fatalf("checked a session that had already ended: %q", lines)
+		}
+	})
+}
