@@ -2,7 +2,9 @@ package addon
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -78,9 +80,13 @@ func storedUID(u storage.UserSession) string {
 // cloudFallbackUser decides what a failed cloud check means: with LAN targets
 // and this account's stored add-on user the bridge can still serve LAN
 // streams, otherwise the original error stands. The data dir holds every
-// account's user, so only the one with the configured uid is taken; a config
-// without uid predates LAN streaming and has no LAN targets anyway.
-func cloudFallbackUser(cloudErr error, cfgUID string, targets map[string]rtsp.LANTarget, stored []storage.UserSession) (*storage.UserSession, error) {
+// account's user, so only this account's is taken: the one saved with the
+// configured uid, or else the one that registered a camera this config
+// streams over the LAN. The user is saved with the cloud's user id, which is
+// expected to match the integration's uid; the cameras still name the
+// account if it ever does not. A config without uid predates LAN streaming
+// and has no LAN targets anyway.
+func cloudFallbackUser(cloudErr error, cfgUID string, targets map[string]rtsp.LANTarget, stored []storage.UserSession, registry []storage.CameraInfo) (*storage.UserSession, error) {
 	if len(targets) == 0 || cfgUID == "" {
 		return nil, cloudErr
 	}
@@ -89,7 +95,33 @@ func cloudFallbackUser(cloudErr error, cfgUID string, targets map[string]rtsp.LA
 			return &stored[i], nil
 		}
 	}
+	for i := range stored {
+		if stored[i].Region == "addon" && ownsAny(registry, stored[i].UserKey, targets) {
+			return &stored[i], nil
+		}
+	}
 	return nil, cloudErr
+}
+
+// ownsAny reports whether userKey registered any of the cameras in targets.
+func ownsAny(registry []storage.CameraInfo, userKey string, targets map[string]rtsp.LANTarget) bool {
+	for _, c := range registry {
+		if _, ok := targets[c.DeviceID]; ok && c.UserKey == userKey {
+			return true
+		}
+	}
+	return false
+}
+
+// cloudCheckWarning says what a failed cloud check means for the log. Only a
+// network error means the cloud is unreachable, and the cloud path comes back
+// with it; an API error, such as an expired sid, means it answered and refused.
+func cloudCheckWarning(err error) string {
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return fmt.Sprintf("Cloud unreachable, serving streams with LAN signalling until it returns: %v", err)
+	}
+	return fmt.Sprintf("Cloud check failed, serving streams with LAN signalling: %v", err)
 }
 
 // lanUID is the account id LAN offers carry: the integration's uid, or the
@@ -272,12 +304,19 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	var userKey string
 	userInfo, err := verifyCloud(client)
 	if err != nil {
-		stored, _ := storageManager.ListUsers()
-		fallback, ferr := cloudFallbackUser(err, cfg.UID, targets, stored)
+		stored, lerr := storageManager.ListUsers()
+		if lerr != nil {
+			core.Logger.Warn().Msgf("Could not read the stored users: %v", lerr)
+		}
+		registry, rerr := storageManager.GetAllCameras()
+		if rerr != nil {
+			core.Logger.Warn().Msgf("Could not read the camera registry: %v", rerr)
+		}
+		fallback, ferr := cloudFallbackUser(err, cfg.UID, targets, stored, registry)
 		if ferr != nil {
 			return ferr
 		}
-		core.Logger.Warn().Msgf("Cloud unreachable, serving LAN streams until it returns: %v", err)
+		core.Logger.Warn().Msg(cloudCheckWarning(err))
 		userKey = fallback.UserKey
 		client.UID = cfg.UID // MQTTManager takes the cloud's user id once the cloud answers
 	} else {
