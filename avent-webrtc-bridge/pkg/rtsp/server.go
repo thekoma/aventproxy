@@ -776,7 +776,7 @@ func (cs *CameraStream) startStream(gen uint64) {
 			}
 			cs.armPromotion()
 			cs.mutex.Unlock()
-			core.Logger.Info().Msgf("Streaming %s over the cloud", cs.camera.DeviceName)
+			core.Logger.Info().Msgf("Streaming %s with cloud signalling", cs.camera.DeviceName)
 			return
 		}
 
@@ -796,7 +796,7 @@ func (cs *CameraStream) startStream(gen uint64) {
 		cs.server.cooldownMutex.Lock()
 		delete(cs.server.lanCooldowns, cs.camera.DeviceID)
 		cs.server.cooldownMutex.Unlock()
-		core.Logger.Info().Msgf("The cloud failed too for %s, trying the LAN again on the next start", cs.camera.DeviceName)
+		core.Logger.Info().Msgf("Cloud signalling failed too for %s, trying LAN signalling again on the next start", cs.camera.DeviceName)
 	}
 	clients := cs.teardownLocked()
 	cs.mutex.Unlock()

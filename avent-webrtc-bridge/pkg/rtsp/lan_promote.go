@@ -13,7 +13,7 @@ import (
 // offers until it has reached Tuya, so every power cut ends there.
 
 // errLANAvailable is why a cloud stream is torn down once the LAN works again.
-var errLANAvailable = errors.New("LAN available again")
+var errLANAvailable = errors.New("LAN signalling available again")
 
 // armPromotion probes the LAN when the camera's cool-down ends, if the
 // cool-down is all that keeps this stream on the cloud. Callers hold cs.mutex.
@@ -31,9 +31,9 @@ func (cs *CameraStream) armPromotion() {
 	}
 	if delay <= 0 { // the cool-down ran out while the cloud was starting
 		delay = 0
-		core.Logger.Info().Msgf("Trying the LAN again for %s now", cs.camera.DeviceName)
+		core.Logger.Info().Msgf("Trying LAN signalling again for %s now", cs.camera.DeviceName)
 	} else {
-		core.Logger.Info().Msgf("Trying the LAN again for %s in %v", cs.camera.DeviceName, delay.Round(time.Second))
+		core.Logger.Info().Msgf("Trying LAN signalling again for %s in %v", cs.camera.DeviceName, delay.Round(time.Second))
 	}
 	var timer *time.Timer
 	timer = time.AfterFunc(delay, func() {
@@ -69,7 +69,7 @@ func (cs *CameraStream) promote() {
 	probe.Stop() // before the clients reconnect, so the monitor is free for them
 	if err != nil {
 		cs.server.startLANCooldown(cs.camera.DeviceID)
-		core.Logger.Info().Msgf("LAN still unavailable for %s: %v", cs.camera.DeviceName, err)
+		core.Logger.Info().Msgf("LAN signalling still unavailable for %s: %v", cs.camera.DeviceName, err)
 		cs.armPromotion()
 		cs.mutex.Unlock()
 		return

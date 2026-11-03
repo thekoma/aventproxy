@@ -248,7 +248,7 @@ func TestPromotionIsNotLoggedAsAnError(t *testing.T) {
 			t.Fatalf("the move back to the LAN was logged as an error: %s", line)
 		}
 		moved = moved || strings.Contains(line, `"level":"info"`) &&
-			strings.Contains(line, "LAN available again for "+name+", moving viewers")
+			strings.Contains(line, "LAN signalling available again for "+name+", moving viewers")
 	}
 	if !moved {
 		t.Fatalf("no info line about the LAN being back for %s in %q", name, lines)
@@ -276,7 +276,7 @@ func TestPromotionDueDuringTheCloudAttempt(t *testing.T) {
 
 	begin(cs)
 	receive(t, probed, "the probe never ran after the cool-down ran out")
-	for _, line := range testLog.lines("Trying the LAN again for " + cs.camera.DeviceName) {
+	for _, line := range testLog.lines("Trying LAN signalling again for " + cs.camera.DeviceName) {
 		if strings.Contains(line, " in -") {
 			t.Fatalf("logged a negative delay: %s", line)
 		}

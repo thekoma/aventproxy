@@ -74,7 +74,7 @@ func (cs *CameraStream) newLANSource(forwarder *RTPForwarder) lanStreamer {
 // frame, so a Stop cancels the attempt instead of waiting for it.
 func (cs *CameraStream) tryLAN(gen uint64) (done bool) {
 	if ok, reason := cs.lanEligible(); !ok {
-		core.Logger.Info().Msgf("Not using the LAN for %s: %s", cs.camera.DeviceName, reason)
+		core.Logger.Info().Msgf("Not using LAN signalling for %s: %s", cs.camera.DeviceName, reason)
 		return false
 	}
 
@@ -102,7 +102,7 @@ func (cs *CameraStream) tryLAN(gen uint64) (done bool) {
 		cs.lan = nil
 		source.Stop()
 		cs.server.startLANCooldown(cs.camera.DeviceID)
-		core.Logger.Warn().Msgf("LAN failed for %s: %v, using the cloud", cs.camera.DeviceName, err)
+		core.Logger.Warn().Msgf("Streaming with LAN signalling failed for %s: %v, trying cloud signalling", cs.camera.DeviceName, err)
 		return false
 	}
 	cs.connecting.Store(false)
@@ -110,7 +110,7 @@ func (cs *CameraStream) tryLAN(gen uint64) (done bool) {
 	if len(cs.clients) == 0 { // the last client left during the attempt
 		cs.scheduleShutdown()
 	}
-	core.Logger.Info().Msgf("Streaming %s over the LAN", cs.camera.DeviceName)
+	core.Logger.Info().Msgf("Streaming %s with LAN signalling", cs.camera.DeviceName)
 	return true
 }
 
@@ -149,7 +149,7 @@ func (cs *CameraStream) lanDied(source lanStreamer, err error) {
 		return
 	}
 	cs.server.startLANCooldown(cs.camera.DeviceID)
-	core.Logger.Warn().Msgf("LAN stream for %s died: %v; using the cloud for %v", cs.camera.DeviceName, err, lanCooldownPeriod)
+	core.Logger.Warn().Msgf("Stream with LAN signalling for %s died: %v; using cloud signalling for %v", cs.camera.DeviceName, err, lanCooldownPeriod)
 	clients := cs.teardownLocked()
 	cs.mutex.Unlock()
 	closeClients(clients)
