@@ -185,3 +185,37 @@ class TestOptimisticEcho:
             assert coordinator.data["248"] == echo["248"]
             assert coordinator.data["246"] == "playing"
             assert "248" not in before
+
+
+class TestLocalKey:
+    """Entries store no local key; the coordinator adopts the one the first refresh returns."""
+
+    def _capture(self, coordinator, monkeypatch):
+        import sys
+
+        started = []
+
+        class Client:
+            def __init__(self, hass, device_id, local_key, *args):
+                started.append(local_key)
+
+            async def start(self):
+                pass
+
+        monkeypatch.setattr(sys.modules[type(coordinator).__module__], "TuyaLANClient", Client)
+        return started
+
+    def test_the_key_comes_from_the_first_refresh(self, make, monkeypatch):
+        coordinator = make(None)
+        coordinator.device_info = {"localKey": "fake-local-key"}
+        started = self._capture(coordinator, monkeypatch)
+        asyncio.run(coordinator.start_lan())
+        assert started == ["fake-local-key"]
+        assert coordinator.local_key == "fake-local-key"
+
+    def test_without_a_key_there_is_no_lan_session(self, make, monkeypatch):
+        coordinator = make(None)
+        started = self._capture(coordinator, monkeypatch)
+        asyncio.run(coordinator.start_lan())
+        assert started == []
+        assert coordinator.local_key is None

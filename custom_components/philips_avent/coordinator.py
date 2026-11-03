@@ -91,6 +91,9 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         last_ip: str | None = None,
         last_protocol: str = "",
     ) -> None:
+        # Entries store no key, so it usually comes from the first refresh.
+        if not self._local_key:
+            self._local_key = self.device_info.get("localKey")
         if not self._local_key:
             return
         self._lan_client = TuyaLANClient(
@@ -112,6 +115,11 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         if self._lan_client:
             await self._lan_client.stop()
             self._lan_client = None
+
+    @property
+    def local_key(self) -> str | None:
+        """The key the LAN session was started with; the cloud's current one is in device_info."""
+        return self._local_key
 
     @property
     def lan_ip(self) -> str | None:

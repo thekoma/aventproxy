@@ -60,7 +60,7 @@ def lan_credentials(coordinators: dict, passwords: dict[str, str]) -> dict[str, 
     """
     return {
         cam_id: {
-            "local_key": coordinator.device_info.get("localKey") or coordinator._local_key or "",
+            "local_key": coordinator.device_info.get("localKey") or coordinator.local_key or "",
             "p2p_password": passwords.get(cam_id) or "",
             "lan_ip": coordinator.lan_ip or "",
             "lan_protocol": coordinator.lan_protocol or "",

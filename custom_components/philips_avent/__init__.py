@@ -286,11 +286,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             coordinator = PhilipsAventCoordinator(hass, api, cam_id, cam_name, local_key=local_key)
             await coordinator.async_config_entry_first_refresh()
 
-            if not local_key:
-                local_key = coordinator.device_info.get("localKey")
-                if local_key:
-                    coordinator._local_key = local_key
-
             coordinators[cam_id] = coordinator
             seed = previous.get(cam_id, {})
             await coordinator.start_lan(_on_address_change, seed.get("lan_ip") or None, seed.get("lan_protocol", ""))

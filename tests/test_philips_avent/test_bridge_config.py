@@ -291,7 +291,7 @@ class TestTalkbackOption:
 class _Coordinator:
     def __init__(self, device_info, stored_key="", lan_ip=None, lan_protocol=None):
         self.device_info = device_info
-        self._local_key = stored_key
+        self.local_key = stored_key
         self.lan_ip = lan_ip
         self.lan_protocol = lan_protocol
 
