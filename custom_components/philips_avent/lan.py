@@ -46,11 +46,14 @@ class TuyaLANClient:
         on_address_change: Callable[[str], None] | None = None,
         last_ip: str | None = None,
         last_protocol: str = "",
+        *,
+        on_session_up: Callable[[], None] | None = None,
     ) -> None:
         self._hass = hass
         self._device_id = device_id
         self._local_key = local_key
         self._on_dps_update = on_dps_update
+        self._on_session_up = on_session_up
         self._device: tinytuya.Device | None = None
         self._address = AddressPublisher(on_address_change, last_ip, last_protocol)
         # A keyed pair from the last run is dialled before any scan; see seeded_session.
@@ -238,6 +241,15 @@ class TuyaLANClient:
             _LOGGER.debug("LAN baseline for %s carries %d keys", self._device_id, len(dps))
             self._publish(dps, baseline=True)
 
+    def _announce_session(self) -> None:
+        """Tell the coordinator a session is up, on the event loop."""
+        if self._on_session_up is None:
+            return
+        try:
+            self._on_session_up()
+        except Exception:
+            _LOGGER.exception("Error in LAN session callback")
+
     def _publish(self, dps: dict[str, Any], *, baseline: bool = False) -> None:
         """Hand state to the coordinator, on the event loop.
 
@@ -288,6 +300,7 @@ class TuyaLANClient:
                     failures += 1
                     await self._interruptible_sleep(reconnect_delay(failures))
                     continue
+                self._announce_session()
                 # Before the receive loop, so the query never shares the socket
                 # with a keep-alive.
                 if keyed_protocol(self._version):

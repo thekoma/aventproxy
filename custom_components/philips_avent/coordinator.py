@@ -91,6 +91,9 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         self.sleep_day: dict | None = None
         self._sleep_day_refreshed_at = None
         self._cloud_poll_paused = False
+        # Set while a live LAN session stands in for a failing cloud poll.
+        self._cloud_failing = False
+        self._reauth_requested = False
 
     async def start_lan(
         self,
@@ -112,6 +115,7 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
             on_address_change,
             last_ip,
             last_protocol,
+            on_session_up=self._mark_lan_live,
         )
         await self._lan_client.start()
 
@@ -229,7 +233,23 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         tick of an outage.
         """
         self.data = data
+        self._mark_lan_live(notify=False)
         self.async_update_listeners()
+
+    @callback
+    def _mark_lan_live(self, notify: bool = True) -> None:
+        """A LAN session is live, so the entities are available whatever the cloud says.
+
+        Undoes a failed poll's verdict as soon as a session comes up or a push
+        arrives, without waiting for the next tick. While the session stays up a
+        failing poll no longer raises (`_cover_cloud_failure`), so this cannot
+        flap.
+        """
+        if self.data is None or self.last_update_success:
+            return
+        self.last_update_success = True
+        if notify:
+            self.async_update_listeners()
 
     @callback
     def _hold_lullaby_state(self, dps: dict[str, Any]) -> dict[str, Any]:
@@ -441,12 +461,55 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         # always asks the cloud: it fills device_info and the local key.
         if self.data is not None and self.lan_serves_state:
             self._note_cloud_poll(paused=True)
-            await self._refresh_rssi()
+            try:
+                await self._refresh_rssi()
+            except ConfigEntryAuthFailed as err:
+                self._cover_cloud_failure(err)
             if DPS_SENSEIQ_STATUS in self.data:
                 await self._refresh_sleep_day()
             return self.data
         self._note_cloud_poll(paused=False)
 
+        try:
+            data = await self._poll_cloud()
+        except (UpdateFailed, ConfigEntryAuthFailed, aiohttp.ClientError, TimeoutError, ValueError) as err:
+            # Without a live LAN session availability follows the poll, and Home
+            # Assistant logs the failure and the recovery once each.
+            if self.data is None or not self.lan_connected:
+                self._cloud_failing = False
+                raise
+            self._cover_cloud_failure(err)
+            return self.data
+        if self._cloud_failing:
+            self._cloud_failing = False
+            self._reauth_requested = False
+            _LOGGER.info("Cloud poll for %s recovered", self.camera_name)
+        return data
+
+    @callback
+    def _cover_cloud_failure(self, err: Exception) -> None:
+        """Keep the entities on the LAN session's state through a cloud failure.
+
+        The maintainer's rule is LAN whenever possible: temperature and the
+        controls keep working during a cloud outage, and the failure is logged
+        once when it starts rather than on every poll. A refused session still
+        starts the reauth flow, once, as Home Assistant would.
+        """
+        if isinstance(err, ConfigEntryAuthFailed) and not self._reauth_requested:
+            self._reauth_requested = True
+            if entry := getattr(self, "config_entry", None):
+                entry.async_start_reauth(self.hass)
+        if self._cloud_failing:
+            _LOGGER.debug("Cloud poll for %s still failing: %s", self.camera_name, err)
+            return
+        self._cloud_failing = True
+        _LOGGER.warning(
+            "Cloud poll for %s failed (%s); its LAN session keeps it available until the cloud answers again",
+            self.camera_name, err,
+        )
+
+    async def _poll_cloud(self) -> dict:
+        """Fetch the monitor's state from the cloud and merge it."""
         try:
             device = await self.api.get_device(self.camera_id)
             self.device_info = device

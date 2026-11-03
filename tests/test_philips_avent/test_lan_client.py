@@ -48,6 +48,9 @@ class FakeDevice:
         self.written.append((key, value))
         return FakeDevice.write_results.pop(0) if FakeDevice.write_results else None
 
+    def receive(self):
+        return None
+
     def close(self):
         self.closed = True
 
@@ -208,3 +211,24 @@ class TestRotatedKey:
         client.set_local_key("fake-new-key")
         client._drop_session_if_rekeyed()
         assert client._device is None
+
+
+class TestSessionUp:
+    def test_the_coordinator_hears_when_a_session_comes_up(self, lan, monkeypatch):
+        announced = []
+        client = lan.TuyaLANClient(
+            FakeHass(), "dev", "key", lambda dps, baseline=False: None,
+            on_session_up=lambda: (announced.append(True), client._stop_event.set()),
+        )
+
+        async def connect():
+            client._device = FakeDevice("dev", "10.0.0.7", "key")
+            client.connected = True
+            return True
+
+        monkeypatch.setattr(client, "_connect", connect)
+        asyncio.run(client._run())
+        assert announced == [True]
+
+    def test_no_callback_is_fine(self, lan):
+        make_client(lan)._announce_session()

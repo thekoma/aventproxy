@@ -18,6 +18,14 @@ pytestmark = pytest.mark.skipif(home_assistant_installed(), reason="uses a stand
 STATE = {"138": False, "207": 2345}
 
 
+class FakeEntry:
+    def __init__(self):
+        self.reauths = 0
+
+    def async_start_reauth(self, hass):
+        self.reauths += 1
+
+
 class FakeLan:
     def __init__(self, version: float | None, delivered: bool = True, protocol: str = ""):
         self.connected = version is not None
@@ -40,8 +48,11 @@ class FakeLan:
 
 
 class FakeApi:
-    def __init__(self, rssi_error: Exception | None = None, local_key: str | None = None):
+    def __init__(
+        self, rssi_error: Exception | None = None, local_key: str | None = None, device_error: Exception | None = None
+    ):
         self.local_key = local_key
+        self.device_error = device_error
         self.published: list[dict] = []
         self.device_calls = 0
         self.rssi_calls = 0
@@ -53,6 +64,8 @@ class FakeApi:
 
     async def get_device(self, dev_id):
         self.device_calls += 1
+        if self.device_error:
+            raise self.device_error
         device = {"dps": {**STATE, "207": 2400}}
         if self.local_key:
             device["localKey"] = self.local_key
@@ -153,10 +166,12 @@ class TestPoll:
         import sys
 
         coordinator = make(3.5)
+        coordinator.config_entry = FakeEntry()
         module = sys.modules[type(coordinator).__module__]
         coordinator.api.rssi_error = module.TuyaAPIError("SID_INVALID", "session invalid")
-        with pytest.raises(module.ConfigEntryAuthFailed):
-            asyncio.run(coordinator._async_update_data())
+        # The live session keeps the entities available; the reauth flow still starts.
+        assert asyncio.run(coordinator._async_update_data()) == STATE
+        assert coordinator.config_entry.reauths == 1
 
 
 class TestBaseline:
@@ -214,7 +229,7 @@ class TestLocalKey:
         started = []
 
         class Client:
-            def __init__(self, hass, device_id, local_key, *args):
+            def __init__(self, hass, device_id, local_key, *args, **kwargs):
                 started.append(local_key)
 
             async def start(self):
@@ -281,11 +296,12 @@ class TestPushesLeaveThePollAlone:
         assert coordinator.data["246"] == "playing"
         assert coordinator.scheduled_for == due
 
-    def test_a_push_does_not_mark_a_failed_poll_as_recovered(self, make):
+    def test_a_push_restores_availability_after_a_failed_poll(self, make):
+        # A push proves the LAN session is live (round 3: LAN whenever possible).
         coordinator = make(3.3)
         coordinator.last_update_success = False
         coordinator._on_lan_dps_update({"207": 2500})
-        assert coordinator.last_update_success is False
+        assert coordinator.last_update_success is True
         assert coordinator.data["207"] == 2500
 
 
@@ -320,3 +336,85 @@ class TestRotatedLocalKey:
         asyncio.run(coordinator._async_update_data())
         assert coordinator.local_key == "fake-old-key"
         assert rewrites == []
+
+
+class TestCloudFailureBehindALanSession:
+    """LAN whenever possible: a live session keeps the entities available through a cloud failure."""
+
+    def _module(self, coordinator):
+        import sys
+
+        return sys.modules[type(coordinator).__module__]
+
+    def _messages(self, caplog, level):
+        return [r.getMessage() for r in caplog.records if r.levelname == level and "Cloud poll" in r.getMessage()]
+
+    def test_failures_keep_the_state_and_log_once_each_way(self, make, caplog):
+        caplog.set_level("DEBUG")
+        coordinator = make(3.3, api=FakeApi(device_error=aiohttp.ClientError("cloud down")))
+        for _ in range(3):
+            assert asyncio.run(coordinator._async_update_data()) == STATE
+        assert len(self._messages(caplog, "WARNING")) == 1
+        coordinator.api.device_error = None
+        assert asyncio.run(coordinator._async_update_data())["207"] == 2400
+        asyncio.run(coordinator._async_update_data())
+        assert len(self._messages(caplog, "INFO")) == 1
+        assert len(self._messages(caplog, "WARNING")) == 1
+
+    def test_every_kind_of_cloud_failure_is_covered(self, make):
+        coordinator = make(3.3)
+        module = self._module(coordinator)
+        for error in (
+            aiohttp.ClientError("down"), TimeoutError(), ValueError("not json"),
+            module.TuyaAPIError("SYSTEM_ERROR", "busy"),
+        ):
+            coordinator.api.device_error = error
+            assert asyncio.run(coordinator._async_update_data()) == STATE
+
+    def test_a_refused_session_starts_reauth_once_and_stays_available(self, make):
+        coordinator = make(3.3)
+        coordinator.config_entry = FakeEntry()
+        coordinator.api.device_error = self._module(coordinator).TuyaAPIError("SID_INVALID", "session invalid")
+        for _ in range(3):
+            assert asyncio.run(coordinator._async_update_data()) == STATE
+        assert coordinator.config_entry.reauths == 1
+
+    def test_without_a_lan_session_the_failure_raises_as_before(self, make, caplog):
+        caplog.set_level("DEBUG")
+        coordinator = make(None, api=FakeApi(device_error=aiohttp.ClientError("cloud down")))
+        with pytest.raises(aiohttp.ClientError):
+            asyncio.run(coordinator._async_update_data())
+        module = self._module(coordinator)
+        coordinator.api.device_error = module.TuyaAPIError("SYSTEM_ERROR", "busy")
+        with pytest.raises(module.UpdateFailed):
+            asyncio.run(coordinator._async_update_data())
+        coordinator.api.device_error = module.TuyaAPIError("SID_INVALID", "session invalid")
+        with pytest.raises(module.ConfigEntryAuthFailed):
+            asyncio.run(coordinator._async_update_data())
+        assert self._messages(caplog, "WARNING") == []
+
+    def test_a_dropped_session_hands_availability_back_to_the_poll(self, make):
+        coordinator = make(3.3, api=FakeApi(device_error=aiohttp.ClientError("cloud down")))
+        assert asyncio.run(coordinator._async_update_data()) == STATE
+        coordinator._lan_client.connected = False
+        with pytest.raises(aiohttp.ClientError):
+            asyncio.run(coordinator._async_update_data())
+
+    def test_the_first_refresh_still_needs_the_cloud(self, make):
+        coordinator = make(3.3, data=None, api=FakeApi(device_error=aiohttp.ClientError("cloud down")))
+        with pytest.raises(aiohttp.ClientError):
+            asyncio.run(coordinator._async_update_data())
+
+    def test_a_session_coming_up_restores_availability_at_once(self, make):
+        coordinator = make(3.3)
+        coordinator.last_update_success = False
+        before = coordinator.listener_updates
+        coordinator._mark_lan_live()
+        assert coordinator.last_update_success is True
+        assert coordinator.listener_updates == before + 1
+
+    def test_an_available_coordinator_is_left_alone(self, make):
+        coordinator = make(3.3)
+        before = coordinator.listener_updates
+        coordinator._mark_lan_live()
+        assert coordinator.listener_updates == before
