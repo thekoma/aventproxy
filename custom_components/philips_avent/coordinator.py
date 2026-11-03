@@ -372,10 +372,13 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
     async def _fetch_rssi(self) -> bool:
         """Refresh the WiFi signal if it is due; True when the cloud answered.
 
-        At most once per RSSI_INTERVAL. Raises one of CLOUD_FAILURES, with a
-        refused session as ConfigEntryAuthFailed: behind a paused poll this is
-        the one regular cloud call left, so it is what tells the cloud is gone,
-        back, or refusing the session.
+        At most once per RSSI_INTERVAL. Behind a paused poll this is the one
+        regular cloud call left, so it is what tells the cloud is gone, back, or
+        refusing the session. It raises for a transport failure (one of
+        CLOUD_FAILURES) and for a refused session (ConfigEntryAuthFailed). Any
+        other Tuya error is an answer, from a cloud that is up: logged at debug
+        and counted as answered, so an endpoint a model does not serve cannot
+        pass for an outage.
         """
         now = utcnow()
         if self._rssi_refreshed_at and now - self._rssi_refreshed_at < RSSI_INTERVAL:
@@ -386,7 +389,8 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         except TuyaAPIError as err:
             if _session_rejected(err):
                 raise ConfigEntryAuthFailed(f"Authentication failed: {err}") from err
-            raise UpdateFailed(f"WiFi signal refresh failed: {err}") from err
+            _LOGGER.debug("WiFi signal refresh for %s refused by the cloud: %s", self.camera_name, err)
+            return True
         if isinstance(rssi_data, dict):
             self.rssi = rssi_data.get("value")
         return True

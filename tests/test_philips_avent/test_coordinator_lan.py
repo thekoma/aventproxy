@@ -576,3 +576,44 @@ def test_the_stand_in_leaves_no_modules_behind():
     from .ha_stand_in import PKG
 
     assert [name for name in sys.modules if name == PKG or name.startswith(f"{PKG}.")] == []
+
+
+class TestATuyaErrorIsAnAnswer:
+    """Behind a paused poll, a Tuya error code from the signal call means the cloud is up (re-review N1)."""
+
+    def _messages(self, caplog, level):
+        return [r.getMessage() for r in caplog.records if r.levelname == level and "Cloud for" in r.getMessage()]
+
+    def _tuya_error(self, coordinator, code):
+        import sys
+
+        return sys.modules[type(coordinator).__module__].TuyaAPIError(code, "from the cloud")
+
+    def test_it_opens_no_outage(self, make, caplog):
+        caplog.set_level("DEBUG")
+        coordinator = make(3.5)
+        coordinator.api.rssi_error = self._tuya_error(coordinator, "FUNCTION_NOT_SUPPORT")
+        coordinator.rssi = -70
+        assert asyncio.run(coordinator._async_update_data()) == STATE
+        assert self._messages(caplog, "WARNING") == []
+        assert coordinator._cloud_failing is False
+        assert coordinator.rssi == -70
+
+    def test_it_closes_an_outage_that_was_open(self, make, caplog):
+        caplog.set_level("DEBUG")
+        coordinator = make(3.5, api=FakeApi(rssi_error=aiohttp.ClientError("cloud down")))
+        asyncio.run(coordinator._async_update_data())
+        assert len(self._messages(caplog, "WARNING")) == 1
+        coordinator.api.rssi_error = self._tuya_error(coordinator, "FUNCTION_NOT_SUPPORT")
+        coordinator._rssi_refreshed_at = None
+        asyncio.run(coordinator._async_update_data())
+        assert len(self._messages(caplog, "INFO")) == 1
+        assert coordinator._cloud_failing is False
+
+    def test_a_refused_session_is_still_not_an_answer(self, make):
+        coordinator = make(3.5)
+        coordinator.config_entry = FakeEntry()
+        coordinator.api.rssi_error = self._tuya_error(coordinator, "SID_INVALID")
+        assert asyncio.run(coordinator._async_update_data()) == STATE
+        assert coordinator.config_entry.reauths == 1
+        assert coordinator._cloud_failing is True
