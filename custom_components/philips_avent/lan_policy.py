@@ -135,6 +135,39 @@ def keyed_protocol(version: float | None) -> bool:
     return version is not None and version >= KEYED_PROTOCOL_MIN_VERSION
 
 
+def seeded_session(last_ip: str | None, last_protocol: str) -> tuple[str | None, float | None]:
+    """The address and protocol a new client may dial before its first scan, or (None, None).
+
+    Seeded from the pair last published to the bridge, so a restart need not wait
+    for a broadcast. Only a keyed protocol qualifies: its handshake proves the
+    address and the version together, so a stale pair fails and the client scans.
+    A 3.3 pair is a bare TCP connect that proves neither, so those clients scan
+    first, as they always did.
+    """
+    version = parse_protocol_version(last_protocol)
+    if last_ip and keyed_protocol(version):
+        return last_ip, version
+    return None, None
+
+
+def session_candidates(announced: float | None, last_session: float | None, *, scanned: bool) -> list[float]:
+    """Protocol versions to try at an address, best guess first.
+
+    The announced version comes before the last session's. A 3.3 fallback on a
+    monitor that announces 3.5 is a TCP connect that reads nothing (see
+    `confirmed_protocol`), and starting every reconnect from it kept such a
+    monitor on 3.3 until Home Assistant restarted.
+
+    At an address that did not just come from a scan, a keyed version gets no
+    3.3 fallback: only its handshake proves the monitor is the one answering
+    there, and a failure sends the client back to the scan instead.
+    """
+    preferred = announced if announced is not None else last_session
+    if not scanned and keyed_protocol(preferred):
+        return [preferred]
+    return version_candidates(preferred)
+
+
 def baseline_dps(result: object) -> dict | None:
     """The state in an answer to DP_QUERY, or None when it carries none.
 

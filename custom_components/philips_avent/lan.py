@@ -23,8 +23,9 @@ from .lan_policy import (
     lan_write_delivered,
     parse_protocol_version,
     reconnect_delay,
+    seeded_session,
+    session_candidates,
     should_reconnect,
-    version_candidates,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -51,9 +52,9 @@ class TuyaLANClient:
         self._local_key = local_key
         self._on_dps_update = on_dps_update
         self._device: tinytuya.Device | None = None
-        self._ip: str | None = None
         self._address = AddressPublisher(on_address_change, last_ip, last_protocol)
-        self._announced_version: float | None = None
+        # A keyed pair from the last run is dialled before any scan; see seeded_session.
+        self._ip, self._announced_version = seeded_session(last_ip, last_protocol)
         self._version: float | None = None
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
@@ -137,9 +138,9 @@ class TuyaLANClient:
             _LOGGER.debug("Direct LAN connection to %s at protocol %s failed: %s", ip, version, ex)
         return None
 
-    async def _connect_at_any_version(self, ip: str) -> tinytuya.Device | None:
+    async def _connect_at_any_version(self, ip: str, *, scanned: bool) -> tinytuya.Device | None:
         """Connect to a known IP, trying the announced protocol then the default."""
-        for version in version_candidates(self._version or self._announced_version):
+        for version in session_candidates(self._announced_version, self._version, scanned=scanned):
             device = await self._hass.async_add_executor_job(
                 self._try_direct_connect, ip, version
             )
@@ -155,10 +156,10 @@ class TuyaLANClient:
         return None
 
     async def _connect(self) -> bool:
-        # Try cached IP first (direct TCP, no broadcast needed)
+        # Try the cached or seeded IP first (direct TCP, no broadcast needed)
         if self._ip:
             _LOGGER.debug("Trying direct LAN connection to %s at %s", self._device_id, self._ip)
-            device = await self._connect_at_any_version(self._ip)
+            device = await self._connect_at_any_version(self._ip, scanned=False)
             if device:
                 self._device = device
                 self.connected = True
@@ -178,7 +179,7 @@ class TuyaLANClient:
             _LOGGER.warning("Device %s not found on LAN", self._device_id)
             return False
 
-        device = await self._connect_at_any_version(self._ip)
+        device = await self._connect_at_any_version(self._ip, scanned=True)
         if device:
             self._device = device
             self.connected = True

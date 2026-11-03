@@ -19,6 +19,8 @@ from lan_policy import (
     lan_write_delivered,
     parse_protocol_version,
     reconnect_delay,
+    seeded_session,
+    session_candidates,
     should_reconnect,
     version_candidates,
 )
@@ -218,3 +220,47 @@ class TestBaselineDps:
     def test_nothing_or_junk_carries_no_state(self):
         for result in (None, {}, {"dps": {}}, {"dps": "x"}, "x"):
             assert baseline_dps(result) is None
+
+
+class TestSeededSession:
+    """A restart may dial the last published pair before scanning, when a handshake can prove it."""
+
+    def test_a_keyed_pair_is_dialled_first(self):
+        assert seeded_session("192.168.1.9", "3.5") == ("192.168.1.9", 3.5)
+        assert seeded_session("192.168.1.9", "3.4") == ("192.168.1.9", 3.4)
+
+    def test_a_3_3_pair_still_scans_first(self):
+        # A 3.3 connect is bare TCP and proves neither the address nor the version.
+        assert seeded_session("192.168.1.9", "3.3") == (None, None)
+
+    def test_nothing_published_means_a_scan(self):
+        assert seeded_session(None, "") == (None, None)
+        assert seeded_session("", "3.5") == (None, None)
+        assert seeded_session("192.168.1.9", "") == (None, None)
+        assert seeded_session("192.168.1.9", "junk") == (None, None)
+
+
+class TestSessionCandidates:
+    """Which versions a (re)connect tries, and in what order."""
+
+    def test_a_3_3_monitor_is_unchanged(self):
+        # The maintainer's SCD973 on firmware 1.4.0: only ever 3.3.
+        for scanned in (True, False):
+            assert session_candidates(3.3, None, scanned=scanned) == [3.3]
+            assert session_candidates(3.3, 3.3, scanned=scanned) == [3.3]
+            assert session_candidates(None, 3.3, scanned=scanned) == [3.3]
+            assert session_candidates(None, None, scanned=scanned) == [PROTOCOL_VERSION_DEFAULT]
+
+    def test_after_a_scan_the_fallback_stays(self):
+        assert session_candidates(3.5, None, scanned=True) == [3.5, PROTOCOL_VERSION_DEFAULT]
+
+    def test_a_fallback_session_does_not_pin_the_monitor_to_3_3(self):
+        # One unconfirmed 3.3 session used to make every later reconnect start at 3.3.
+        assert session_candidates(3.5, 3.3, scanned=True) == [3.5, PROTOCOL_VERSION_DEFAULT]
+        assert session_candidates(3.5, 3.3, scanned=False) == [3.5]
+
+    def test_a_cached_address_is_trusted_only_through_a_handshake(self):
+        # A failed handshake there means a rescan, not a bare TCP session with
+        # whatever now answers at that address.
+        assert session_candidates(3.5, 3.5, scanned=False) == [3.5]
+        assert session_candidates(3.4, None, scanned=False) == [3.4]
