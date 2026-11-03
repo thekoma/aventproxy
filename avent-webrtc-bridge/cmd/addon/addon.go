@@ -271,8 +271,27 @@ Example:
 	cmd.Flags().String("bind", DefaultBind, "Interfaces the RTSP server listens on: localhost (127.0.0.1 and ::1), "+
 		"an address or comma-separated list, or 0.0.0.0 for every interface. The server has no authentication, "+
 		"so open it to the network only when another machine must reach it")
+	// Issue #72 experiment knobs, set from the Dev card's options by run.sh.
+	cmd.Flags().Bool("speaker-off", true, "Ask the monitor to keep its speaker closed once a cloud session "+
+		"without talkback is up (issue #72)")
+	cmd.Flags().String("webrtc-audio", rtsp.WebRTCAudioRecvonly, "Audio a cloud offer asks the camera for: "+
+		"recvonly, or none to leave it out (issue #72 experiment; RTSP clients see the same description)")
 	cmd.MarkFlagRequired("config")
 	return cmd
+}
+
+// sessionFlags reads and checks the issue #72 knobs.
+func sessionFlags(cmd *cobra.Command) (speakerOff bool, webrtcAudio string, err error) {
+	speakerOff, err = cmd.Flags().GetBool("speaker-off")
+	if err != nil {
+		return false, "", err
+	}
+	mode, err := cmd.Flags().GetString("webrtc-audio")
+	if err != nil {
+		return false, "", err
+	}
+	webrtcAudio, err = rtsp.ParseWebRTCAudio(mode)
+	return speakerOff, webrtcAudio, err
 }
 
 func runAddon(cmd *cobra.Command, args []string) error {
@@ -284,6 +303,10 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	}
 	if err := validateConfig(cfg); err != nil {
 		return fmt.Errorf("invalid config %s: %w", cfgPath, err)
+	}
+	speakerOff, webrtcAudio, err := sessionFlags(cmd)
+	if err != nil {
+		return err
 	}
 
 	port := cfg.BridgePort
@@ -375,6 +398,8 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	server.BindAddress = bind
 	server.MobileClient = client
 	server.Talkback = cfg.Talkback
+	server.SpeakerOff = speakerOff
+	server.WebRTCAudio = webrtcAudio
 	server.LanStreaming = lanStreamingEnabled(cfg)
 	uid, differ := lanUID(cfg.UID, client.UID)
 	if differ {
@@ -385,6 +410,12 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	core.Logger.Info().Msgf("LAN streaming %t, %d cameras with LAN targets", server.LanStreaming, len(targets))
 	if cfg.Talkback {
 		core.Logger.Info().Msg("Two-way audio enabled: streams will ask the camera for talkback")
+		if webrtcAudio == rtsp.WebRTCAudioNone {
+			core.Logger.Warn().Msg("webrtc_audio none is ignored: two-way audio needs the audio section")
+		}
+		core.Logger.Info().Msg("Cloud sessions: audio sendrecv, speaker left to talkback")
+	} else {
+		core.Logger.Info().Msgf("Cloud sessions: audio %s, speaker off %t", webrtcAudio, speakerOff)
 	}
 	if err := server.Start(); err != nil {
 		return fmt.Errorf("start RTSP server: %w", err)

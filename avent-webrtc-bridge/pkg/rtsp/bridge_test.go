@@ -171,3 +171,66 @@ func TestStreamBridgesTakeTheServersSettings(t *testing.T) {
 		t.Fatal("a replacement bridge did not take SpeakerOff from the server")
 	}
 }
+
+// The webrtc_audio experiment knob (issue #72): "none" leaves the audio
+// section out of the offer to the camera, to learn whether the monitor opens
+// its speaker only when audio is negotiated. Talkback needs audio, so it wins.
+func TestOfferMedias(t *testing.T) {
+	for _, tc := range []struct {
+		talkback bool
+		audio    string
+		want     string
+	}{
+		{false, WebRTCAudioRecvonly, "audio recvonly, video recvonly"},
+		{false, WebRTCAudioNone, "video recvonly"},
+		{true, WebRTCAudioRecvonly, "audio sendrecv, video recvonly"},
+		{true, WebRTCAudioNone, "audio sendrecv, video recvonly"},
+		{false, "", "audio recvonly, video recvonly"}, // a bridge built without the setting
+	} {
+		var got []string
+		for _, m := range offerMedias(tc.talkback, tc.audio) {
+			got = append(got, m.Kind+" "+m.Direction)
+		}
+		if s := strings.Join(got, ", "); s != tc.want {
+			t.Errorf("talkback=%v audio=%q: offer %q, want %q", tc.talkback, tc.audio, s, tc.want)
+		}
+	}
+}
+
+// Whatever the camera is offered, RTSP clients keep the same description, so
+// the experiment never changes what a consumer has to cope with.
+func TestRTSPDescriptionIgnoresWebRTCAudio(t *testing.T) {
+	server, cs := newTestCameraStream(t)
+	before := server.generateSDP(cs.camera, "rtsp://localhost/cam")
+	server.WebRTCAudio = WebRTCAudioNone
+	after := server.generateSDP(cs.camera, "rtsp://localhost/cam")
+	strip := func(sdp string) string { return sdp[strings.Index(sdp, "s="):] } // o= carries the time
+	if strip(before) != strip(after) || !strings.Contains(after, "m=audio") {
+		t.Fatalf("the RTSP description changed with webrtc_audio=none:\n%s\n---\n%s", before, after)
+	}
+}
+
+func TestParseWebRTCAudio(t *testing.T) {
+	for in, want := range map[string]string{"": WebRTCAudioRecvonly, "recvonly": WebRTCAudioRecvonly, "none": WebRTCAudioNone} {
+		if got, err := ParseWebRTCAudio(in); err != nil || got != want {
+			t.Errorf("ParseWebRTCAudio(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	if _, err := ParseWebRTCAudio("sendrecv"); err == nil {
+		t.Error("an unknown mode must be refused")
+	}
+}
+
+func TestStreamBridgesTakeWebRTCAudio(t *testing.T) {
+	server, cs := newTestCameraStream(t)
+	if server.WebRTCAudio != WebRTCAudioRecvonly || cs.webrtcBridge.WebRTCAudio != WebRTCAudioRecvonly {
+		t.Fatalf("defaults: server %q, bridge %q; want recvonly", server.WebRTCAudio, cs.webrtcBridge.WebRTCAudio)
+	}
+	server.WebRTCAudio = WebRTCAudioNone
+	cs.mutex.Lock()
+	cs.replaceBridge()
+	cs.mutex.Unlock()
+	if cs.webrtcBridge.WebRTCAudio != WebRTCAudioNone {
+		t.Fatal("a replacement bridge did not take WebRTCAudio from the server")
+	}
+}

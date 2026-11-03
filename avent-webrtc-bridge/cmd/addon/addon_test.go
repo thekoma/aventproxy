@@ -553,3 +553,34 @@ func TestCloudCheckWarning(t *testing.T) {
 		t.Errorf("an API error such as an expired sid reads %q; the cloud answered", got)
 	}
 }
+
+// The issue #72 knobs come from the Dev card's options through run.sh. A card
+// that does not define them passes no flag, and the defaults apply.
+func TestSessionFlags(t *testing.T) {
+	for _, tc := range []struct {
+		args       []string
+		speakerOff bool
+		audio      string
+		wantErr    bool
+	}{
+		{nil, true, rtsp.WebRTCAudioRecvonly, false},
+		{[]string{"--speaker-off=false"}, false, rtsp.WebRTCAudioRecvonly, false},
+		{[]string{"--speaker-off=true", "--webrtc-audio", "none"}, true, rtsp.WebRTCAudioNone, false},
+		{[]string{"--webrtc-audio", "sendrecv"}, false, "", true},
+	} {
+		cmd := NewAddonCmd()
+		if err := cmd.ParseFlags(tc.args); err != nil {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		speakerOff, audio, err := sessionFlags(cmd)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("%v: want an error", tc.args)
+			}
+			continue
+		}
+		if err != nil || speakerOff != tc.speakerOff || audio != tc.audio {
+			t.Errorf("%v: got %v, %q, %v; want %v, %q", tc.args, speakerOff, audio, err, tc.speakerOff, tc.audio)
+		}
+	}
+}

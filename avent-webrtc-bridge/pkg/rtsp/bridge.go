@@ -89,6 +89,11 @@ type WebRTCBridge struct {
 	// speaker closed (312 "speaker", value 0). Never sent with Talkback.
 	SpeakerOff bool
 
+	// WebRTCAudio is the audio the offer asks the camera for: recvonly, or
+	// none to leave the section out (an issue #72 experiment). Talkback
+	// overrides it.
+	WebRTCAudio string
+
 	// Callbacks
 	OnVideoPacket func(packet *rtp.Packet)
 	OnAudioPacket func(packet *rtp.Packet)
@@ -510,6 +515,38 @@ func (wb *WebRTCBridge) handlePeerConnectionStateChange(state pion.PeerConnectio
 	}
 }
 
+// The audio a cloud offer asks the camera for (WebRTCBridge.WebRTCAudio).
+const (
+	WebRTCAudioRecvonly = "recvonly"
+	WebRTCAudioNone     = "none"
+)
+
+// ParseWebRTCAudio checks a webrtc_audio setting; empty means recvonly.
+func ParseWebRTCAudio(mode string) (string, error) {
+	switch mode {
+	case "", WebRTCAudioRecvonly:
+		return WebRTCAudioRecvonly, nil
+	case WebRTCAudioNone:
+		return WebRTCAudioNone, nil
+	}
+	return "", fmt.Errorf("webrtc audio %q: want %s or %s", mode, WebRTCAudioRecvonly, WebRTCAudioNone)
+}
+
+// offerMedias is what an offer asks the camera for. Talkback needs a sendrecv
+// audio section whatever audio says; otherwise audio is recvonly, or left out
+// with WebRTCAudioNone. The RTSP description never depends on it.
+func offerMedias(talkback bool, audio string) []*utils.Media {
+	video := &utils.Media{Kind: utils.KindVideo, Direction: utils.DirectionRecvonly}
+	switch {
+	case talkback:
+		return []*utils.Media{{Kind: utils.KindAudio, Direction: utils.DirectionSendRecv}, video}
+	case audio == WebRTCAudioNone:
+		return []*utils.Media{video}
+	default:
+		return []*utils.Media{{Kind: utils.KindAudio, Direction: utils.DirectionRecvonly}, video}
+	}
+}
+
 // cameraControls is the part of the MQTT camera client the bridge drives once
 // the connection is up.
 type cameraControls interface {
@@ -645,17 +682,8 @@ func (wb *WebRTCBridge) createAndSendOffer() error {
 		}
 	})
 
-	audioDirection := utils.DirectionRecvonly
-	if wb.Talkback {
-		audioDirection = utils.DirectionSendRecv
-	}
-	medias := []*utils.Media{
-		{Kind: utils.KindAudio, Direction: audioDirection},
-		{Kind: utils.KindVideo, Direction: utils.DirectionRecvonly},
-	}
-
 	// Create offer
-	offer, err := webrtc.CreateOffer(wb.peerConnection, medias)
+	offer, err := webrtc.CreateOffer(wb.peerConnection, offerMedias(wb.Talkback, wb.WebRTCAudio))
 	if err != nil {
 		return fmt.Errorf("failed to create offer: %v", err)
 	}

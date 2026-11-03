@@ -54,6 +54,11 @@ type RTSPServer struct {
 	// session without talkback. On by default; see WebRTCBridge.SpeakerOff.
 	SpeakerOff bool
 
+	// WebRTCAudio is the audio cloud offers ask for: WebRTCAudioRecvonly (the
+	// default) or WebRTCAudioNone. RTSP clients see the same description
+	// either way.
+	WebRTCAudio string
+
 	// BindAddress limits the interfaces the RTSP server listens on. The server
 	// has no authentication, so anyone who can reach the port can watch the
 	// camera. Accepted values (see bindHosts):
@@ -222,6 +227,7 @@ func NewRTSPServer(port int, storageManager *storage.StorageManager) *RTSPServer
 		cancel:         cancel,
 		running:        false,
 		SpeakerOff:     true,
+		WebRTCAudio:    WebRTCAudioRecvonly,
 	}
 }
 
@@ -843,6 +849,7 @@ func (cs *CameraStream) configureBridge() {
 	}
 	cs.webrtcBridge.Talkback = cs.server.Talkback
 	cs.webrtcBridge.SpeakerOff = cs.server.SpeakerOff
+	cs.webrtcBridge.WebRTCAudio = cs.server.WebRTCAudio
 }
 
 // startCloud is the default cloudStart. It fetches the MQTT client only now,
