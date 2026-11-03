@@ -74,6 +74,10 @@ type RTPClient struct {
 	backchannelServerPort   int          // Server's RTP listening port
 	backchannelRTCPPort     int          // Server's RTCP listening port
 
+	// control is the client's RTSP connection, closed when the client is
+	// found dead so that it reconnects and its session ends at once.
+	control net.Conn
+
 	// TCP interleaved transport
 	tcpConn             net.Conn
 	videoRTPChannel     byte
@@ -118,9 +122,10 @@ func remoteIP(conn net.Conn) net.IP {
 	return nil
 }
 
-// AddUDPClient sends a client's media to ip, the address its RTSP connection
-// comes from, or updates the ports of a client already added.
-func (rf *RTPForwarder) AddUDPClient(sessionID string, ip net.IP, videoRTPPort, audioRTPPort int) error {
+// AddUDPClient sends a client's media to the address its RTSP connection,
+// control, comes from, or updates the ports of a client already added.
+func (rf *RTPForwarder) AddUDPClient(sessionID string, control net.Conn, videoRTPPort, audioRTPPort int) error {
+	ip := remoteIP(control)
 	if ip == nil {
 		return fmt.Errorf("no address to send UDP client %s its media", sessionID)
 	}
@@ -130,7 +135,7 @@ func (rf *RTPForwarder) AddUDPClient(sessionID string, ip net.IP, videoRTPPort, 
 
 	client, exists := rf.clients[sessionID]
 	if !exists {
-		client = &RTPClient{sessionID: sessionID, transportMode: TransportUDP}
+		client = &RTPClient{sessionID: sessionID, transportMode: TransportUDP, control: control}
 	}
 	client.videoRTPPort = videoRTPPort
 	client.audioRTPPort = audioRTPPort
@@ -246,6 +251,7 @@ func (rf *RTPForwarder) AddTCPClient(sessionID string, conn net.Conn, videoRTPCh
 		sessionID:           sessionID,
 		transportMode:       TransportTCP,
 		tcpConn:             conn,
+		control:             conn,
 		videoRTPChannel:     videoRTPChannel,
 		audioRTPChannel:     audioRTPChannel,
 		backAudioRTPChannel: backAudioRTPChannel,
@@ -368,10 +374,13 @@ func (rf *RTPForwarder) forward(data []byte, video bool) {
 		client := rf.clients[sessionID]
 		core.Logger.Info().Msgf("Removing dead %s client %s", track, sessionID)
 		client.close()
-		// A stalled or broken interleaved stream cannot be resumed: the
-		// client has to reconnect, so its RTSP connection goes too.
-		if client.tcpConn != nil {
-			_ = client.tcpConn.Close()
+		// Its RTSP connection goes too. A stalled or broken interleaved
+		// stream cannot be resumed, and a UDP client that refuses packets
+		// would otherwise keep its session, and the stream, up until its
+		// own timeout. Ending the connection ends the session at once, and
+		// a client still alive reconnects.
+		if client.control != nil {
+			_ = client.control.Close()
 		}
 		delete(rf.clients, sessionID)
 	}

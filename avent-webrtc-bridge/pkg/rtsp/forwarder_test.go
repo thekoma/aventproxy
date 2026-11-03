@@ -171,6 +171,30 @@ func TestForwardVideoInjectsParameterSetsInOrder(t *testing.T) {
 
 // UDP media goes where the client's RTSP connection comes from. It used to go
 // to localhost, so any client on another host received nothing (fork c30da50).
+// controlConn returns both ends of an RTSP control connection whose client
+// end is bound to ip.
+func controlConn(t *testing.T, ip net.IP) (server, client net.Conn) {
+	t.Helper()
+	ln, err := net.ListenTCP("tcp", &net.TCPAddr{IP: ip})
+	if err != nil {
+		t.Skipf("cannot listen on %v: %v", ip, err)
+	}
+	defer ln.Close()
+	client, err = (&net.Dialer{LocalAddr: &net.TCPAddr{IP: ip}}).Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err = ln.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		client.Close()
+		server.Close()
+	})
+	return server, client
+}
+
 func TestUDPMediaGoesToTheClientAddress(t *testing.T) {
 	ip := firstNonLoopbackIPv4()
 	if ip == nil {
@@ -181,9 +205,10 @@ func TestUDPMediaGoesToTheClientAddress(t *testing.T) {
 		t.Skipf("cannot listen on %v: %v", ip, err)
 	}
 	defer sink.Close()
+	control, _ := controlConn(t, ip)
 
 	rf := NewRTPForwarder()
-	if err := rf.AddUDPClient("s1", ip, sink.LocalAddr().(*net.UDPAddr).Port, 0); err != nil {
+	if err := rf.AddUDPClient("s1", control, sink.LocalAddr().(*net.UDPAddr).Port, 0); err != nil {
 		t.Fatalf("add client: %v", err)
 	}
 	rf.Play("s1")
@@ -197,7 +222,10 @@ func TestUDPMediaGoesToTheClientAddress(t *testing.T) {
 }
 
 func TestUDPClientNeedsAnAddress(t *testing.T) {
-	if err := NewRTPForwarder().AddUDPClient("s1", nil, 5000, 5002); err == nil {
+	a, b := net.Pipe() // no IP address behind it
+	defer a.Close()
+	defer b.Close()
+	if err := NewRTPForwarder().AddUDPClient("s1", a, 5000, 5002); err == nil {
 		t.Fatal("a UDP client with no address must be refused, not sent to localhost")
 	}
 }
@@ -248,10 +276,13 @@ func waitClientCount(t *testing.T, rf *RTPForwarder, want int, send func()) {
 // A UDP client that closed its socket answers every packet with ICMP port
 // unreachable, which a connected socket reports as ECONNREFUSED: the client
 // is gone, on the audio track as much as on the video one (fork 7314de5).
+// Its RTSP connection is closed too, as for a dead TCP client, so the stream
+// does not stay up for a session nobody watches and a live client reconnects.
 func TestRefusedUDPClientIsDropped(t *testing.T) {
 	loopback := net.IPv4(127, 0, 0, 1)
 	for _, track := range []string{"video", "audio"} {
 		t.Run(track, func(t *testing.T) {
+			control, peer := controlConn(t, loopback)
 			rf := NewRTPForwarder()
 			video, audio := refusedUDPPort(t), 0
 			send := func() {
@@ -261,11 +292,12 @@ func TestRefusedUDPClientIsDropped(t *testing.T) {
 				video, audio = 0, refusedUDPPort(t)
 				send = func() { rf.ForwardAudioPacket(&rtp.Packet{Payload: make([]byte, 160)}) }
 			}
-			if err := rf.AddUDPClient("s1", loopback, video, audio); err != nil {
+			if err := rf.AddUDPClient("s1", control, video, audio); err != nil {
 				t.Fatal(err)
 			}
 			rf.Play("s1")
 			waitClientCount(t, rf, 0, send)
+			expectClosed(t, peer)
 		})
 	}
 }

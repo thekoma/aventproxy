@@ -422,7 +422,7 @@ func (s *RTSPServer) handleSetup(client *RTSPClient, request *RTSPRequest) {
 		// Add/update UDP client with current ports after video and audio setup
 		if isVideoTrack || isAudioTrack {
 			err := client.stream.forwarder.AddUDPClient(client.session,
-				remoteIP(client.conn), client.videoRTPPort, client.audioRTPPort)
+				client.conn, client.videoRTPPort, client.audioRTPPort)
 			if err != nil {
 				core.Logger.Error().Err(err).Msg("Error adding UDP RTP client")
 				sendRTSPResponse(client.conn, 500, "Internal Server Error", nil,
