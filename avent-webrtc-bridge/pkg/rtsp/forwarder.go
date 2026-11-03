@@ -695,21 +695,30 @@ func (c *frameClock) timestamp(marker bool, clockRate int) uint32 {
 // not when its packet arrived. Packets reach the bridge in bursts (WebRTC
 // jitter, KCP retransmits), and wall-clock stamps gave a burst nearly one
 // timestamp. When the count falls behind the wall clock by more than
-// audioMaxLag (a silence, or packets lost on the way) it catches up instead
-// of pretending no time passed. It never steps back: timestamps that ran
-// ahead after a burst stay ahead.
+// audioMaxLag (a silence, or packets lost on the way) it catches up at once
+// instead of pretending no time passed. Within that, an offset beyond
+// audioSlewFrom either way (the monitor's sample clock drifting from the
+// host's, a burst after a stall, a few lost packets) is steered back by one
+// tick per packet: well above crystal drift, and too small to hear. The
+// timestamps never step back.
 type audioClock struct {
 	started   bool
 	wallStart time.Time
 	next      uint32 // timestamp of the next packet
 }
 
-const audioMaxLag = time.Second
+const (
+	audioMaxLag   = time.Second
+	audioSlewFrom = 100 * time.Millisecond
+)
 
 // timestamp returns the RTP timestamp of a packet carrying samples samples, or
 // the wall-clock time when samples is negative (an unknown codec).
 func (c *audioClock) timestamp(samples, clockRate int) uint32 {
-	now := time.Now()
+	return c.stamp(time.Now(), samples, clockRate)
+}
+
+func (c *audioClock) stamp(now time.Time, samples, clockRate int) uint32 {
 	if !c.started {
 		c.started = true
 		c.wallStart = now
@@ -722,7 +731,15 @@ func (c *audioClock) timestamp(samples, clockRate int) uint32 {
 	}
 	ts := c.next
 	if samples > 0 {
-		c.next += uint32(samples)
+		step := uint32(samples)
+		slew := int32(rtpTicks(audioSlewFrom, clockRate))
+		switch ahead := int32(c.next - wall); {
+		case ahead > slew && step > 1:
+			step--
+		case ahead < -slew:
+			step++
+		}
+		c.next += step
 	}
 	return ts
 }

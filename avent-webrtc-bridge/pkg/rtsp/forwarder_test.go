@@ -432,3 +432,34 @@ func TestUnreachableClientLogsOnce(t *testing.T) {
 		t.Fatalf("want one line when %s starts failing and one when it recovers, got %d: %q", session, len(lines), lines)
 	}
 }
+
+// A monitor whose sample clock runs fast (crystal drift, here 500 ppm, ten
+// times a typical crystal) would put audio ahead of the wall-clock video for
+// good on an always-on consumer, since audio that flows never pauses for a
+// re-anchor. The clock steers back one tick per packet once it is off by more
+// than audioSlewFrom, so the offset stays bounded and timestamps never go back.
+func TestAudioClockStaysNearTheWallClock(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ppm  float64 // how much faster than the host the monitor samples
+	}{{"fast monitor", 500}, {"slow monitor", -500}} {
+		t.Run(tc.name, func(t *testing.T) {
+			start := time.Now()
+			c := audioClock{}
+			period := time.Duration(float64(20*time.Millisecond) / (1 + tc.ppm/1e6)) // 160 samples
+			var last uint32
+			limit := int32(rtpTicks(audioSlewFrom, 8000)) + 2*160
+			for i := range 200_000 { // a bit over an hour of audio
+				now := start.Add(time.Duration(i) * period)
+				ts := c.stamp(now, 160, 8000)
+				if i > 0 && int32(ts-last) <= 0 {
+					t.Fatalf("packet %d: timestamp %d does not follow %d", i, ts, last)
+				}
+				last = ts
+				if off := int32(ts - rtpTicks(now.Sub(start), 8000)); off > limit || off < -limit {
+					t.Fatalf("packet %d: audio %d ticks off the wall clock, want within %d", i, off, limit)
+				}
+			}
+		})
+	}
+}
