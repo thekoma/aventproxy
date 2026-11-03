@@ -31,6 +31,7 @@
 18. [Security Considerations](#18-security-considerations)
 19. [Reproducibility Guide](#19-reproducibility-guide)
 20. [Local streaming (LAN)](#20-local-streaming-lan)
+21. [Stream sessions and the lullaby (issue #72): a hypothesis under test](#21-stream-sessions-and-the-lullaby-issue-72-a-hypothesis-under-test)
 
 ---
 
@@ -853,6 +854,11 @@ The device responds to the Tuya LAN protocol (version 3.3) on the local network.
 - Cloud API-initiated changes (commands we send) are NOT echoed on LAN
 - The persistent socket drops periodically (error 904 "Unexpected Payload"); auto-reconnect handles this
 
+*Later corrections.* `updatedps()` turned out to crash this firmware, and the integration no
+longer sends it. A 3.3 session does not answer `DP_QUERY` either, so on 3.3 the starting state
+comes from the cloud poll. From 2026.11.0-dev3, a session negotiated at 3.4 or newer sends one
+`DP_QUERY` when it comes up and takes the answer as its starting state (see below).
+
 ### Alert Event Discovery
 
 Controlled testing with motion and sound detection revealed the event DPS codes:
@@ -893,10 +899,46 @@ Baby Monitor (LAN, 192.168.85.x)
     │   Real-time push: temperature, motion, sound       ──► Coordinator
     │                                                          │
     └── Tuya Cloud API (a1.tuyaeu.com) ──► PhilipsAventAPI    │
-        Polling every 120s (fallback)                    ──► Coordinator
-                                                               │
+        Polling every 30 s or 120 s; paused behind a     ──► Coordinator
+        3.4+ session (see below)                               │
                                                           All HA entities
 ```
+
+The diagram shows 3.3, which is what this work started on. Since 2026.11.0-dev3 the integration
+follows a fork measurement: on a session negotiated at 3.4 or newer, the monitor carries its state
+and its alarms (DPS 212) on its own. Leonard Pitzu's fork measured it on an SCD973/26 at 3.5. The
+gate is the version the live session negotiated. A monitor that announces 3.5 but fell back to a
+3.3 session therefore gets the 3.3 behaviour.
+
+- **3.4 and newer.**
+  - The session sends one `DP_QUERY` when it comes up. The answer seeds state, but it is not
+    treated as news, so a retained alert value cannot fire a sensor on reconnect.
+  - Once the monitor has reported an alarm in DPS 212, the cloud poll pauses while the session is
+    up, and a command the LAN delivered is not repeated through the cloud.
+  - The cloud is still asked for what only it knows: the WiFi signal every 5 minutes, and on
+    SenseIQ monitors the nightly summary every 15 minutes.
+  - Such a monitor polls on the 30 s tick, so the cloud poll is back within 30 s of the session
+    dropping.
+  - A 3.4+ monitor that has never reported DPS 212 may raise its alerts in 250 and 141, which
+    nothing shows pushing, so it keeps the poll and the cloud copy of commands.
+  - Turning one alert detector on turns the other off, since the monitor runs one at a time.
+    This one is gated on the confirmed protocol published to the bridge rather than on the live
+    session.
+- **3.3.**
+  - The cloud poll continues as before, and so does the cloud copy of each command (except
+    relative lullaby steps, which were never copied). Alerts arrive only through the poll.
+  - LAN pushes no longer postpone that poll. Before dev3, every push rescheduled it a full
+    interval out, so a SenseIQ status every few seconds kept it from running at all.
+- **Every protocol.**
+  - A push the keep-alive read in place of its acknowledgement is published, where it used to be
+    dropped. In one test on the fork's 3.5 monitor, that had cost about half of the sound alarms.
+  - A write whose socket never opened (tinytuya errors 905 and 914) goes through the cloud. It
+    used to count as sent.
+  - After an ambiguous error (901, 902), a relative lullaby step is not sent again, because it
+    may already have reached the monitor. An absolute value is sent again through the cloud.
+  - While a session that has proven its key is up, a failing cloud poll leaves the entities
+    available, with one warning and one recovery line. On 3.3 a session proves its key with its
+    first decrypted push.
 
 ---
 
@@ -929,6 +971,8 @@ subscribe topic the capture reads `msid`; the bridge subscribes with the account
 `smartlife.m.user.info.get` and receives answers reliably, so `uid` is the tested value here.
 `msid` is a different derived string (see section 12), which suggests either the app uses one and
 we use the other, or the broker accepts both.
+
+A later note, from the issue #72 work (section 21): the app's own offers are probably `imm`, not `webrtc`. Its P2P SDK only *accepts* `webrtc` offers, from third-party clients. The frame above probably came from the `aventlocal` client, which used aiortc. Read its `mode` as what a third-party client sends. This is inference from the app's libraries, not a capture.
 
 `msg.token` is the **ICE-server list** (`rtc.config.get → p2p_config.ices`), not a string. `auth`, `motoId`, and the ICE servers all come from the `smartlife.m.rtc.config.get` call introduced in section 9.
 
@@ -1078,6 +1122,27 @@ Sound on that same monitor still arrived through the poll rather than a push, so
 the picture is not uniform even within one device. Polling remains the floor:
 `212` holds one slot, briefly, and nothing guarantees a poll lands inside it.
 
+**Later measurements, from Leonard Pitzu's fork** (an SCD973/26 at 3.5):
+
+- From 3.4 up, three motion records were pushed in `212` at 2.4, 0.2 and 0.6 s after the event,
+  with no poll involved. The same monitor left `250` and `141` empty throughout. Which key carries
+  alarms follows the firmware, not the model.
+- Asked over 3.5, the monitor answers `DP_QUERY` with all 37 keys listed above. Its values matched
+  what the cloud reported at the same moment.
+- The monitor runs one detector at a time. Whichever of `134` and `139` was written last is the
+  one running.
+- Our own keep-alive was losing pushes. tinytuya's `heartbeat(nowait=False)` returns the first
+  frame that arrives, and a push landing in that window was dropped in place of the
+  acknowledgement. On the fork's monitor, of ten sound alarms in eight minutes, five arrived as
+  pushes and four only on the next poll, 16 to 29 s late. Fixed in 2026.11.0-dev3 (`088dbe2`).
+
+The last two points may explain the sound alerts on the SCD951 above, which arrived through the
+poll: they were either one detector out of two or pushes lost to the keep-alive. Nobody has
+checked that on that monitor.
+
+With these, a 3.4+ session can stand in for the cloud poll, and from dev3 it does so for monitors
+that report alarms in `212` (section 13). Polling stays the floor on 3.3.
+
 **Where the app learns about alerts is still open.** In the controlled run the app
 was notified while neither the LAN session nor the cloud poll saw anything, which
 points at Tuya's push-notification service. That has not been reverse engineered.
@@ -1088,7 +1153,7 @@ points at Tuya's push-notification service. That has not been reverse engineered
 - **The camera announces `"version": "3.5"`** in its 6667 discovery broadcast (6699/GCM framing). `lan.py` built a 3.3 session and discarded the announcement until 2026.7.0-rc9, which tries the announced version and falls back to 3.3.
 - **A LAN signaling path would route around `smartlife.m.rtc.config.get` entirely.** That call is what fails with `PERMISSION_DENIED` on [issue #48](https://github.com/thekoma/aventproxy/issues/48) for an account whose session is otherwise fine, and it is also what ties streaming to the regional server holding the account.
 - **The 904 frames have a concrete mechanism.** The camera's `STATUS` pushes arrive as `{"protocol":4,"t":…,"data":{"dps":{…}}}` behind a **15-byte 3.5 version header**. A decoder that only knows 3.1 through 3.4 falls through to hex on them, and tinytuya constructed with `version=3.3` reports them as unparseable, which is exactly the `Unexpected Payload from Device` seen on #62.
-- **Local control is the user-facing prize, not local streaming.** With the camera's WAN cut, streaming kept working while control did not: the app reported the camera offline and switch changes never applied. A correctly negotiated local session should let `set_dps` keep working with no internet, which is a visible win independent of the signaling work.
+- **Local control is the user-facing prize, not local streaming.** With the camera's WAN cut, streaming kept working while control did not: the app reported the camera offline and switch changes never applied. A correctly negotiated local session should let `set_dps` keep working with no internet, which is a visible win independent of the signaling work. The integration has sent commands over its LAN session since before this capture. From 2026.11.0-dev3 it stops repeating them through the cloud when a 3.4+ session is up and the monitor reports its alarms in DPS 212 (section 13).
 
 ## 17. Completed Architecture
 
@@ -1266,11 +1331,13 @@ rtc = call_api("smartlife.m.rtc.config.get", post_data={"devId": "camera_id"}, s
 
 Section 16 showed that the official app can stream with the monitor cut off from the internet. Leonard Pitzu ([@leonardpitzu](https://github.com/leonardpitzu), [#51](https://github.com/thekoma/aventproxy/issues/51)) worked out how, down to the wire format, in his fork's [PROTOCOL.md](https://github.com/leonardpitzu/aventproxy/blob/main/PROTOCOL.md), sections 14 to 16 and 20 to 21. The bridge now has a port of that path, hardened. This section is the short version. His document has the byte-level detail and is the reference.
 
+What the local path changes is the signalling, not where the video travels. A cloud-signalled session is negotiated through Tuya's servers (`rtc.config.get` and the MQTT offer and answer). Its media still comes straight from the monitor over the LAN whenever ICE picks the monitor's host candidate, as section 14 describes for the app. A capture on the maintainer's SCD973 confirmed it: 389 media packets in 6 seconds from the monitor's LAN address, and none through the TURN relay. The gain of the local path is a stream that starts with no cloud call at all: no session, no MQTT, no `rtc.config.get` per stream. It keeps working through a cloud or WAN outage, and with an expired session. The bridge log names each path by its signalling: `Streaming <camera> with cloud signalling` or `Streaming <camera> with LAN signalling`.
+
 ### The local path
 
 Inputs are the camera's `localKey`, its P2P password (from `smartlife.m.rtc.config.get`, fetched once per setup) and its LAN address. The address comes from the integration's own tinytuya session and is written to the bridge config, together with the protocol version that session negotiated. The bridge does no discovery of its own.
 
-The path below speaks only Tuya LAN protocol 3.5, so the bridge skips the LAN for anything older. Monitors on 3.3 (seen on an SCD973 with firmware 1.4.0) ignore 3.5 frames; they keep using the cloud, and the bridge log says `Not using the LAN for <camera>: protocol 3.3`. The fork kept them off the LAN with a 3.5 check in its own discovery, which the port dropped, so the integration now passes the version along.
+The path below speaks only Tuya LAN protocol 3.5, so the bridge skips the LAN for anything older. Monitors on 3.3 (seen on an SCD973 with firmware 1.4.0) ignore 3.5 frames; they keep using the cloud, and the bridge log says `Not using LAN signalling for <camera>: protocol 3.3`. The fork kept them off the LAN with a 3.5 check in its own discovery, which the port dropped, so the integration now passes the version along.
 
 Signalling runs on TCP 6668, in Tuya 3.5 framing (prefix 0x6699, AES-GCM). The AES-GCM IV is the ASCII bytes of the trace id, not random bytes. The offer names a placeholder STUN server, and the monitor never uses it. The monitor is the ICE-controlling side, and its STUN binding success responses carry no MESSAGE-INTEGRITY, so a stock ICE stack rejects them. The bridge therefore runs a small hand-rolled ICE: as the controlled side it sends its own checks, answers the monitor's requests and treats the first success response as connected. There is a single pair, so nothing is nominated.
 
@@ -1280,13 +1347,72 @@ One condition is outside our control. The monitor must have reached the internet
 
 ### Hardening
 
-The bridge counts a LAN attempt as working only when an H.264 SPS or IDR frame arrives within 4 seconds. A connection that negotiates and then stays silent would otherwise leave a black stream reported as healthy. If the check fails, the same start falls back to the cloud and that camera skips the LAN for 5 minutes. A LAN stream that dies later restarts on the cloud.
+The bridge counts a LAN attempt as working only when an H.264 SPS or IDR frame arrives within 4 seconds. A connection that negotiates and then stays silent would otherwise leave a black stream reported as healthy. If the check fails, the same start falls back to the cloud and that camera skips the LAN for 5 minutes. A LAN stream that dies later restarts on the cloud, with the same cool-down. The cool-down ends early when cloud signalling fails as well: with no working cloud there is nothing to wait for, so that start clears it and the next start tries the LAN again.
 
 When the 5 minutes are over, a stream running on the cloud probes the LAN in the background. If the probe works, its viewers are reconnected onto the LAN, with one short reconnect.
 
-Each camera's last published LAN address, with its protocol, is kept in the bridge config and seeded from the previous file. Rediscovery at the same address does not rewrite it, and losing the address never does either, so a blip on the integration's LAN session cannot restart the bridge. If the cloud is unreachable when the bridge starts, it still serves LAN streams using its stored session.
+Each camera's last published LAN address, with its protocol, is kept in the bridge config and seeded from the previous file. Rediscovery at the same address does not rewrite it, and losing the address never does either, so a blip on the integration's LAN session cannot restart the bridge. If the cloud is unreachable when the bridge starts, it still serves LAN streams using its stored session. Its warning says `Cloud unreachable, …` only for a network error. An expired session or an API error reads `Cloud check failed, serving streams with LAN signalling: …`. With LAN streaming off, the config carries no local key or P2P password, so there are no LAN targets. The bridge then exits on a failed cloud check, and `run.sh` restarts it every 5 seconds until the cloud answers, as before LAN streaming existed.
 
 Talkback and `/sd` streams stay on the cloud. An HEVC monitor tries the LAN, never delivers an H.264 SPS or IDR, hits the 4 second deadline, falls back to the cloud and skips the LAN for 5 minutes. This has only been tested on an SCD973/26.
+
+## 21. Stream sessions and the lullaby (issue #72): a hypothesis under test
+
+*Nothing in this section has been confirmed on a monitor yet. It comes from the logs on [#72](https://github.com/thekoma/aventproxy/issues/72), from reading the Philips app's native libraries (app 1.9.1: strings and disassembly, no capture) and from our own code. DeutscheMark and bojanmk1 reported the problem, and their observations on #72 are what made it traceable.*
+
+### What is observed
+
+Opening the camera in Home Assistant pauses a lullaby that is playing. The lullaby comes back about 30 seconds after the last viewer leaves. That is the bridge's shutdown delay before it sends the session's `disconnect`. A snapshot is enough to trigger it, because Home Assistant takes a snapshot by reading a frame from the RTSP stream, which opens a full session. The app's live view leaves the lullaby alone, and the app's talk button pauses it.
+
+In the logged sessions, DPS 253 went to `1` 100 to 200 ms after the WebRTC connection came up, and went back to `0` at the end. One session showed no change, which nobody has explained yet. In the product schema, DPS 253 is named `app_talking`. Earlier rounds ruled out three suspects:
+- Talk audio from Home Assistant: no client ever sent any.
+- The offer's audio direction: 253 flipped with `sendrecv` (rc9) and with `recvonly` (dev1).
+- The RTSP backchannel: 253 flipped with none set up (dev2).
+
+Neither the integration nor the bridge writes a DPS when a stream opens. The audible effect seems to depend on the firmware: on the maintainer's SCD973 (firmware 1.4.0), 253 flips as well, yet the lullaby was heard to keep playing.
+
+### The hypothesis: the session mode
+
+The bridge negotiates its cloud sessions in `"mode": "webrtc"` (section 14). The app never does. In `libThingP2PSDK.so` the only `webrtc` string sits in the handler for *incoming* offers, which is how a browser or a smart display gets a session. The app itself offers `imm`, and then starts a preview with explicit control commands. `libThingCameraSDK.so` frames those commands as `magic 0x12345678 | requestId u32 | 0 u32 | cmd u16 | sub u16 | len u32 | payload`. Disassembly maps the numbers:
+
+| cmd | Function |
+|-----|----------|
+| 2 | `QueryAudioInfo` |
+| 3 | `QueryPlaybackInfoByMonth` |
+| 4 | `QueryVideoStreamParams` |
+| 5 | `QueryVideoClarity` |
+| 6 | `IOCtrlVideo` / `IOCtrlAudioMic` (the operation is in the payload; 4 is the microphone) |
+| 7 | `IOCtrlPlayBack` |
+| 8 | `IOCtrlAudioSpeaker`, used by `StartAudioTalk` / `StopAudioTalk` |
+| 9 | `IOCtrlSetVideoClarity` |
+| 10 | `SendAuthorizationInfo` |
+
+`StartPreview` sends commands 6, 9 and 6 with sub 4. It never sends 8, which only the talk button sends. A webrtc-mode client has no way to send any of these. The hypothesis is that the monitor therefore opens its speaker for the whole session, as it would for a parent talking: 253 reads `1` and the lullaby pauses.
+
+The local path (section 20) supports this reading. Its six startup control messages (`pkg/lan/media.go`) decode with the same table:
+
+| # | requestId | cmd | Payload | Meaning |
+|---|-----------|-----|---------|---------|
+| 1 | 0 | 10 | `00000100` | authorisation |
+| 2 | 2 | 2 | 0 | `QueryAudioInfo` |
+| 3 | 0x00010004 | 9 | {0, 2} | set video clarity |
+| 4 | 0x00010003 | 6 | {0, 0} | video start |
+| 5 | 0x00010005 | 6, sub 4 | {0, 4} | microphone audio start |
+| 6 | 6 | 5 | 0 | `QueryVideoClarity` |
+
+That is `StartPreview`, plus two queries and the authorisation, with no command 8. So a stream with LAN signalling (3.5 monitors only) is probably not affected, although nobody has tried it with a lullaby playing. One correction to the fork's PROTOCOL.md also follows: `0x00010003` and `0x00010005` read better as the requestIds of the video and audio start requests, which the monitor echoes at the head of every media message, than as "the video and audio commands".
+
+### The experiment (2026.11.0-dev3, Dev card only)
+
+The Dev card's `speaker_off` option is on by default. With it, once a cloud session without talkback connects, the bridge sends the 312 `speaker` control with `cmdValue: 0`. That control is the webrtc-mode counterpart of command 8. `SendSpeaker` came with the tuya-ipc-terminal import and had never been called. The bridge logs `Asked <camera> to keep its speaker off (issue #72)`.
+
+Three outcomes are possible:
+- the firmware ignores the control;
+- it fixes the problem;
+- it mutes the viewer's audio instead, if Tuya's "speaker" means the listening side.
+
+Every cloud session therefore logs what it negotiated (`Offer to …`, `Answer from …`) and, when it ends, `Cloud session for <camera> carried <V> video and <A> audio packets`. A lullaby that keeps playing while that audio count stays above zero would confirm the hypothesis. The second option, `webrtc_audio: none`, leaves audio out of the offer altogether. It tells whether the monitor needs a negotiated audio section before it opens its speaker. The stable and beta cards send no speaker command.
+
+If the speaker control does not help, the structural fix for 3.3 monitors would be to send the app's own `imm` offer over cloud MQTT and reuse the local path's KCP/AES media. That way every session would look like the app's. It is a larger change, and it needs fields nobody has tested on hardware.
 
 ---
 
