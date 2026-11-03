@@ -520,7 +520,7 @@ func (s *RTSPServer) getOrCreateStream(camera *storage.CameraInfo, streamResolut
 	// Check if stream already exists
 	streamId := fmt.Sprintf("%s-%s", camera.DeviceID, streamResolution)
 	if stream, exists := s.streams[streamId]; exists {
-		if stream.active.Load() || stream.connecting.Load() || stream.pending.Load() > 0 {
+		if stream.inUse() {
 			core.Logger.Trace().Msgf("Reusing existing stream for camera: %s", camera.DeviceName)
 			// Pending until the client's AddClient, so a stop that lands
 			// first cannot drop the stream from the map under it.
@@ -561,7 +561,7 @@ func (s *RTSPServer) removeStream(stream *CameraStream) {
 
 	// A stream that restarted, or that getOrCreateStream just handed to a
 	// client, stays: dropping it would leave it running outside the map.
-	if stream.active.Load() || stream.connecting.Load() || stream.pending.Load() > 0 {
+	if stream.inUse() {
 		return
 	}
 	if existing, exists := s.streams[stream.streamId]; exists && existing == stream {
@@ -732,7 +732,6 @@ func (cs *CameraStream) addClientLocked(client *RTSPClient) {
 
 	cs.clients[client.session] = client
 	cs.lastActivity = time.Now()
-	cs.clientArrived()
 
 	// Start stream if not active and not already connecting
 	if !cs.active.Load() && !cs.connecting.Load() {
@@ -743,6 +742,26 @@ func (cs *CameraStream) addClientLocked(client *RTSPClient) {
 			go cs.startStream(gen)
 		}
 	}
+	cs.clientArrived() // after claimStart: see inUse
+}
+
+// inUse reports whether the stream is up, starting, or promised to a client
+// that has not joined it yet: getOrCreateStream must then hand it out rather
+// than replace it. The server reads the flags without the stream's lock, so
+// they are read in the order they hand over to each other: a joining client
+// claims the start before it leaves pending, and a start that succeeds sets
+// active before it clears connecting (markActive). Read the other way round,
+// a stream between two flags could look idle for an instant and get a twin,
+// the duplicate of issue #97.
+func (cs *CameraStream) inUse() bool {
+	return cs.pending.Load() > 0 || cs.connecting.Load() || cs.active.Load()
+}
+
+// markActive commits a successful start; see inUse for the order. Callers
+// hold mutex.
+func (cs *CameraStream) markActive() {
+	cs.active.Store(true)
+	cs.connecting.Store(false)
 }
 
 // clientArrived takes one client off pending. A client attached without
@@ -850,8 +869,7 @@ func (cs *CameraStream) startStream(gen uint64) {
 		cs.bridgeStarted = true
 		err := cs.cloudStart()
 		if err == nil {
-			cs.connecting.Store(false)
-			cs.active.Store(true)
+			cs.markActive()
 			if len(cs.clients) == 0 { // the last client left during a LAN attempt or the retry wait
 				cs.scheduleShutdown()
 			}

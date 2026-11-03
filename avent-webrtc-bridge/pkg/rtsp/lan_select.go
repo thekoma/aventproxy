@@ -106,8 +106,7 @@ func (cs *CameraStream) tryLAN(gen uint64) (done bool) {
 		core.Logger.Warn().Msgf("Streaming with LAN signalling failed for %s: %v, trying cloud signalling", cs.camera.DeviceName, err)
 		return false
 	}
-	cs.connecting.Store(false)
-	cs.active.Store(true)
+	cs.markActive()
 	if len(cs.clients) == 0 { // the last client left during the attempt
 		cs.scheduleShutdown()
 	}
