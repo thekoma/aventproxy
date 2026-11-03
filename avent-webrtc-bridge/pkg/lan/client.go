@@ -47,6 +47,21 @@ type ClientConfig struct {
 	// before can still be delivered while Close runs, so the receiver must
 	// tolerate a late call.
 	OnClosed func(error)
+
+	// Signaller, when set, carries the session's 302 frames instead of the
+	// 6668 session: the imm path over the cloud broker, for monitors that
+	// cannot take a LAN offer (Tuya LAN 3.3). IP is then only a hint, used to
+	// announce our candidate before the answer; MotoID and ICEServers fill
+	// the offer, as the app's cloud offers carry them. See cloud.go.
+	Signaller  Signaller
+	MotoID     string
+	ICEServers []ICEServer
+	// HandshakeTimeout caps the handshake in place of startTimeout when set.
+	HandshakeTimeout time.Duration
+	// OnControl, when set, is told the size of everything the control
+	// conversation delivers after the login. Nothing reads those messages;
+	// whether any came tells a refused login from a silent path.
+	OnControl func(n int)
 }
 
 // Client streams from one monitor over the local network, without the cloud.
@@ -96,7 +111,7 @@ var candidateRE = regexp.MustCompile(`candidate:(\S+) (\d+) (\S+) (\d+) (\S+) (\
 // without calling OnClosed. On error everything Start opened is closed.
 func (c *Client) Start(ctx context.Context) error {
 	ip := net.ParseIP(c.cfg.IP)
-	if ip == nil {
+	if ip == nil && c.cfg.Signaller == nil {
 		return fmt.Errorf("lan: no usable address for %s: %q", c.cfg.DeviceID, c.cfg.IP)
 	}
 	ctx, cancel := context.WithCancel(ctx)
@@ -111,9 +126,17 @@ func (c *Client) Start(ctx context.Context) error {
 	// Closing the sockets is also what unblocks a handshake step in progress.
 	context.AfterFunc(ctx, func() { _ = c.Close() })
 
-	setup, done := context.WithTimeout(ctx, startTimeout)
+	timeout := startTimeout
+	if c.cfg.HandshakeTimeout > 0 {
+		timeout = c.cfg.HandshakeTimeout
+	}
+	setup, done := context.WithTimeout(ctx, timeout)
 	defer done()
-	if err := c.connect(ctx, setup, ip); err != nil {
+	connect := c.connect
+	if c.cfg.Signaller != nil {
+		connect = c.connectCloud
+	}
+	if err := connect(ctx, setup, ip); err != nil {
 		if cerr := ctx.Err(); cerr != nil {
 			err = fmt.Errorf("lan: start ended: %w (%v)", cerr, err)
 		}
@@ -165,10 +188,20 @@ func (c *Client) connect(life, setup context.Context, ip net.IP) error {
 	if err != nil {
 		return err
 	}
-	if err := iceConnect(setup, sock, peer, local, remote); err != nil {
+	if _, err := iceConnect(setup, sock, onePeer(peer), local, remote); err != nil {
 		return err
 	}
+	if err := c.stream(life, setup, sock, peer, local, aesKey); err != nil {
+		return err
+	}
+	go c.keepAlive(life, session)
+	return nil
+}
 
+// stream logs in over the pair ICE settled on and starts the readers, which
+// run under life. The media path is the same whichever route carried the
+// signalling.
+func (c *Client) stream(life, setup context.Context, sock *net.UDPConn, peer *net.UDPAddr, local iceCreds, aesKey []byte) error {
 	// The monitor splits control and media across two KCP conversations, so a
 	// router under both sessions sorts the datagrams by conversation id.
 	router := newPacketRouter(sock, peer, aesKey, local)
@@ -185,7 +218,6 @@ func (c *Client) connect(life, setup context.Context, ip net.IP) error {
 	c.markMedia() // the idle clock starts with the stream, not with NewClient
 	go c.drainControl(life, control)
 	go c.attachMedia(life, router, peer, aesKey)
-	go c.keepAlive(life, session)
 	return nil
 }
 
@@ -231,8 +263,20 @@ func (c *Client) attachMedia(ctx context.Context, router *packetRouter, peer *ne
 // after login, but left unread it would fill the KCP receive window over
 // hours of streaming. It ends with the client, silently.
 func (c *Client) drainControl(ctx context.Context, control io.Reader) {
-	_, err := io.Copy(io.Discard, control)
+	var sink io.Writer = io.Discard
+	if c.cfg.OnControl != nil {
+		sink = byteCounter(c.cfg.OnControl)
+	}
+	_, err := io.Copy(sink, control)
 	c.fail(ctx, fmt.Errorf("lan: control conversation: %w", err))
+}
+
+// byteCounter discards what it is given and reports how much.
+type byteCounter func(n int)
+
+func (f byteCounter) Write(p []byte) (int, error) {
+	f(len(p))
+	return len(p), nil
 }
 
 // collectAnswer waits for the monitor's answer and its first host candidate.
@@ -395,12 +439,22 @@ func (c *Client) Close() error {
 }
 
 func sdpAttr(sdp, name string) string {
-	for _, line := range strings.Split(sdp, "\r\n") {
+	for _, line := range splitLines(sdp) {
 		if strings.HasPrefix(line, "a="+name+":") {
 			return strings.TrimPrefix(line, "a="+name+":")
 		}
 	}
 	return ""
+}
+
+// splitLines splits an SDP on CRLF, or on a bare LF from a sender that uses
+// one.
+func splitLines(sdp string) []string {
+	lines := strings.Split(sdp, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimSuffix(line, "\r")
+	}
+	return lines
 }
 
 func parseCandidate(line string) (*net.UDPAddr, error) {

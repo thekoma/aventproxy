@@ -101,41 +101,51 @@ func bindingResponse(req *stun.Message, from *net.UDPAddr, local iceCreds) (*stu
 	)
 }
 
-// iceConnect runs checks against the monitor until one of them is answered.
+// iceConnect runs checks against the monitor until one of them is answered,
+// and returns the candidate that answered.
+//
+// peers is asked again before every round, so candidates that trickle in
+// while the checks run are tried too; on the LAN it always returns the one
+// candidate the answer named. A response is matched to its check by
+// transaction id, so the candidate returned is the one the check went to.
 //
 // The monitor's response is deliberately not authenticated: it omits the
 // integrity attribute, so its arrival on the pair is the only signal available.
-func iceConnect(ctx context.Context, sock *net.UDPConn, peer *net.UDPAddr, local, remote iceCreds) error {
+func iceConnect(ctx context.Context, sock *net.UDPConn, peers func() []*net.UDPAddr, local, remote iceCreds) (*net.UDPAddr, error) {
 	// The checks poll with a read deadline; leaving it set would make every
 	// later media read fail instantly.
 	defer func() { _ = sock.SetReadDeadline(time.Time{}) }()
 
 	buf := make([]byte, 2048)
+	sent := map[[stun.TransactionIDSize]byte]*net.UDPAddr{}
 	next := time.Now()
 	for {
 		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("lan: no answer to the ICE checks: %w", err)
+			return nil, fmt.Errorf("lan: no answer to the ICE checks: %w", err)
 		}
 		if time.Now().After(next) {
-			req, err := bindingRequest(local, remote)
-			if err != nil {
-				return err
-			}
-			if _, err := sock.WriteToUDP(req.Raw, peer); err != nil {
-				return err
+			for _, peer := range peers() {
+				req, err := bindingRequest(local, remote)
+				if err != nil {
+					return nil, err
+				}
+				if _, err := sock.WriteToUDP(req.Raw, peer); err != nil {
+					return nil, err
+				}
+				sent[req.TransactionID] = peer
 			}
 			next = time.Now().Add(iceCheckInterval)
 		}
 
 		if err := sock.SetReadDeadline(time.Now().Add(iceCheckInterval)); err != nil {
-			return err
+			return nil, err
 		}
 		n, from, err := sock.ReadFromUDP(buf)
 		if isTimeout(err) {
 			continue
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if !isSTUN(buf[:n]) {
 			continue
@@ -146,7 +156,10 @@ func iceConnect(ctx context.Context, sock *net.UDPConn, peer *net.UDPAddr, local
 		}
 		switch msg.Type.Class {
 		case stun.ClassSuccessResponse:
-			return nil
+			if peer, ok := sent[msg.TransactionID]; ok {
+				return peer, nil
+			}
+			return from, nil
 		case stun.ClassRequest:
 			if resp, err := bindingResponse(msg, from, local); err == nil {
 				_, _ = sock.WriteToUDP(resp.Raw, from)
@@ -154,10 +167,15 @@ func iceConnect(ctx context.Context, sock *net.UDPConn, peer *net.UDPAddr, local
 		case stun.ClassErrorResponse:
 			var code stun.ErrorCodeAttribute
 			if err := code.GetFrom(msg); err == nil {
-				return fmt.Errorf("lan: monitor rejected the ICE check: %d %s", code.Code, code.Reason)
+				return nil, fmt.Errorf("lan: monitor rejected the ICE check: %d %s", code.Code, code.Reason)
 			}
 		}
 	}
+}
+
+// onePeer is the candidate list of a LAN session: the answer names one.
+func onePeer(peer *net.UDPAddr) func() []*net.UDPAddr {
+	return func() []*net.UDPAddr { return []*net.UDPAddr{peer} }
 }
 
 // isTimeout reports a read deadline passing, as opposed to a failed
