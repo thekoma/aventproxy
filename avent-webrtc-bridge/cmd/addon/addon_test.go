@@ -584,3 +584,33 @@ func TestSessionFlags(t *testing.T) {
 		}
 	}
 }
+
+// cloud_transport comes from the Dev card through run.sh. Without the flag, as
+// on the stable and beta cards, the bridge keeps the webrtc session.
+func TestCloudTransportFlag(t *testing.T) {
+	for _, tc := range []struct {
+		args    []string
+		want    string
+		wantErr bool
+	}{
+		{nil, rtsp.CloudTransportWebRTC, false},
+		{[]string{"--cloud-transport", "webrtc"}, rtsp.CloudTransportWebRTC, false},
+		{[]string{"--cloud-transport", "imm"}, rtsp.CloudTransportIMM, false},
+		{[]string{"--cloud-transport", "lan"}, "", true},
+	} {
+		cmd := NewAddonCmd()
+		if err := cmd.ParseFlags(tc.args); err != nil {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		got, err := cloudTransportFlag(cmd)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("%v: want an error", tc.args)
+			}
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Errorf("%v: got %q, %v; want %q", tc.args, got, err, tc.want)
+		}
+	}
+}
