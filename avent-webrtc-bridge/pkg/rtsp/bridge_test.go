@@ -291,3 +291,34 @@ func TestSpeakerOffChecksAudioOnce(t *testing.T) {
 		}
 	})
 }
+
+// Issue #89: a start that times out says which step it was waiting for, so a
+// report's log tells a camera that never answered from a connection that
+// never came up.
+func TestStalledAtNamesTheStep(t *testing.T) {
+	for _, tc := range []struct {
+		answered bool
+		state    pion.PeerConnectionState
+		hevc     bool
+		want     string
+	}{
+		{false, pion.PeerConnectionStateNew, false, "never answered"},
+		{true, pion.PeerConnectionStateConnecting, false, "answered, but the connection"},
+		{true, pion.PeerConnectionStateConnected, true, "never confirmed the video codec"},
+	} {
+		if got := stalledAt(tc.answered, tc.state, tc.hevc); !strings.Contains(got, tc.want) {
+			t.Errorf("stalledAt(%v, %v, %v) = %q, want it to say %q", tc.answered, tc.state, tc.hevc, got, tc.want)
+		}
+	}
+
+	wb := NewWebRTCBridge(&storage.CameraInfo{DeviceName: "Nursery"}, "hd", nil, nil, nil)
+	pc, err := pion.NewPeerConnection(pion.Configuration{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	wb.peerConnection = pc // an offer sent, nothing back
+	if got := wb.stalledStep(); !strings.Contains(got, "never answered") {
+		t.Fatalf("stalledStep() = %q for a session with no answer", got)
+	}
+}

@@ -306,6 +306,9 @@ func (wb *WebRTCBridge) Start() error {
 	}
 
 	if err = wb.waiter.WaitTimeout(answerTimeout); err != nil {
+		if errors.Is(err, utils.ErrWaitTimeout) {
+			return fmt.Errorf("failed to establish connection: %w after %v: %s", err, answerTimeout, wb.stalledStep())
+		}
 		return fmt.Errorf("failed to establish connection: %v", err)
 	}
 
@@ -313,6 +316,25 @@ func (wb *WebRTCBridge) Start() error {
 	core.Logger.Info().Msgf("WebRTC bridge started successfully for camera: %s", wb.camera.DeviceName)
 
 	return nil
+}
+
+// stalledStep names what a start that timed out was waiting for (#89).
+func (wb *WebRTCBridge) stalledStep() string {
+	pc := wb.peerConnection
+	return stalledAt(pc.RemoteDescription() != nil, pc.ConnectionState(), wb.isHEVC)
+}
+
+func stalledAt(answered bool, state pion.PeerConnectionState, hevc bool) string {
+	switch {
+	case !answered:
+		return "the camera never answered the offer"
+	case state != pion.PeerConnectionStateConnected:
+		return fmt.Sprintf("the camera answered, but the connection to it never came up (%s)", state)
+	case hevc:
+		return "connected, but the camera never confirmed the video codec on the datachannel"
+	default:
+		return "connected"
+	}
 }
 
 func (wb *WebRTCBridge) Stop() {
