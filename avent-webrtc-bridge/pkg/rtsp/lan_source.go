@@ -81,8 +81,11 @@ func NewLANSource(deviceID, deviceName, uid string, target LANTarget, forwarder 
 }
 
 // SetOnError sets the callback for a stream that dies after Start succeeded.
-// It is called at most once, never for a death that arrives after Stop began,
-// and without the source's lock held, so it may call Stop.
+// Set it before Start: a death reported while it is nil is dropped. It is
+// called at most once, without the source's lock held, so it may call Stop,
+// and never for a death detected after Stop began; one detected just before
+// can still arrive while Stop runs, so the callback must check that the
+// source is still the one it cares about.
 func (s *LANSource) SetOnError(fn func(error)) {
 	s.mu.Lock()
 	s.onError = fn
@@ -261,7 +264,7 @@ func (s *LANSource) onAudio(frame *lan.AudioFrame) {
 		return
 	}
 	s.audioSeq++
-	// The forwarder sets the timestamp from the wall clock at 8 kHz.
+	// The forwarder sets the timestamp by counting these 8 kHz samples.
 	s.forwarder.ForwardAudioPacket(&rtp.Packet{
 		Header: rtp.Header{
 			Version:        2,

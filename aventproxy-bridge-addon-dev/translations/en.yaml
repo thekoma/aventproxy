@@ -8,3 +8,13 @@ configuration:
       rtsp://localhost:38554. Use 0.0.0.0 (every interface), one address or a
       comma-separated list only when another machine (VLC, Frigate, a separate
       go2rtc) must open the stream, and then restrict the port on your network.
+  speaker_off:
+    name: Keep the monitor's speaker off
+    description: >-
+      Ask the monitor to keep its speaker closed while Home Assistant watches,
+      so a playing lullaby is not paused (issue #72, experimental).
+  webrtc_audio:
+    name: Audio requested from the monitor
+    description: >-
+      Audio requested from the monitor on cloud sessions: recvonly (default) or
+      none (video only, for testing issue #72).

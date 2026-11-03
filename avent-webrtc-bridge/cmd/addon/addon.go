@@ -2,7 +2,9 @@ package addon
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -78,9 +80,13 @@ func storedUID(u storage.UserSession) string {
 // cloudFallbackUser decides what a failed cloud check means: with LAN targets
 // and this account's stored add-on user the bridge can still serve LAN
 // streams, otherwise the original error stands. The data dir holds every
-// account's user, so only the one with the configured uid is taken; a config
-// without uid predates LAN streaming and has no LAN targets anyway.
-func cloudFallbackUser(cloudErr error, cfgUID string, targets map[string]rtsp.LANTarget, stored []storage.UserSession) (*storage.UserSession, error) {
+// account's user, so only this account's is taken: the one saved with the
+// configured uid, or else the one that registered a camera this config
+// streams over the LAN. The user is saved with the cloud's user id, which is
+// expected to match the integration's uid; the cameras still name the
+// account if it ever does not. A config without uid predates LAN streaming
+// and has no LAN targets anyway.
+func cloudFallbackUser(cloudErr error, cfgUID string, targets map[string]rtsp.LANTarget, stored []storage.UserSession, registry []storage.CameraInfo) (*storage.UserSession, error) {
 	if len(targets) == 0 || cfgUID == "" {
 		return nil, cloudErr
 	}
@@ -89,7 +95,33 @@ func cloudFallbackUser(cloudErr error, cfgUID string, targets map[string]rtsp.LA
 			return &stored[i], nil
 		}
 	}
+	for i := range stored {
+		if stored[i].Region == "addon" && ownsAny(registry, stored[i].UserKey, targets) {
+			return &stored[i], nil
+		}
+	}
 	return nil, cloudErr
+}
+
+// ownsAny reports whether userKey registered any of the cameras in targets.
+func ownsAny(registry []storage.CameraInfo, userKey string, targets map[string]rtsp.LANTarget) bool {
+	for _, c := range registry {
+		if _, ok := targets[c.DeviceID]; ok && c.UserKey == userKey {
+			return true
+		}
+	}
+	return false
+}
+
+// cloudCheckWarning says what a failed cloud check means for the log. Only a
+// network error means the cloud is unreachable, and the cloud path comes back
+// with it; an API error, such as an expired sid, means it answered and refused.
+func cloudCheckWarning(err error) string {
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return fmt.Sprintf("Cloud unreachable, serving streams with LAN signalling until it returns: %v", err)
+	}
+	return fmt.Sprintf("Cloud check failed, serving streams with LAN signalling: %v", err)
 }
 
 // lanUID is the account id LAN offers carry: the integration's uid, or the
@@ -239,8 +271,28 @@ Example:
 	cmd.Flags().String("bind", DefaultBind, "Interfaces the RTSP server listens on: localhost (127.0.0.1 and ::1), "+
 		"an address or comma-separated list, or 0.0.0.0 for every interface. The server has no authentication, "+
 		"so open it to the network only when another machine must reach it")
+	// Issue #72 experiment knobs, set from the Dev card's options by run.sh.
+	// Speaker-off stays off elsewhere until a tester confirms it.
+	cmd.Flags().Bool("speaker-off", false, "Ask the monitor to keep its speaker closed once a cloud session "+
+		"without talkback is up (issue #72, experimental)")
+	cmd.Flags().String("webrtc-audio", rtsp.WebRTCAudioRecvonly, "Audio a cloud offer asks the camera for: "+
+		"recvonly, or none to leave it out (issue #72 experiment; RTSP clients see the same description)")
 	cmd.MarkFlagRequired("config")
 	return cmd
+}
+
+// sessionFlags reads and checks the issue #72 knobs.
+func sessionFlags(cmd *cobra.Command) (speakerOff bool, webrtcAudio string, err error) {
+	speakerOff, err = cmd.Flags().GetBool("speaker-off")
+	if err != nil {
+		return false, "", err
+	}
+	mode, err := cmd.Flags().GetString("webrtc-audio")
+	if err != nil {
+		return false, "", err
+	}
+	webrtcAudio, err = rtsp.ParseWebRTCAudio(mode)
+	return speakerOff, webrtcAudio, err
 }
 
 func runAddon(cmd *cobra.Command, args []string) error {
@@ -252,6 +304,10 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	}
 	if err := validateConfig(cfg); err != nil {
 		return fmt.Errorf("invalid config %s: %w", cfgPath, err)
+	}
+	speakerOff, webrtcAudio, err := sessionFlags(cmd)
+	if err != nil {
+		return err
 	}
 
 	port := cfg.BridgePort
@@ -272,12 +328,19 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	var userKey string
 	userInfo, err := verifyCloud(client)
 	if err != nil {
-		stored, _ := storageManager.ListUsers()
-		fallback, ferr := cloudFallbackUser(err, cfg.UID, targets, stored)
+		stored, lerr := storageManager.ListUsers()
+		if lerr != nil {
+			core.Logger.Warn().Msgf("Could not read the stored users: %v", lerr)
+		}
+		registry, rerr := storageManager.GetAllCameras()
+		if rerr != nil {
+			core.Logger.Warn().Msgf("Could not read the camera registry: %v", rerr)
+		}
+		fallback, ferr := cloudFallbackUser(err, cfg.UID, targets, stored, registry)
 		if ferr != nil {
 			return ferr
 		}
-		core.Logger.Warn().Msgf("Cloud unreachable, serving LAN streams until it returns: %v", err)
+		core.Logger.Warn().Msg(cloudCheckWarning(err))
 		userKey = fallback.UserKey
 		client.UID = cfg.UID // MQTTManager takes the cloud's user id once the cloud answers
 	} else {
@@ -336,6 +399,8 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	server.BindAddress = bind
 	server.MobileClient = client
 	server.Talkback = cfg.Talkback
+	server.SpeakerOff = speakerOff
+	server.WebRTCAudio = webrtcAudio
 	server.LanStreaming = lanStreamingEnabled(cfg)
 	uid, differ := lanUID(cfg.UID, client.UID)
 	if differ {
@@ -346,6 +411,12 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	core.Logger.Info().Msgf("LAN streaming %t, %d cameras with LAN targets", server.LanStreaming, len(targets))
 	if cfg.Talkback {
 		core.Logger.Info().Msg("Two-way audio enabled: streams will ask the camera for talkback")
+		if webrtcAudio == rtsp.WebRTCAudioNone {
+			core.Logger.Warn().Msg("webrtc_audio none is ignored: two-way audio needs the audio section")
+		}
+		core.Logger.Info().Msg("Cloud sessions: audio sendrecv, speaker left to talkback")
+	} else {
+		core.Logger.Info().Msgf("Cloud sessions: audio %s, speaker off %t", webrtcAudio, speakerOff)
 	}
 	if err := server.Start(); err != nil {
 		return fmt.Errorf("start RTSP server: %w", err)

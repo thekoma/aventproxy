@@ -156,6 +156,23 @@ class TestBuildBridgeConfig:
     def test_lan_streaming_written_when_off(self):
         assert build_bridge_config(**self.BASE, lan_streaming=False)["lan_streaming"] is False
 
+    def test_lan_secrets_stay_out_while_lan_streaming_is_off(self):
+        lan = {"abc123": {"local_key": "lk", "p2p_password": "pw", "lan_ip": "192.168.1.9", "lan_protocol": "3.5"}}
+        config = build_bridge_config(**self.BASE, lan_streaming=False, lan=lan)
+        camera = config["cameras"][0]
+        assert (camera["local_key"], camera["p2p_password"]) == ("", "")
+        # Not credentials, and the seed for the next setup's LAN client.
+        assert (camera["lan_ip"], camera["lan_protocol"]) == ("192.168.1.9", "3.5")
+        assert lan["abc123"]["local_key"] == "lk"
+
+    def test_lan_off_gives_identical_json_across_restarts(self):
+        # run.sh restarts the bridge on any md5 change (issue #73).
+        lan = {"abc123": {"local_key": "lk", "p2p_password": "", "lan_ip": "192.168.1.9", "lan_protocol": "3.3"}}
+        again = {"abc123": {"local_key": "lk", "p2p_password": "pw", "lan_ip": "192.168.1.9", "lan_protocol": "3.3"}}
+        first = json.dumps(build_bridge_config(**self.BASE, lan_streaming=False, lan=lan), indent=2)
+        second = json.dumps(build_bridge_config(**self.BASE, lan_streaming=False, lan=again), indent=2)
+        assert first == second
+
     def test_unchanged_inputs_give_identical_json(self):
         # run.sh restarts the bridge on any md5 change (issue #73).
         lan = {"abc123": {"local_key": "lk", "p2p_password": "pw", "lan_ip": "192.168.1.9", "lan_protocol": "3.3"}}
@@ -274,7 +291,7 @@ class TestTalkbackOption:
 class _Coordinator:
     def __init__(self, device_info, stored_key="", lan_ip=None, lan_protocol=None):
         self.device_info = device_info
-        self._local_key = stored_key
+        self.local_key = stored_key
         self.lan_ip = lan_ip
         self.lan_protocol = lan_protocol
 
@@ -343,6 +360,60 @@ class TestFetchPasswords:
 
         out = asyncio.run(fetch_p2p_passwords(_Api({"password": None}), ["cam"], {"cam": "pw"}))
         assert out == {"cam": "pw"}
+
+
+class _CountingApi(_Api):
+    def __init__(self, result=None, error=None, delay=0.0):
+        super().__init__(result, error)
+        self.calls = []
+        self._delay = delay
+
+    async def get_rtc_config(self, dev_id):
+        import asyncio
+
+        self.calls.append(dev_id)
+        if self._delay:
+            await asyncio.sleep(self._delay)
+        return await super().get_rtc_config(dev_id)
+
+
+class TestFetchMissingPasswords:
+    """A setup that could not fetch the P2P password tries again on a later rewrite."""
+
+    def test_nothing_missing_means_no_call(self):
+        import asyncio
+
+        from lan_credentials import fetch_missing_passwords
+
+        api = _CountingApi({"password": "pw"})
+        assert asyncio.run(fetch_missing_passwords(api, ["cam"], {"cam": "pw"})) == {}
+        assert api.calls == []
+
+    def test_only_missing_cameras_are_fetched(self):
+        import asyncio
+
+        from lan_credentials import fetch_missing_passwords
+
+        api = _CountingApi({"password": "fresh"})
+        out = asyncio.run(fetch_missing_passwords(api, ["a", "b"], {"a": "pw", "b": ""}))
+        assert out == {"b": "fresh"}
+        assert api.calls == ["b"]
+
+    def test_a_failure_returns_nothing_to_store(self):
+        import asyncio
+
+        from lan_credentials import fetch_missing_passwords
+
+        out = asyncio.run(fetch_missing_passwords(_CountingApi(error=RuntimeError("down")), ["cam"], {}))
+        assert out == {}
+
+    def test_a_hanging_cloud_is_cut_short(self):
+        import asyncio
+
+        from lan_credentials import fetch_missing_passwords
+
+        api = _CountingApi({"password": "late"}, delay=5)
+        assert asyncio.run(fetch_missing_passwords(api, ["cam"], {}, timeout=0.01)) == {}
 
 
 class TestPreviousLanValues:

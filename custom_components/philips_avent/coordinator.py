@@ -27,6 +27,7 @@ from .const import (
 )
 from .events import LULLABY_SETTLE_SECONDS, lullaby_state_settled, poll_should_stay_fast
 from .lan import TuyaLANClient
+from .lan_policy import keyed_protocol, parse_protocol_version
 from .payload import dps_delta, truncated_dps
 
 LULLABY_STATE_MAP = {"play": "playing", "pause": "stopping", "stop": "stopping"}
@@ -43,6 +44,16 @@ RSSI_INTERVAL = timedelta(minutes=5)
 # The SenseIQ daily sleep summary is a cloud aggregate that changes slowly, so it
 # is fetched on its own schedule rather than on every DPS poll.
 SLEEP_DAY_INTERVAL = timedelta(minutes=15)
+
+
+# What a cloud call can fail with, once Tuya errors are mapped to UpdateFailed or
+# ConfigEntryAuthFailed. A load balancer's HTML error page is a JSON ValueError.
+CLOUD_FAILURES = (UpdateFailed, ConfigEntryAuthFailed, aiohttp.ClientError, TimeoutError, ValueError)
+
+
+def _session_rejected(err: TuyaAPIError) -> bool:
+    """Whether the cloud refused the stored session, which only a reauth fixes."""
+    return "SID_INVALID" in str(err) or "USER_SESSION_LOSS" in str(err)
 
 
 class PhilipsAventCoordinator(DataUpdateCoordinator):
@@ -69,6 +80,8 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         self.rssi: int | None = None
         self._local_key = local_key
         self._lan_client: TuyaLANClient | None = None
+        # Rewrites the bridge config; the same callback the LAN client calls on a new address.
+        self._rewrite_bridge_config: Callable[[str], None] | None = None
         self.last_lan_dps: dict[str, Any] = {}
         self.lan_update_sequence = 0
         self._pending_lullaby: str | None = None
@@ -82,6 +95,10 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         # SenseIQ nightly sleep summary (cloud aggregate), decoded in senseiq.py.
         self.sleep_day: dict | None = None
         self._sleep_day_refreshed_at = None
+        self._cloud_poll_paused = False
+        # Set while a live LAN session stands in for a failing cloud poll.
+        self._cloud_failing = False
+        self._reauth_requested = False
 
     async def start_lan(
         self,
@@ -89,8 +106,12 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         last_ip: str | None = None,
         last_protocol: str = "",
     ) -> None:
+        # Entries store no key, so it usually comes from the first refresh.
+        if not self._local_key:
+            self._local_key = self.device_info.get("localKey")
         if not self._local_key:
             return
+        self._rewrite_bridge_config = on_address_change
         self._lan_client = TuyaLANClient(
             self.hass,
             self.camera_id,
@@ -99,6 +120,7 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
             on_address_change,
             last_ip,
             last_protocol,
+            on_session_up=self._mark_lan_live,
         )
         await self._lan_client.start()
 
@@ -112,6 +134,11 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
             self._lan_client = None
 
     @property
+    def local_key(self) -> str | None:
+        """The key the LAN session uses: the one it started with, or the one the cloud rotated to."""
+        return self._local_key
+
+    @property
     def lan_ip(self) -> str | None:
         return self._lan_client.ip if self._lan_client else None
 
@@ -122,6 +149,39 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
     @property
     def lan_connected(self) -> bool:
         return self._lan_client is not None and self._lan_client.connected
+
+    @property
+    def lan_live(self) -> bool:
+        """Whether a LAN session is up and has proven its key (TuyaLANClient.proven).
+
+        This, not a bare connect, is what keeps the entities available through a
+        cloud failure.
+        """
+        return self._lan_client is not None and self._lan_client.proven
+
+    @property
+    def lan_serves_state(self) -> bool:
+        """Whether the live LAN session negotiated 3.4 or up (see lan_policy.keyed_protocol).
+
+        Such a session answers the baseline query and pushes alarms in DPS 212.
+        On its own that does not take the cloud out of the loop:
+        `cloud_poll_pausable` also needs DPS 212 in the monitor's state, and
+        both the paused poll and the end of the cloud mirror follow it. On 3.3
+        the cloud stays in the loop exactly as before.
+        """
+        return self._lan_client is not None and keyed_protocol(self._lan_client.session_version)
+
+    @property
+    def alert_detectors_exclusive(self) -> bool:
+        """Whether turning one alert detector on has to turn the other off.
+
+        Measured only on a monitor speaking 3.5 (fork 04d6d28), so it applies to
+        a monitor whose LAN session confirmed 3.4 or up. That protocol is the one
+        published to the bridge, which survives restarts and blips, so the
+        switches behave the same whether or not the session is up right now. A
+        3.3 monitor or a cloud-only setup keeps them independent, as before.
+        """
+        return keyed_protocol(parse_protocol_version(self.lan_protocol))
 
     @property
     def senseiq_status_stale(self) -> bool:
@@ -152,20 +212,61 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         self.async_update_listeners()
 
     @callback
-    def _on_lan_dps_update(self, dps: dict[str, Any]) -> None:
+    def _on_lan_dps_update(self, dps: dict[str, Any], baseline: bool = False) -> None:
+        """Merge DPS the LAN session reported into entity state.
+
+        A baseline is the answer to the query a 3.4+ session sends when it comes
+        up, so it is state and not news: counting it as a push would let a
+        retained alert value fire the motion or sound sensor on every reconnect.
+        A SenseIQ status in it still starts the staleness clock, so a retained
+        "baby present" cannot stand forever if no live push follows.
+        """
         if self.data is None:
             return
-        self.last_lan_dps = dict(dps)
-        self.lan_update_sequence += 1
+        if not baseline:
+            self.last_lan_dps = dict(dps)
+            self.lan_update_sequence += 1
         _LOGGER.debug(
-            "LAN push for %s: %s", self.camera_name, truncated_dps(dps)
+            "LAN %s for %s: %s",
+            "baseline" if baseline else "push", self.camera_name, truncated_dps(dps),
         )
 
         if DPS_SENSEIQ_STATUS in dps:
             self._note_senseiq_push()
         dps = self._hold_lullaby_state(dps)
-        merged = {**self.data, **dps}
-        self.async_set_updated_data(merged)
+        self._show_lan_state({**self.data, **dps})
+
+    @callback
+    def _show_lan_state(self, data: dict[str, Any]) -> None:
+        """Show state the LAN session reported, leaving the cloud poll where it is.
+
+        `async_set_updated_data` also reschedules the next refresh a full
+        interval out, so pushes arriving faster than the poll interval (a
+        SenseIQ status every few seconds) postponed the poll indefinitely. On a
+        3.3 session, where alarms arrive only through the poll, they stopped
+        arriving. A push does end a failed poll's verdict, through
+        `_mark_lan_live`: the session it came on keeps the entities available,
+        and a poll does not fail while that session is up.
+        """
+        self.data = data
+        self._mark_lan_live(notify=False)
+        self.async_update_listeners()
+
+    @callback
+    def _mark_lan_live(self, notify: bool = True) -> None:
+        """A LAN session is live, so the entities are available whatever the cloud says.
+
+        Undoes a failed poll's verdict as soon as a session comes up or a push
+        arrives, without waiting for the next tick. While the session stays up a
+        failing poll no longer raises (`_cover_cloud_failure`), so this cannot
+        flap. Only a session that proved its key counts, so neither a bare 3.3
+        connect nor a lullaby state settling after the session dropped can do it.
+        """
+        if self.data is None or self.last_update_success or not self.lan_live:
+            return
+        self.last_update_success = True
+        if notify:
+            self.async_update_listeners()
 
     @callback
     def _hold_lullaby_state(self, dps: dict[str, Any]) -> dict[str, Any]:
@@ -222,47 +323,86 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         if self.data is None or value is None:
             return
         _LOGGER.debug("Lullaby state settled at %r for %s", value, self.camera_name)
-        self.async_set_updated_data({**self.data, DPS_LULLABY_STATE: value})
+        self._show_lan_state({**self.data, DPS_LULLABY_STATE: value})
 
-    async def set_dps(self, dps: dict) -> dict:
-        """Send DPS command via LAN for instant response, plus REST for cloud sync.
+    @callback
+    def _apply_optimistic(self, dps: dict, extra: dict | None = None) -> None:
+        """Show a command's effect before the monitor confirms it.
 
-        Relative lullaby steps skip the REST mirror after a LAN success; see
-        `mirror_dps_to_cloud`.
+        Always a new dict: entities never write into `data` themselves.
         """
+        if self.data is None:
+            return
+        optimistic = {str(k): v for k, v in dps.items()}
+        lullaby_cmd = optimistic.get(DPS_LULLABY_CONTROL)
+        if lullaby_cmd in LULLABY_STATE_MAP:
+            optimistic[DPS_LULLABY_STATE] = LULLABY_STATE_MAP[lullaby_cmd]
+        if extra:
+            optimistic.update(extra)
+        self.async_set_updated_data({**self.data, **optimistic})
+
+    async def set_dps(self, dps: dict, *, optimistic: dict | None = None) -> dict:
+        """Send a DPS command, over the LAN when there is a session for it.
+
+        While the cloud poll is paused behind a 3.4+ session
+        (`cloud_poll_pausable`), a command the LAN delivered is done: the monitor
+        reports the change on that same session, so repeating it through the
+        cloud only sends the write over the internet again (fork a59b77f).
+        Whenever the cloud is still polled, a LAN success is mirrored to it as
+        before, except relative lullaby steps (`mirror_dps_to_cloud`), so a poll
+        cannot hand back a cloud state that never heard of the change. A command
+        the LAN could not deliver goes through the cloud on any protocol.
+
+        `optimistic` carries values the monitor reports back under another key
+        than the one written, such as the lullaby track in DPS 248.
+        """
+        local_only = self.cloud_poll_pausable
         if self._lan_client and self._lan_client.connected:
-            result = await self._lan_client.set_dps(dps)
+            result = await self._lan_client.set_dps(dps, repeatable=mirror_dps_to_cloud(dps))
             if result:
                 _LOGGER.debug("DPS sent via LAN for %s: %s", self.camera_name, dps)
-                if self.data is not None:
-                    optimistic = {str(k): v for k, v in dps.items()}
-                    lullaby_cmd = optimistic.get(DPS_LULLABY_CONTROL)
-                    if lullaby_cmd in LULLABY_STATE_MAP:
-                        optimistic[DPS_LULLABY_STATE] = LULLABY_STATE_MAP[lullaby_cmd]
-                    self.async_set_updated_data({**self.data, **optimistic})
-                if mirror_dps_to_cloud(dps):
+                self._apply_optimistic(dps, optimistic)
+                if not local_only and mirror_dps_to_cloud(dps):
                     with contextlib.suppress(TuyaAPIError):
                         await self.api.set_dps(self.camera_id, dps)
                 return result
-        if self.data is not None:
-            optimistic = {str(k): v for k, v in dps.items()}
-            lullaby_cmd = optimistic.get(DPS_LULLABY_CONTROL)
-            if lullaby_cmd in LULLABY_STATE_MAP:
-                optimistic[DPS_LULLABY_STATE] = LULLABY_STATE_MAP[lullaby_cmd]
-            self.async_set_updated_data({**self.data, **optimistic})
+        self._apply_optimistic(dps, optimistic)
         return await self.api.set_dps(self.camera_id, dps)
 
-    async def _refresh_rssi(self) -> None:
-        """Refresh the WiFi signal, at most once per RSSI_INTERVAL."""
+    async def _fetch_rssi(self) -> bool:
+        """Refresh the WiFi signal if it is due; True when the cloud answered.
+
+        At most once per RSSI_INTERVAL. Behind a paused poll this is the one
+        regular cloud call left, so it is what tells the cloud is gone, back, or
+        refusing the session. It raises for a transport failure (one of
+        CLOUD_FAILURES) and for a refused session (ConfigEntryAuthFailed). Any
+        other Tuya error is an answer, from a cloud that is up: logged at debug
+        and counted as answered, so an endpoint a model does not serve cannot
+        pass for an outage.
+        """
         now = utcnow()
         if self._rssi_refreshed_at and now - self._rssi_refreshed_at < RSSI_INTERVAL:
-            return
+            return False
         self._rssi_refreshed_at = now
         try:
             rssi_data = await self.api.get_rssi(self.camera_id)
-        except TuyaAPIError:
-            return
-        self.rssi = rssi_data.get("value")
+        except TuyaAPIError as err:
+            if _session_rejected(err):
+                raise ConfigEntryAuthFailed(f"Authentication failed: {err}") from err
+            _LOGGER.debug("WiFi signal refresh for %s refused by the cloud: %s", self.camera_name, err)
+            return True
+        if isinstance(rssi_data, dict):
+            self.rssi = rssi_data.get("value")
+        return True
+
+    async def _refresh_rssi(self) -> None:
+        """Refresh the WiFi signal alongside the DPS poll, which a failure must not fail."""
+        try:
+            await self._fetch_rssi()
+        except ConfigEntryAuthFailed:
+            raise
+        except CLOUD_FAILURES as err:
+            _LOGGER.debug("WiFi signal refresh failed for %s: %s", self.camera_name, err)
 
     async def _refresh_sleep_day(self) -> None:
         """Fetch and decode the SenseIQ nightly sleep summary, throttled.
@@ -297,24 +437,154 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
     def alerts_need_the_cloud(self) -> bool:
         """Whether alerts on this monitor are only visible on the cloud poll.
 
-        The SCD951 and SCD953 family reports alarms in DPS 212, and whether that
-        key arrives over the LAN depends on the negotiated protocol version: it
-        never did on 3.3, while on 3.5 an owner measured a motion record pushed
-        and the sensor firing in 1.3 seconds (#61, rc9). Sound on the same
-        monitor still arrived through the poll. DPS 212 is also a single slot
+        Monitors reporting alarms in DPS 212 (the SCD951 and SCD953 on #42 and
+        #61, and an SCD973/26 in the fork) depend on the negotiated protocol for
+        it: 212 never arrived on 3.3, while from 3.4 up it pushes within a couple
+        of seconds (#61 rc9, fork 619981b), which is why a 3.4+ session stops the
+        cloud poll altogether (`cloud_poll_pausable`). DPS 212 is also a single slot
         holding the newest alarm rather than a queue, so a second alert
-        overwrites the first and whatever the poll misses is gone. The fast poll
-        therefore stays for these models as the floor, not as the mechanism.
+        overwrites the first and whatever the poll misses is gone. Below 3.4 the
+        fast poll therefore stays for these monitors as the floor.
         """
         return DPS_ALARM_RECORD in (self.data or {})
+
+    @property
+    def cloud_poll_pausable(self) -> bool:
+        """Whether the cloud poll can pause: a 3.4+ session carries state and this monitor's alarms.
+
+        Alarms push over a 3.4+ session in DPS 212 (fork 619981b). A monitor that
+        has never reported 212 may raise its alerts in 250 and 141 instead, as
+        the SCD973 on 3.3 does, and nothing shows those pushing on 3.4+: it keeps
+        polling until 212 turns up. A 212 monitor polls on the 30 s tick
+        (`poll_should_stay_fast`), so a dropped session resumes the poll within
+        30 s.
+        """
+        return self.data is not None and self.lan_serves_state and self.alerts_need_the_cloud
+
+    @property
+    def alerts_heard(self) -> bool:
+        """Whether an alert raised now would reach the motion, sound and crying sensors.
+
+        Below 3.4, and on a 3.4+ monitor that has not reported DPS 212, alerts
+        arrive only through the cloud poll. While a LAN session covers a failing
+        poll everything the session pushes stays usable, but those sensors would
+        sit at "off" while deaf: a cry alert that looks healthy. They read
+        unavailable instead until the cloud answers again. Behind a paused 3.4+
+        poll alerts push over the LAN, so they stay available.
+        """
+        return not self._cloud_failing or self.cloud_poll_pausable
+
+    @callback
+    def _adopt_local_key(self, key: str | None) -> None:
+        """Take a local key the cloud rotated, for the LAN session and the bridge.
+
+        The key changes when the monitor is paired again. The LAN client kept the
+        one it was started with for the whole run, so it could not reconnect,
+        and the bridge config kept the old one too, until Home Assistant
+        restarted. The bridge config reads the cloud's key, so a rewrite is
+        enough there.
+        """
+        if not key or key == self._local_key:
+            return
+        self._local_key = key
+        if self._lan_client is None:
+            return
+        _LOGGER.info("Local key for %s changed in the cloud, handing it to the LAN session", self.camera_name)
+        self._lan_client.set_local_key(key)
+        if self._rewrite_bridge_config:
+            self._rewrite_bridge_config(self.lan_ip or "")
+
+    @callback
+    def _note_cloud_poll(self, paused: bool) -> None:
+        """Log when the cloud poll stops or starts again behind a LAN session."""
+        if paused == self._cloud_poll_paused:
+            return
+        self._cloud_poll_paused = paused
+        if paused:
+            _LOGGER.info(
+                "Cloud poll for %s paused: its LAN session at protocol %s pushes state and alarms",
+                self.camera_name, self._lan_client.session_version if self._lan_client else None,
+            )
+        else:
+            _LOGGER.info("Cloud poll for %s resumed", self.camera_name)
 
     async def _async_update_data(self) -> dict:
         fast = poll_should_stay_fast(self.lan_connected, self.alerts_need_the_cloud)
         self.update_interval = POLL_FAST if fast else POLL_SLOW
 
+        # A 3.4+ session pushes state and alarms as they happen, so polling the
+        # cloud would fetch a copy (fork a59b77f, 619981b). The tick keeps its
+        # 30 s interval, so the poll is back within 30 s of the session
+        # dropping, and it still refreshes what only the cloud knows. The first
+        # refresh always asks the cloud: it fills device_info and the local key.
+        if self.cloud_poll_pausable:
+            self._note_cloud_poll(paused=True)
+            try:
+                if await self._fetch_rssi():
+                    self._note_cloud_recovered()
+            except CLOUD_FAILURES as err:
+                self._cover_cloud_failure(err)
+            if DPS_SENSEIQ_STATUS in self.data:
+                await self._refresh_sleep_day()
+            return self.data
+        self._note_cloud_poll(paused=False)
+
+        try:
+            data = await self._poll_cloud()
+        except CLOUD_FAILURES as err:
+            # Without a live LAN session availability follows the poll, and Home
+            # Assistant logs the failure itself. The episode stays open, so a
+            # session that comes back during it does not log a second warning.
+            if self.data is None or not self.lan_live:
+                self._cloud_failing = True
+                raise
+            self._cover_cloud_failure(err)
+            return self.data
+        self._note_cloud_recovered()
+        return data
+
+    @callback
+    def _note_cloud_recovered(self) -> None:
+        """Close a cloud failure episode with one INFO line.
+
+        Skipped when the last refresh raised: Home Assistant then logs its own
+        recovery as soon as this one succeeds.
+        """
+        if not self._cloud_failing:
+            return
+        self._cloud_failing = False
+        self._reauth_requested = False
+        if self.last_update_success:
+            _LOGGER.info("Cloud for %s answers again", self.camera_name)
+
+    @callback
+    def _cover_cloud_failure(self, err: Exception) -> None:
+        """Keep the entities on the LAN session's state through a cloud failure.
+
+        The maintainer's rule is LAN whenever possible: temperature and the
+        controls keep working during a cloud outage, and the failure is logged
+        once when it starts rather than on every poll. A refused session still
+        starts the reauth flow, once, as Home Assistant would.
+        """
+        if isinstance(err, ConfigEntryAuthFailed) and not self._reauth_requested:
+            self._reauth_requested = True
+            if entry := getattr(self, "config_entry", None):
+                entry.async_start_reauth(self.hass)
+        if self._cloud_failing:
+            _LOGGER.debug("Cloud for %s still failing: %s", self.camera_name, err)
+            return
+        self._cloud_failing = True
+        _LOGGER.warning(
+            "Cloud for %s failed (%s); its LAN session keeps it available until the cloud answers again",
+            self.camera_name, err,
+        )
+
+    async def _poll_cloud(self) -> dict:
+        """Fetch the monitor's state from the cloud and merge it."""
         try:
             device = await self.api.get_device(self.camera_id)
             self.device_info = device
+            self._adopt_local_key(device.get("localKey"))
             await self._refresh_rssi()
             api_dps = device.get("dps", {})
             # Only a SenseIQ monitor has a sleep summary; asking every other
@@ -328,6 +598,6 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
                 return {**self.data, **api_dps}
             return api_dps
         except TuyaAPIError as err:
-            if "SID_INVALID" in str(err) or "USER_SESSION_LOSS" in str(err):
+            if _session_rejected(err):
                 raise ConfigEntryAuthFailed(f"Authentication failed: {err}") from err
             raise UpdateFailed(f"Error fetching data: {err}") from err

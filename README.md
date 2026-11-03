@@ -24,7 +24,9 @@ Home Assistant integration for Philips Avent SCD973/SCD923 baby monitors, provid
 | 🔊 Sound Detected | Binary Sensor | Fires when sound is detected (auto-clears after 30s) |
 | 🔒 Privacy Mode | Switch | Camera on/off |
 
-Video goes over your local network first and falls back to the cloud when the monitor does not allow it. See [Local streaming](#local-streaming) below.
+The video travels over your local network whenever the bridge can reach the monitor directly. On monitors that allow it, the signalling that starts a stream stays local too, so no cloud call is needed. See [Local streaming](#local-streaming) below.
+
+Monitors with SenseIQ also get sleep and presence entities. Among them are Baby Detected, Baby Moving, Breathing rate, Sleep stage (awake, light, deep, out of bed, settling), the sleep duration and a nightly summary.
 
 Multiple monitors on one Tuya account are supported: the bridge serves each camera from the same port on a distinct RTSP path derived from the camera's display name.
 
@@ -42,7 +44,7 @@ The integration is model-agnostic (it talks to the Tuya cloud API generically), 
 | SCD921 | ⚠️ Partial: video works but is intermittent; motion/sound detection and WiFi signal behave inconsistently ([#40](https://github.com/thekoma/aventproxy/issues/40)) |
 | SCD860 | ❓ Requested, not yet confirmed ([#59](https://github.com/thekoma/aventproxy/issues/59)) |
 
-Motion and sound alerts do not travel the same way on every model. The SCD973 and SCD923 report them on DPS 250 and 141, while the SCD951 and SCD953 use a timestamped alarm record on DPS 212 instead. Both shapes are handled since 2026.8.0. If your monitor raises an alert the app notifies you about and Home Assistant stays quiet, the log now names the alert Tuya sent, which usually turns the fix into one line.
+Motion and sound alerts do not travel the same way on every monitor. Some report them on DPS 250 and 141, such as an SCD973 on firmware 1.4.0. Others use a timestamped alarm record on DPS 212 instead: the SCD951, the SCD953, and the SCD973/26 in Leonard Pitzu's fork. The choice follows the firmware, not the model, so the integration reads both on every monitor. Both shapes are handled since 2026.8.0. If your monitor raises an alert the app notifies you about and Home Assistant stays quiet, the log now names the alert Tuya sent, which usually turns the fix into one line.
 
 LAN streaming has only been tested on an SCD973/26.
 
@@ -71,7 +73,7 @@ Or manually:
 2. Add `https://github.com/thekoma/aventproxy`
 3. Install "Philips Avent WebRTC Bridge (Addon)"
 
-**Two cards, one choice.** The store shows the bridge twice:
+**Three cards, one choice.** The store shows the bridge three times:
 
 | Card | Install it when |
 |------|-----------------|
@@ -96,7 +98,7 @@ The country matters: a Philips/Tuya account lives in one regional server, and th
 
 ### Running the bridge outside Home Assistant
 
-Two-way audio is off by default. Asking the camera for it makes the monitor stop a playing lullaby and restart it from the beginning when you close the stream, so listening does not imply talking. If a client of yours really talks back through the RTSP stream, turn on **Two-way audio (talkback)** under Configure.
+Two-way audio is off by default. Asking the camera for it makes the monitor stop a playing lullaby and restart it from the beginning when you close the stream, so listening does not imply talking. If a client of yours really talks back through the RTSP stream, turn on **Two-way audio (talkback)** under Configure. On some monitors a stream pauses a playing lullaby even with two-way audio off ([#72](https://github.com/thekoma/aventproxy/issues/72)). The Dev card runs an experiment on this through its `speaker_off` and `webrtc_audio` options, described in its changelog.
 
 If you don't run the add-on but host the bridge yourself, in its own container or on another machine, tell the integration where to find it: **Settings → Integrations → Philips Avent → Configure → Bridge host**. It defaults to `localhost`, which is only correct when the bridge shares the network with Home Assistant. A wrong host makes the camera entity flap between `Unavailable` and `Idle`, because Home Assistant marks a camera unavailable while its stream cannot be opened.
 
@@ -108,7 +110,7 @@ The bridge's RTSP server has no password. The add-on therefore listens on loopba
 
 The integration exposes `binary_sensor.<camera>_sound_detected` and `binary_sensor.<camera>_motion_detected` that turn on for ~30 seconds when the monitor reports an event. They are the trigger points for any automation.
 
-Note: detection must be enabled on the device side via the `🔊 Sound Alert` / `🏃 Motion Alert` switches — otherwise the monitor never sends the event.
+Note: detection must be enabled on the device side via the `🔊 Sound Alert` / `🏃 Motion Alert` switches — otherwise the monitor never sends the event. On a monitor whose LAN session has confirmed protocol 3.4 or newer, only one detector runs at a time. Turning one switch on there turns the other off, and turning one off leaves the other alone.
 
 ```yaml
 # Mobile notification when sound is detected
@@ -171,11 +173,37 @@ The integration uses the same Tuya Mobile SDK API as the official Philips Avent 
 
 ### Local streaming
 
-The bridge tries the local network first for HD streams with talkback off, when LAN streaming is on, the camera has a local key and P2P password and the integration knows its LAN address. The monitor must speak Tuya LAN protocol 3.5: monitors on 3.3 (seen on an SCD973 with firmware 1.4.0) keep using the cloud, and the bridge log says `Not using the LAN for <camera>: protocol 3.3`. The stream must deliver H.264, otherwise the first-frame check below sends it to the cloud. Anything else goes through the cloud, as before. That includes talkback and `/sd` streams. The monitor must also have reached the internet once since it booted, or it sends no media over the LAN.
+The video already travels over your local network whenever the bridge and the monitor can reach each other directly. ICE picks the monitor's LAN address, and a capture on an SCD973 showed every media packet coming straight from the monitor. What can go through the Tuya cloud is the *signalling*, the short exchange that starts a stream. The bridge log names each stream by it: `Streaming <camera> with cloud signalling` or `Streaming <camera> with LAN signalling`. LAN signalling, on the monitors that allow it (below), needs no cloud call, so a stream still starts when Tuya or your internet connection is down.
 
-If no H.264 video arrives over the LAN within 4 seconds (an HEVC monitor ends up here), the stream falls back to the cloud and that camera skips the LAN for 5 minutes. A LAN stream that dies restarts on the cloud. After the 5 minutes, a stream on the cloud checks the LAN in the background and moves its viewers back with one short reconnect. RTSP clients see the same H.264 video and PCMU/8000 audio either way.
+The bridge tries LAN signalling first, under these conditions:
+- the stream is HD and talkback is off;
+- LAN streaming is on;
+- the camera has a local key and a P2P password;
+- the integration knows the camera's LAN address.
 
-The **LAN streaming** option in the integration options is on by default. Turn it off if a stream stopped working after an update, and open an issue with your monitor model and the bridge log.
+The monitor must speak Tuya LAN protocol 3.5. Monitors on 3.3 (seen on an SCD973 with firmware 1.4.0) keep cloud signalling, and the bridge log says `Not using LAN signalling for <camera>: protocol 3.3`. The stream must deliver H.264, otherwise the first-frame check below sends it to the cloud. Talkback and `/sd` streams always use cloud signalling. The monitor must also have reached the internet once since it booted, or it sends no media to a stream with LAN signalling.
+
+If no H.264 video arrives within 4 seconds of a LAN attempt, the same start falls back to cloud signalling and that camera skips the LAN for 5 minutes. An HEVC monitor ends up here. A LAN stream that dies restarts on the cloud with the same 5-minute wait. If cloud signalling fails as well, the wait is cleared, so the next start tries the LAN again. Once the 5 minutes are over, a stream on the cloud checks the LAN in the background and moves its viewers back, with one short reconnect. RTSP clients see the same H.264 video and PCMU/8000 audio either way.
+
+The **LAN streaming** option in the integration options is on by default. Turn it off if a stream stopped working after an update, and open an issue with your monitor model and the bridge log. While it is off, the bridge config holds no local key or P2P password.
+
+### Local control and alerts
+
+The integration keeps its own LAN session with the monitor, separate from the bridge's streams, for pushed state and commands. What it does with that session depends on the protocol the session negotiates.
+
+- **Protocol 3.3.** The cloud stays in the loop, as before. Pushes such as the temperature arrive locally. Commands go over the LAN and are repeated through the cloud. The cloud is still polled every 30 or 120 seconds, and motion and sound alerts arrive only through that poll.
+- **Protocol 3.4 and newer.** The session reads the monitor's full state when it comes up, and it receives alarms as pushes in DPS 212. Once the monitor has ever reported an alarm in DPS 212, three things change while the session is up:
+  - the cloud poll pauses;
+  - commands the LAN delivered are not repeated through the cloud;
+  - the cloud is only asked for the WiFi signal every 5 minutes and, on SenseIQ monitors, for the nightly summary every 15 minutes.
+
+  The poll comes back within 30 seconds of the session dropping. A monitor that has never reported DPS 212 keeps the poll and the cloud copy of commands. The integration log says `Cloud poll for <camera> paused: its LAN session at protocol 3.5 pushes state and alarms`, and later `Cloud poll for <camera> resumed`.
+
+The 3.4+ behaviour follows Leonard Pitzu's measurements on his SCD973/26 at protocol 3.5. Nobody has tested it here on a 3.4 or 3.5 monitor yet.
+
+During a cloud outage, a LAN session that has proven its key keeps the entities available. On 3.3, a session proves its key with its first decrypted push. The integration logs one warning when the cloud fails, `Cloud for <camera> failed (…); its LAN session keeps it available until the cloud answers again`, and `Cloud for <camera> answers again` when it does. On 3.3, alerts come only from the cloud poll, so Motion Detected, Sound Detected and Crying Detected read unavailable until the cloud answers. They cannot fire in the meantime, and showing them as unavailable makes that visible. The same goes for a 3.4+ monitor that has never reported DPS 212. Without a LAN session, every entity goes unavailable during an outage, as before.
+
+If the monitor is paired again and gets a new local key, the next cloud poll picks it up. The LAN session reconnects with the new key and the bridge config is rewritten, with no Home Assistant restart.
 
 ## Camera Data Points
 

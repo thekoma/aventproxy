@@ -14,14 +14,18 @@ from homeassistant.core import HomeAssistant
 from .lan_policy import (
     PROTOCOL_VERSION_DEFAULT,
     AddressPublisher,
+    baseline_dps,
     confirmed_protocol,
     data_stale,
     heartbeat_due,
-    is_connection_error,
+    heartbeat_outcome,
+    keyed_protocol,
+    lan_write_delivered,
     parse_protocol_version,
     reconnect_delay,
+    seeded_session,
+    session_candidates,
     should_reconnect,
-    version_candidates,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -38,22 +42,28 @@ class TuyaLANClient:
         hass: HomeAssistant,
         device_id: str,
         local_key: str,
-        on_dps_update: Callable[[dict[str, Any]], None],
+        on_dps_update: Callable[[dict[str, Any], bool], None],
         on_address_change: Callable[[str], None] | None = None,
         last_ip: str | None = None,
         last_protocol: str = "",
+        *,
+        on_session_up: Callable[[], None] | None = None,
     ) -> None:
         self._hass = hass
         self._device_id = device_id
         self._local_key = local_key
         self._on_dps_update = on_dps_update
+        self._on_session_up = on_session_up
         self._device: tinytuya.Device | None = None
-        self._ip: str | None = None
         self._address = AddressPublisher(on_address_change, last_ip, last_protocol)
-        self._announced_version: float | None = None
+        # A keyed pair from the last run is dialled before any scan; see seeded_session.
+        self._ip, self._announced_version = seeded_session(last_ip, last_protocol)
         self._version: float | None = None
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
+        self._rekeyed = False
+        # Set once the live session has decrypted a frame; see `proven`.
+        self._exchanged = False
         self.connected: bool = False
 
     @property
@@ -65,6 +75,45 @@ class TuyaLANClient:
     def protocol(self) -> str:
         """The protocol published with `ip`, such as "3.3"; "" when unknown."""
         return self._address.protocol
+
+    @property
+    def proven(self) -> bool:
+        """Whether the live session has shown that it holds the right key.
+
+        From 3.4 up the handshake proves it. Below, a connect is bare TCP, so it
+        takes a frame that decrypted: until then a 3.5 monitor on an unconfirmed
+        3.3 fallback, or a 3.3 monitor straight after a key rotation, would look
+        live while delivering nothing.
+        """
+        return self.connected and (keyed_protocol(self._version) or self._exchanged)
+
+    @property
+    def session_version(self) -> float | None:
+        """The protocol the live session negotiated, or None without a session.
+
+        Unlike `protocol`, this follows the session: an unconfirmed 3.3 fallback
+        on a monitor that announces 3.5 reads 3.3 here.
+        """
+        return self._version if self.connected else None
+
+    def set_local_key(self, local_key: str) -> None:
+        """Use a key the cloud rotated, for every connection from now on.
+
+        A session that is up was opened with the old key, so the run loop drops
+        it at its next turn and reconnects with this one. Called on the event
+        loop, like the run loop itself, so nothing else is using the socket.
+        """
+        self._local_key = local_key
+        self._rekeyed = True
+
+    def _drop_session_if_rekeyed(self) -> None:
+        """Close a session opened with a key that has since been replaced."""
+        if not self._rekeyed:
+            return
+        self._rekeyed = False
+        if self._device:
+            _LOGGER.info("Local key for %s changed, reconnecting the LAN session", self._device_id)
+            self._disconnect()
 
     async def start(self) -> None:
         self._stop_event.clear()
@@ -88,6 +137,7 @@ class TuyaLANClient:
                 _LOGGER.debug("Ignoring error while closing the LAN socket: %s", ex)
             self._device = None
         self.connected = False
+        self._exchanged = False
 
     async def _discover_device(self) -> tuple[str | None, float | None]:
         """Find the monitor on the LAN, keeping the protocol version it announces."""
@@ -103,8 +153,8 @@ class TuyaLANClient:
     def _try_direct_connect(self, ip: str, version: float) -> tinytuya.Device | None:
         """Try connecting directly to a known IP via TCP handshake only.
 
-        Don't send status() or updatedps() — this IPC device doesn't
-        respond to DP_QUERY and updatedps() crashes the firmware.
+        Don't send updatedps() — it crashes this firmware. DP_QUERY goes out
+        once the session is up, and only on 3.4 and up; see `_query_baseline`.
 
         `_get_socket` answers True or a tinytuya error code, and from 3.4 up that
         covers the session-key negotiation, so the caller learns whether this
@@ -125,9 +175,9 @@ class TuyaLANClient:
             _LOGGER.debug("Direct LAN connection to %s at protocol %s failed: %s", ip, version, ex)
         return None
 
-    async def _connect_at_any_version(self, ip: str) -> tinytuya.Device | None:
+    async def _connect_at_any_version(self, ip: str, *, scanned: bool) -> tinytuya.Device | None:
         """Connect to a known IP, trying the announced protocol then the default."""
-        for version in version_candidates(self._version or self._announced_version):
+        for version in session_candidates(self._announced_version, self._version, scanned=scanned):
             device = await self._hass.async_add_executor_job(
                 self._try_direct_connect, ip, version
             )
@@ -143,10 +193,10 @@ class TuyaLANClient:
         return None
 
     async def _connect(self) -> bool:
-        # Try cached IP first (direct TCP, no broadcast needed)
+        # Try the cached or seeded IP first (direct TCP, no broadcast needed)
         if self._ip:
             _LOGGER.debug("Trying direct LAN connection to %s at %s", self._device_id, self._ip)
-            device = await self._connect_at_any_version(self._ip)
+            device = await self._connect_at_any_version(self._ip, scanned=False)
             if device:
                 self._device = device
                 self.connected = True
@@ -166,7 +216,7 @@ class TuyaLANClient:
             _LOGGER.warning("Device %s not found on LAN", self._device_id)
             return False
 
-        device = await self._connect_at_any_version(self._ip)
+        device = await self._connect_at_any_version(self._ip, scanned=True)
         if device:
             self._device = device
             self.connected = True
@@ -177,8 +227,71 @@ class TuyaLANClient:
         self._ip = None
         return False
 
-    def _send_heartbeat(self) -> bool:
-        """Ping the device on the persistent socket. Returns False if it is gone.
+    def _query_baseline(self) -> dict[str, Any] | None:
+        """Read the monitor's whole DPS set on the session that just came up.
+
+        A read and only a read: DP_QUERY (command 10) carries no data points, so
+        it cannot change a setting. Sent only on a keyed session, where the
+        monitor answers it (`keyed_protocol`); a 3.3 session leaves it
+        unanswered, which would cost a socket timeout on every connect.
+
+        tinytuya's status() returns the first frame with a payload whatever its
+        command, so a push landing between the query and its answer (a SenseIQ
+        status comes every few seconds) is taken for the baseline, and the
+        answer then arrives as an ordinary push. That swap is harmless only
+        because the alert keys are absent from the answer, as both the #51
+        capture and the fork's SCD973/26 show: the answer arriving as a push
+        fires nothing. A DPS 212 alarm taken for the baseline still fires, since
+        the sensors judge 212 by its own timestamp; a 250 or 141 marker would be
+        lost, and on 3.4+ those stayed empty. Telling the frames apart would
+        mean reading tinytuya's raw messages for their command.
+        """
+        try:
+            result = self._device.status()
+        except Exception as ex:  # noqa: BLE001 - tinytuya raises socket and decode errors alike
+            _LOGGER.debug("LAN baseline query failed: %s", ex)
+            return None
+        dps = baseline_dps(result)
+        if dps is None:
+            _LOGGER.debug(
+                "LAN baseline query returned no state: %s",
+                result.get("Error") if isinstance(result, dict) else result,
+            )
+        return dps
+
+    async def _load_baseline(self) -> None:
+        """Publish the full local state, so it need not wait for the cloud."""
+        dps = await self._hass.async_add_executor_job(self._query_baseline)
+        if dps:
+            _LOGGER.debug("LAN baseline for %s carries %d keys", self._device_id, len(dps))
+            self._publish(dps, baseline=True)
+
+    def _announce_session(self) -> None:
+        """Tell the coordinator a session is up, on the event loop."""
+        if self._on_session_up is None:
+            return
+        try:
+            self._on_session_up()
+        except Exception:
+            _LOGGER.exception("Error in LAN session callback")
+
+    def _publish(self, dps: dict[str, Any], *, baseline: bool = False) -> None:
+        """Hand state to the coordinator, on the event loop.
+
+        A baseline is the answer to the query sent when the session came up:
+        state, not news, so the coordinator does not treat it as an event.
+        """
+        try:
+            self._on_dps_update(dps, baseline)
+        except Exception:
+            _LOGGER.exception("Error in DPS %s callback", "baseline" if baseline else "update")
+
+    def _send_heartbeat(self) -> tuple[bool, dict[str, Any] | None]:
+        """Ping the device on the persistent socket.
+
+        Returns whether the socket is still usable, and any state that came back
+        in place of the ack (see `heartbeat_outcome`), for the caller to publish
+        on the event loop.
 
         tinytuya does not keep persistent sockets alive by itself, so without
         this the monitor closes the connection after 30-45 seconds of silence
@@ -186,20 +299,18 @@ class TuyaLANClient:
         ignores or crashes on, a heartbeat is the plain keep-alive command.
 
         The response is consumed here (`nowait=False`) so a stray ack cannot turn
-        up in the next receive() and look like a device error. Only a connection
-        error counts as failure: an ack we cannot parse still proves the socket
-        is alive.
+        up in the next receive() and look like a device error.
         """
         try:
             result = self._device.heartbeat(nowait=False)
         except Exception as ex:  # noqa: BLE001 - any failure here means the socket is unusable
             _LOGGER.debug("LAN heartbeat failed (%s)", ex)
-            return False
+            return False, None
 
-        if isinstance(result, dict) and is_connection_error(result.get("Err")):
+        alive, pushed = heartbeat_outcome(result)
+        if not alive:
             _LOGGER.debug("LAN heartbeat unreachable: %s", result.get("Error"))
-            return False
-        return True
+        return alive, pushed
 
     async def _run(self) -> None:
         last_data = time.monotonic()
@@ -208,11 +319,17 @@ class TuyaLANClient:
         payload_errors = 0
 
         while not self._stop_event.is_set():
+            self._drop_session_if_rekeyed()
             if not self._device:
                 if not await self._connect():
                     failures += 1
                     await self._interruptible_sleep(reconnect_delay(failures))
                     continue
+                self._announce_session()
+                # Before the receive loop, so the query never shares the socket
+                # with a keep-alive.
+                if keyed_protocol(self._version):
+                    await self._load_baseline()
                 last_data = time.monotonic()
                 last_heartbeat = last_data
                 payload_errors = 0
@@ -251,40 +368,47 @@ class TuyaLANClient:
                         data.get("Error", err_code),
                     )
                 else:
-                    # A real exchange: the connection is healthy.
+                    # A real exchange: the connection is healthy, and on 3.3
+                    # a frame that decrypted proves the key as well.
                     failures = 0
                     payload_errors = 0
+                    self._exchanged = True
 
                     if data.get("dps"):
-                        try:
-                            self._on_dps_update(data["dps"])
-                        except Exception:
-                            _LOGGER.exception("Error in DPS update callback")
+                        self._publish(data["dps"])
 
             # Keep-alive. Runs after the receive so the two never share the
             # socket at the same time.
             now = time.monotonic()
             if heartbeat_due(now, last_heartbeat):
-                if not await self._hass.async_add_executor_job(self._send_heartbeat):
+                alive, pushed = await self._hass.async_add_executor_job(self._send_heartbeat)
+                if not alive:
                     self._disconnect()
                     failures += 1
                     await self._interruptible_sleep(reconnect_delay(failures))
                     continue
+                if pushed:
+                    self._exchanged = True
+                    self._publish(pushed)
                 last_heartbeat = now
                 last_data = now
                 failures = 0
 
-    async def set_dps(self, dps: dict) -> dict | None:
+    async def set_dps(self, dps: dict, *, repeatable: bool = True) -> dict | None:
         """Send DPS command via a temporary LAN connection.
 
         Uses a separate short-lived socket so the persistent listener
-        is never disrupted. Sends each value individually — the device
-        ignores batched commands for certain codes (e.g. 201 + 202).
+        is never disrupted. Sends each value individually, in order — the
+        device ignores batched commands for certain codes (e.g. 201 + 202).
+
+        None when the command did not reach the monitor, so the caller can
+        send it through the cloud instead; `repeatable` decides how an
+        ambiguous error counts (see `lan_write_delivered`).
         """
         if not self._ip:
             return None
 
-        def _send():
+        def _send() -> dict | None:
             d = tinytuya.Device(
                 self._device_id,
                 self._ip,
@@ -294,16 +418,22 @@ class TuyaLANClient:
             d.set_socketTimeout(SOCKET_TIMEOUT)
             try:
                 for key, value in dps.items():
-                    d.set_value(key, value)
+                    result = d.set_value(key, value)
+                    if not lan_write_delivered(result, repeatable=repeatable):
+                        return result
+                return None
             finally:
                 d.close()
 
         try:
-            await self._hass.async_add_executor_job(_send)
-            return {"success": True}
+            refused = await self._hass.async_add_executor_job(_send)
         except Exception as ex:  # noqa: BLE001 - a failed command falls back to the cloud path
             _LOGGER.warning("LAN set_dps failed: %s", ex)
             return None
+        if refused is not None:
+            _LOGGER.warning("LAN command did not reach the monitor: %s", refused.get("Error"))
+            return None
+        return {"success": True}
 
     async def _interruptible_sleep(self, seconds: float) -> None:
         with contextlib.suppress(TimeoutError):

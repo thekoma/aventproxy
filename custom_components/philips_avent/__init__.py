@@ -32,7 +32,7 @@ from .const import (
     TUYA_SIGNING_KEY,
 )
 from .coordinator import PhilipsAventCoordinator
-from .lan_credentials import fetch_p2p_passwords, lan_credentials
+from .lan_credentials import fetch_missing_passwords, fetch_p2p_passwords, lan_credentials
 from .payload import (
     BRIDGE_CONFIG_PREFIX,
     bridge_config_filename,
@@ -234,9 +234,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     bridge_path = Path(hass.config.path(bridge_config_filename(entry.entry_id)))
 
     def _read_previous() -> str:
+        # Unreadable or undecodable both mean no seed. Raising here would fail
+        # setup before the try below, leaking the aiohttp session.
         try:
             return bridge_path.read_text()
-        except OSError:
+        except (OSError, ValueError):
             return ""
 
     previous = previous_lan_values(await hass.async_add_executor_job(_read_previous))
@@ -252,16 +254,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     }
     ready = False
 
-    async def _rewrite_bridge_config() -> None:
-        # One writer at a time; no API call, so this works while the cloud is down.
+    def _live() -> bool:
+        # False once setup failed or the entry unloaded: hass.data no longer holds this setup's data.
+        return ready and hass.data.get(DOMAIN, {}).get(entry.entry_id) is data
+
+    async def _rewrite_bridge_config(*, refetch: bool = True) -> None:
+        # One writer at a time. Its only cloud call, for a P2P password the setup
+        # could not fetch, is bounded, so a rewrite during an outage still writes.
+        if refetch and _live() and entry.options.get(CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING):
+            passwords.update(await fetch_missing_passwords(api, list(coordinators), passwords))
         async with write_lock:
+            # A rewrite queued during the setup write can get the lock only after
+            # that setup failed, and must not write for an entry that is gone.
+            if not _live():
+                return
             lan = lan_credentials(coordinators, passwords)
             await _write_bridge_config(hass, entry, api, cameras, lan)
 
     def _on_address_change(_ip: str) -> None:
         # On the event loop. Before `ready` it is dropped: the setup write reads every address.
         # After an unload the entry data is gone, and unload cancels a task already queued.
-        if ready and hass.data.get(DOMAIN, {}).get(entry.entry_id) is data:
+        if _live():
             entry.async_create_background_task(hass, _rewrite_bridge_config(), "philips_avent_bridge_config")
 
     try:
@@ -273,23 +286,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             coordinator = PhilipsAventCoordinator(hass, api, cam_id, cam_name, local_key=local_key)
             await coordinator.async_config_entry_first_refresh()
 
-            if not local_key:
-                local_key = coordinator.device_info.get("localKey")
-                if local_key:
-                    coordinator._local_key = local_key
-
             coordinators[cam_id] = coordinator
             seed = previous.get(cam_id, {})
             await coordinator.start_lan(_on_address_change, seed.get("lan_ip") or None, seed.get("lan_protocol", ""))
 
-        passwords.update(
-            await fetch_p2p_passwords(
-                api, list(coordinators), {k: v["p2p_password"] for k, v in previous.items()}
+        # With LAN streaming off the bridge file carries no P2P password, so there is nothing to fetch.
+        if entry.options.get(CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING):
+            passwords.update(
+                await fetch_p2p_passwords(
+                    api, list(coordinators), {k: v["p2p_password"] for k, v in previous.items()}
+                )
             )
-        )
         hass.data.setdefault(DOMAIN, {})[entry.entry_id] = data
         ready = True
-        await _rewrite_bridge_config()
+        # The passwords were fetched just above; asking again here would only repeat a failure.
+        await _rewrite_bridge_config(refetch=False)
     except BaseException:
         ready = False
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)

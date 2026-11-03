@@ -5,8 +5,10 @@ loaded by tests without dragging in the full HA stack.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import tempfile
 
 BRIDGE_CONFIG_PREFIX = "philips_avent_bridge_"
 BRIDGE_CONFIG_SUFFIX = ".json"
@@ -104,7 +106,17 @@ def build_bridge_config(
     defaults to off (issue #72).
     `uid` and `lan_streaming` steer the LAN path; `lan` maps a camera id to its
     `local_key`, `p2p_password`, `lan_ip` and `lan_protocol`.
+
+    With LAN streaming off the bridge never uses the local key or the P2P
+    password, so they stay out of a file that every backup copies. The address
+    and protocol stay: they are no credentials, and the next setup seeds the LAN
+    client from them, which keeps the file the same across restarts.
     """
+    if not lan_streaming:
+        lan = {
+            camera_id: {**values, "local_key": "", "p2p_password": ""}
+            for camera_id, values in (lan or {}).items()
+        }
     return {
         "signing_key": signing_key,
         "sid": sid,
@@ -187,17 +199,29 @@ def write_bridge_config_file(path, config: dict) -> None:
     all mount and which every backup copies. ``Path.write_text`` left it at
     the process umask, so in practice 0644.
 
-    The mode is tightened on the open file descriptor before any content is
-    written, so an already-existing 0644 file never holds the new session
-    while still world-readable. ``os.open`` alone would not be enough: its
-    mode argument only applies when the file is created.
+    The content goes to a temporary file in the same directory, owner-only
+    before anything is written to it, which then replaces the old file in one
+    step. Truncating in place let run.sh's md5 poll, or the seed read at the
+    next setup, catch a half-written file: a changed md5 restarts the bridge
+    on a config it cannot parse, and the full write then restarts it again
+    (#73). The temporary name matches neither the add-on's glob nor the
+    orphan cleanup, and it is removed if the write fails.
     """
     payload = json.dumps(config, indent=2)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, BRIDGE_CONFIG_MODE)
-    with os.fdopen(fd, "w") as handle:
-        if hasattr(os, "fchmod"):
-            os.fchmod(handle.fileno(), BRIDGE_CONFIG_MODE)
-        handle.write(payload)
+    directory = os.path.dirname(os.fspath(path)) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".philips_avent_bridge_", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            if hasattr(os, "fchmod"):
+                os.fchmod(handle.fileno(), BRIDGE_CONFIG_MODE)
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 # homeassistant.const.CONF_PASSWORD, spelled out so this module stays free of

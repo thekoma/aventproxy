@@ -83,13 +83,25 @@ client.set_dps("YOUR_DEVICE_ID", {"201": "play"})   # play lullaby
 | 141 | `decibel_upload` | Sound event (read-only) | string | ro | `decibel_upload` when triggered |
 | 239 | `monitor_sensitivity` | Background monitoring | enum | rw | `0`, `1`, `2`, `3` |
 
+The monitor runs one detector at a time. Measured at protocol 3.5 on an SCD973/26 in Leonard
+Pitzu's fork: whichever of 134 and 139 was written last wins, and the other switch keeps
+reading `true` while it does nothing. The integration therefore turns the partner off, but only
+on a monitor whose LAN session has confirmed protocol 3.4 or newer.
+
 ### Two-Way Audio
 
 | ID | Code | Name | Type | Mode | Values/Range |
 |----|------|------|------|------|-------------|
 | 252 | `pu_talking` | Parent unit talkback | enum | rw | `0` (off), `1` (on) |
-| 253 | `app_talking` | App talkback | enum | rw | `0` (off), `1` (on) |
+| 253 | `app_talking` | App talkback | enum | rw | `0` (off), `1` (on). Also reads `1` for the whole of a cloud stream session (`webrtc` mode), with or without talkback |
 | 251 | `background_mode` | Background audio mode | bool | rw | true/false |
+
+In the bridge sessions logged on [#72](https://github.com/thekoma/aventproxy/issues/72), DPS 253
+went to `1` within about 200 ms of the connection. It did so whether the offer's audio was
+`sendrecv` or `recvonly`, and with no RTSP backchannel. It went back to `0` when the session
+ended. One logged session showed no change, and nobody has explained it yet. This is probably why
+a stream pauses a playing lullaby. WHITEPAPER section 21 covers it, as a hypothesis still under
+test.
 
 ### SenseIQ (Sleep, Breathing & Presence)
 
@@ -126,7 +138,8 @@ centre — it rides these ordinary data points that `tuya.m.device.get` returns.
 `br` is breaths per minute (0 while no baby is detected). `r` is a presence/state
 flag: `"o"` = no baby (empty crib); `"m"`, `"b"` and `"a"` were all observed
 while the baby was detected (over one night on an SCD9xx). Presence is therefore
-`r != "o"` (or `br > 0`).
+`r != "o"` (or `br > 0`). Leonard Pitzu's fork, working on an SCD973, reads `b` as lying still
+with a breathing rate measured and `m` as moving. The Baby Moving sensor is on while `r` is `m`.
 
 **DPS 4 `sleep_session_data`** — base64 of an ASCII-hex string of JSON:
 
@@ -136,7 +149,9 @@ while the baby was detected (over one night on an SCD9xx). Presence is therefore
         {"d":3274},{"l":406},{"d":34},{"l":271},{"d":1077},{"l":1377},{"d":133}]}
 ```
 - `st` = session start (epoch seconds), `sd` = total sleep seconds
-- `css` = current stage `a`/`l`/`d` (awake/light/deep), `cssd` = seconds in it
+- `css` = current stage `a`/`l`/`d` (awake/light/deep), `cssd` = seconds in it. Two more codes
+  appear, both from the fork on an SCD973. `o` is out of bed. `i` covers the first three to four
+  minutes of a session, which the monitor later files as `o`; the integration calls it settling
 - `ssd` = stage timeline, each item one `{stage: seconds}` pair
 - invariant: `sum(ssd) + cssd == sd`
 

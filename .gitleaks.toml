@@ -60,4 +60,7 @@ regexes = [
   '''a3nfht4ufwfw9cmkspaftv4x89cx58qx''',
   # The RSA key the login password is encrypted with. A public key.
   '''MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQ[A-Za-z0-9+/=]+''',
+  # A made-up SDP aes-key in avent-webrtc-bridge/pkg/rtsp/sdp_summary_test.go,
+  # there to prove the session log never prints the real one.
+  '''00112233445566778899aabbccddeeff''',
 ]

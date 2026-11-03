@@ -10,8 +10,9 @@ import json
 
 from events import (
     EVENT_MAX_AGE_SECONDS,
-    LULLABY_SETTLE_SECONDS,
     KNOWN_COMMANDS,
+    LULLABY_SETTLE_SECONDS,
+    alert_selection,
     decode_event_payload,
     event_timestamp,
     is_new_event,
@@ -262,3 +263,14 @@ class TestLullabySettleWindow:
 
     def test_window_stays_short_enough_to_feel_immediate(self):
         assert LULLABY_SETTLE_SECONDS <= 3.0
+
+
+class TestAlertSelection:
+    """A 3.5 monitor detects motion or sound, never both (fork 04d6d28)."""
+
+    def test_turning_one_on_clears_its_partner_first(self):
+        assert list(alert_selection("134", "139").items()) == [("139", False), ("134", True)]
+        assert list(alert_selection("139", "134").items()) == [("134", False), ("139", True)]
+
+    def test_without_a_partner_the_write_is_what_it_always_was(self):
+        assert alert_selection("134", None) == {"134": True}

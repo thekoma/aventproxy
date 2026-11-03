@@ -1,11 +1,12 @@
 package lan
 
 // The monitor speaks a subset of ICE that a conformant agent cannot complete.
-// It always claims the controlling role, answering 487 Role Conflict to anyone
-// who claims it too, and its binding success responses carry no
-// MESSAGE-INTEGRITY, which pion discards outright. On a LAN there is exactly
-// one candidate pair, so the connectivity checks are done here instead: the
-// pairing is a single exchange, not a NAT-traversal problem.
+// It always takes the controlling role, even as the answerer, so an agent that
+// controls as the offerer (pion does) runs into a role conflict; and its
+// binding success responses carry no MESSAGE-INTEGRITY, which pion discards
+// outright. The bridge therefore takes the controlled role and runs the checks
+// itself: on a LAN there is exactly one candidate pair, so the pairing is a
+// single exchange, not a NAT-traversal problem.
 
 import (
 	"context"
@@ -69,8 +70,8 @@ func isSTUN(b []byte) bool {
 
 // bindingRequest builds one connectivity check.
 //
-// We announce the controlled role: the monitor rejects a second controlling
-// agent, and on a single pair there is nothing to nominate anyway.
+// We announce the controlled role, leaving the monitor the one it always
+// takes; on a single pair there is nothing to nominate anyway.
 func bindingRequest(local, remote iceCreds) (*stun.Message, error) {
 	tiebreaker := make([]byte, 8)
 	if _, err := rand.Read(tiebreaker); err != nil {
