@@ -183,8 +183,15 @@ func (c *MQTTCameraClient) onError(err error) {
 	}
 }
 
+// publishTimeout bounds the wait for a publish to be acknowledged. A QoS 1
+// publish otherwise waits for a PUBACK until the keep-alive notices a dead
+// broker, and the disconnect is sent with the stream's lock held.
+var publishTimeout = 5 * time.Second
+
+var errPublishTimeout = errors.New("mqtt publish not acknowledged in time")
+
 func (c *MQTTCameraClient) sendMqttMessage(messageType string, protocol int, transactionID string, data interface{}) error {
-	if c.mqttClient.closed {
+	if c.mqttClient.closed.Load() {
 		return errors.New("mqtt client is closed, send mqtt message fail")
 	}
 
@@ -218,9 +225,13 @@ func (c *MQTTCameraClient) sendMqttMessage(messageType string, protocol int, tra
 	}
 
 	token := c.mqttClient.mqtt.Publish(c.publishTopic, 1, false, payload)
-	if token.Wait() && token.Error() != nil {
-		core.Logger.Error().Err(token.Error()).Msgf("Send mqtt message error")
-		return token.Error()
+	if !token.WaitTimeout(publishTimeout) {
+		core.Logger.Error().Msgf("Send mqtt %s message: no acknowledgement within %v", messageType, publishTimeout)
+		return errPublishTimeout
+	}
+	if err := token.Error(); err != nil {
+		core.Logger.Error().Err(err).Msgf("Send mqtt %s message error", messageType)
+		return err
 	}
 
 	return nil
