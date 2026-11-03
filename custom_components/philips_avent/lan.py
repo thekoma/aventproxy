@@ -69,6 +69,15 @@ class TuyaLANClient:
         """The protocol published with `ip`, such as "3.3"; "" when unknown."""
         return self._address.protocol
 
+    @property
+    def session_version(self) -> float | None:
+        """The protocol the live session negotiated, or None without a session.
+
+        Unlike `protocol`, this follows the session: an unconfirmed 3.3 fallback
+        on a monitor that announces 3.5 reads 3.3 here.
+        """
+        return self._version if self.connected else None
+
     async def start(self) -> None:
         self._stop_event.clear()
         self._task = self._hass.async_create_background_task(

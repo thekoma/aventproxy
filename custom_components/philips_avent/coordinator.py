@@ -27,6 +27,7 @@ from .const import (
 )
 from .events import LULLABY_SETTLE_SECONDS, lullaby_state_settled, poll_should_stay_fast
 from .lan import TuyaLANClient
+from .lan_policy import keyed_protocol
 from .payload import dps_delta, truncated_dps
 
 LULLABY_STATE_MAP = {"play": "playing", "pause": "stopping", "stop": "stopping"}
@@ -82,6 +83,7 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         # SenseIQ nightly sleep summary (cloud aggregate), decoded in senseiq.py.
         self.sleep_day: dict | None = None
         self._sleep_day_refreshed_at = None
+        self._cloud_poll_paused = False
 
     async def start_lan(
         self,
@@ -122,6 +124,16 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
     @property
     def lan_connected(self) -> bool:
         return self._lan_client is not None and self._lan_client.connected
+
+    @property
+    def lan_serves_state(self) -> bool:
+        """Whether the live LAN session carries this monitor without the cloud.
+
+        Only a session that negotiated 3.4 or up: it answers the baseline query
+        and pushes alarms in DPS 212 (see lan_policy.keyed_protocol). On 3.3 the
+        cloud stays in the loop exactly as before.
+        """
+        return self._lan_client is not None and keyed_protocol(self._lan_client.session_version)
 
     @property
     def senseiq_status_stale(self) -> bool:
@@ -235,11 +247,16 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         self.async_set_updated_data({**self.data, DPS_LULLABY_STATE: value})
 
     async def set_dps(self, dps: dict) -> dict:
-        """Send DPS command via LAN for instant response, plus REST for cloud sync.
+        """Send a DPS command, over the LAN when there is a session for it.
 
-        Relative lullaby steps skip the REST mirror after a LAN success; see
-        `mirror_dps_to_cloud`.
+        On a 3.4+ session a command the LAN delivered is done: the monitor reports
+        the change on that same session, so repeating it through the cloud only
+        sends the write over the internet again (fork a59b77f). Below 3.4 a LAN
+        success is mirrored to the cloud as before, except relative lullaby steps
+        (`mirror_dps_to_cloud`). A command the LAN could not deliver goes through
+        the cloud on any protocol.
         """
+        local_only = self.lan_serves_state
         if self._lan_client and self._lan_client.connected:
             result = await self._lan_client.set_dps(dps)
             if result:
@@ -250,7 +267,7 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
                     if lullaby_cmd in LULLABY_STATE_MAP:
                         optimistic[DPS_LULLABY_STATE] = LULLABY_STATE_MAP[lullaby_cmd]
                     self.async_set_updated_data({**self.data, **optimistic})
-                if mirror_dps_to_cloud(dps):
+                if not local_only and mirror_dps_to_cloud(dps):
                     with contextlib.suppress(TuyaAPIError):
                         await self.api.set_dps(self.camera_id, dps)
                 return result
@@ -270,7 +287,10 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         self._rssi_refreshed_at = now
         try:
             rssi_data = await self.api.get_rssi(self.camera_id)
-        except TuyaAPIError:
+        except (TuyaAPIError, aiohttp.ClientError, TimeoutError) as err:
+            # A failed reading must not fail the DPS poll it rides along with,
+            # nor the tick that stands in for one behind a LAN session.
+            _LOGGER.debug("WiFi signal refresh failed for %s: %s", self.camera_name, err)
             return
         self.rssi = rssi_data.get("value")
 
@@ -307,20 +327,47 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
     def alerts_need_the_cloud(self) -> bool:
         """Whether alerts on this monitor are only visible on the cloud poll.
 
-        The SCD951 and SCD953 family reports alarms in DPS 212, and whether that
-        key arrives over the LAN depends on the negotiated protocol version: it
-        never did on 3.3, while on 3.5 an owner measured a motion record pushed
-        and the sensor firing in 1.3 seconds (#61, rc9). Sound on the same
-        monitor still arrived through the poll. DPS 212 is also a single slot
+        Monitors reporting alarms in DPS 212 (the SCD951 and SCD953 on #42 and
+        #61, and an SCD973/26 in the fork) depend on the negotiated protocol for
+        it: 212 never arrived on 3.3, while from 3.4 up it pushes within a couple
+        of seconds (#61 rc9, fork 619981b), which is why a 3.4+ session stops the
+        cloud poll altogether (`lan_serves_state`). DPS 212 is also a single slot
         holding the newest alarm rather than a queue, so a second alert
-        overwrites the first and whatever the poll misses is gone. The fast poll
-        therefore stays for these models as the floor, not as the mechanism.
+        overwrites the first and whatever the poll misses is gone. Below 3.4 the
+        fast poll therefore stays for these monitors as the floor.
         """
         return DPS_ALARM_RECORD in (self.data or {})
+
+    @callback
+    def _note_cloud_poll(self, paused: bool) -> None:
+        """Log when the cloud poll stops or starts again behind a LAN session."""
+        if paused == self._cloud_poll_paused:
+            return
+        self._cloud_poll_paused = paused
+        if paused:
+            _LOGGER.info(
+                "Cloud poll for %s paused: its LAN session at protocol %s pushes state and alarms",
+                self.camera_name, self._lan_client.session_version if self._lan_client else None,
+            )
+        else:
+            _LOGGER.info("Cloud poll for %s resumed", self.camera_name)
 
     async def _async_update_data(self) -> dict:
         fast = poll_should_stay_fast(self.lan_connected, self.alerts_need_the_cloud)
         self.update_interval = POLL_FAST if fast else POLL_SLOW
+
+        # A 3.4+ session pushes state and alarms as they happen, so polling the
+        # cloud would fetch a copy (fork a59b77f, 619981b). The tick keeps its
+        # interval, so the poll is back within one tick of the session dropping,
+        # and it still refreshes what only the cloud knows. The first refresh
+        # always asks the cloud: it fills device_info and the local key.
+        if self.data is not None and self.lan_serves_state:
+            self._note_cloud_poll(paused=True)
+            await self._refresh_rssi()
+            if DPS_SENSEIQ_STATUS in self.data:
+                await self._refresh_sleep_day()
+            return self.data
+        self._note_cloud_poll(paused=False)
 
         try:
             device = await self.api.get_device(self.camera_id)

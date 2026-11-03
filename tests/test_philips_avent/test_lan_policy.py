@@ -1,9 +1,9 @@
 """Tests for the LAN keep-alive and reconnect policy (issue #62)."""
 
 from lan_policy import (
-    KEYED_PROTOCOL_MIN_VERSION,
     DATA_TIMEOUT,
     HEARTBEAT_INTERVAL,
+    KEYED_PROTOCOL_MIN_VERSION,
     LAN_ERR_CONNECT,
     LAN_ERR_OFFLINE,
     LAN_ERR_PAYLOAD,
