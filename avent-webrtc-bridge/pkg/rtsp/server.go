@@ -1082,7 +1082,6 @@ func (cs *CameraStream) stopStreamInternal() {
 	wasActive := cs.active.Load()
 	cs.active.Store(false)
 	cs.connecting.Store(false)
-	cs.stops.Add(1) // the forwarder drops its clients below
 
 	// Cancel any pending shutdown
 	if cs.shutdownTimer != nil {
@@ -1123,6 +1122,12 @@ func (cs *CameraStream) stopStreamInternal() {
 	}
 	// The bridge leaves the stream's forwarder alone; its clients go here.
 	cs.forwarder.Stop()
+	// After the drop, still under the lock: a client that registered with
+	// the forwarder before it read the count before it, so its join sees the
+	// count move and is refused (joinStream). Bumped any earlier, a client
+	// handed the stream while the bridge stops could read the new count,
+	// register, be dropped here, and still be accepted.
+	cs.stops.Add(1)
 
 	// MQTT client is NOT closed — kept alive for next stream (matches app behavior)
 

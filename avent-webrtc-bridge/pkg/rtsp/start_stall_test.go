@@ -2,6 +2,7 @@ package rtsp
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -323,6 +324,66 @@ func TestClientJoiningAfterATeardownIsClosed(t *testing.T) {
 	if n := attempts.Load(); n != 1 {
 		t.Fatalf("%d cloud attempts; the late client must not restart the stream it never joined", n)
 	}
+}
+
+// slowStopLAN holds stopStreamInternal in the middle of a teardown, before the
+// forwarder drops its clients, as a slow bridge.Stop does in production
+// (SendDisconnect waiting up to 5 s for its PUBACK, then pc.Close).
+type slowStopLAN struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (l *slowStopLAN) Start(context.Context) error { return nil }
+func (l *slowStopLAN) Stop()                       { close(l.entered); <-l.release }
+func (l *slowStopLAN) SetOnError(func(error))      {}
+
+// A client handed the stream during a teardown (another client still pending
+// keeps the stream in use) can register with the forwarder before the
+// teardown drops the forwarder's clients. Its join then has to see a new stop
+// count, or it is accepted into a stream whose forwarder no longer has it: it
+// restarts the stream and gets nothing. Found by the dev4 review's probe.
+func TestClientRegisteredDuringATeardownIsClosed(t *testing.T) {
+	h := newStallHarness(t, func(cs *CameraStream) error { return nil })
+	first := dialRTSP(t, h.port, "/cam1")
+	first.play(time.Second)
+	waitUntil(t, func() bool {
+		cs := h.stream("cam1")
+		return cs != nil && cs.active.Load()
+	}, "the stream never started")
+	cs := h.stream("cam1")
+
+	cs.mutex.Lock() // a long locked section, e.g. the end of a failed start
+	pendingClient := dialRTSP(t, h.port, "/cam1")
+	pendingClient.play(time.Second) // handed the active stream, its join blocked
+
+	lan := &slowStopLAN{entered: make(chan struct{}), release: make(chan struct{})}
+	cs.lan = lan
+	done := make(chan struct{})
+	go func() {
+		clients := cs.teardownLocked()
+		cs.mutex.Unlock()
+		closeClients(clients)
+		close(done)
+	}()
+	<-lan.entered // active cleared, the forwarder not stopped yet
+
+	late := dialRTSP(t, h.port, "/cam1") // in use through pendingClient: same stream
+	late.play(time.Second)               // registered with the forwarder
+	if got := h.stream("cam1"); got != cs {
+		t.Fatal("the late client got another stream")
+	}
+	close(lan.release)
+	<-done
+
+	first.expectClosedWithin(2 * time.Second)
+	pendingClient.expectClosedWithin(2 * time.Second)
+	late.expectClosedWithin(2 * time.Second)
+	waitUntil(t, func() bool {
+		cs.mutex.RLock()
+		defer cs.mutex.RUnlock()
+		return len(cs.clients) == 0
+	}, "a client is left in the stream with no forwarder entry")
 }
 
 // shortVideoWatch makes a cloud session that carries no video fail after d.
