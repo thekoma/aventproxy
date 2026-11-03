@@ -42,8 +42,10 @@ type ClientConfig struct {
 	OnAudio func(*AudioFrame)
 	// OnClosed reports, once, a stream that died while open: a media read
 	// failed, no conversation delivered media for mediaIdleTimeout, or the
-	// signalling session failed. It is not called after Close or once the
-	// Start context has ended.
+	// signalling session failed. It is not called for a failure detected
+	// after Close began or after the Start context ended; one detected just
+	// before can still be delivered while Close runs, so the receiver must
+	// tolerate a late call.
 	OnClosed func(error)
 }
 
