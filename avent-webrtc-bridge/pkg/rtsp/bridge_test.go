@@ -155,19 +155,18 @@ func TestConnectedWithoutCameraClient(t *testing.T) {
 	}
 }
 
+// Speaker-off stays off unless asked for: until a tester confirms it, only the
+// Dev card turns it on (issue #72), and every other card behaves as before.
 func TestStreamBridgesTakeTheServersSettings(t *testing.T) {
 	server, cs := newTestCameraStream(t)
-	if !server.SpeakerOff {
-		t.Fatal("a new server must ask for the speaker off by default")
+	if server.SpeakerOff || cs.webrtcBridge.SpeakerOff {
+		t.Fatal("speaker-off must be off by default")
 	}
-	if !cs.webrtcBridge.SpeakerOff {
-		t.Fatal("the stream's first bridge did not take SpeakerOff from the server")
-	}
-	server.SpeakerOff = false
+	server.SpeakerOff = true
 	cs.mutex.Lock()
 	cs.replaceBridge()
 	cs.mutex.Unlock()
-	if cs.webrtcBridge.SpeakerOff {
+	if !cs.webrtcBridge.SpeakerOff {
 		t.Fatal("a replacement bridge did not take SpeakerOff from the server")
 	}
 }

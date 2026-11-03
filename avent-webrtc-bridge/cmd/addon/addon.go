@@ -272,8 +272,9 @@ Example:
 		"an address or comma-separated list, or 0.0.0.0 for every interface. The server has no authentication, "+
 		"so open it to the network only when another machine must reach it")
 	// Issue #72 experiment knobs, set from the Dev card's options by run.sh.
-	cmd.Flags().Bool("speaker-off", true, "Ask the monitor to keep its speaker closed once a cloud session "+
-		"without talkback is up (issue #72)")
+	// Speaker-off stays off elsewhere until a tester confirms it.
+	cmd.Flags().Bool("speaker-off", false, "Ask the monitor to keep its speaker closed once a cloud session "+
+		"without talkback is up (issue #72, experimental)")
 	cmd.Flags().String("webrtc-audio", rtsp.WebRTCAudioRecvonly, "Audio a cloud offer asks the camera for: "+
 		"recvonly, or none to leave it out (issue #72 experiment; RTSP clients see the same description)")
 	cmd.MarkFlagRequired("config")

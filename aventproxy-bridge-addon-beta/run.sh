@@ -85,10 +85,11 @@ case "$RTSP_BIND" in
         ;;
 esac
 
-# Issue #72 experiment knobs. Only the Dev card defines these options: on the
-# other cards they are absent from options.json, no flag is passed, and the
-# bridge keeps its defaults (speaker off, recvonly audio). A false must still
-# reach the bridge, hence the null test rather than jq's // operator.
+# Issue #72 experiment knobs. Only the Dev card defines these options (with
+# speaker_off on): on the other cards they are absent from options.json, no
+# flag is passed, and the bridge keeps its defaults (no speaker-off request,
+# recvonly audio). A false must still reach the bridge, hence the null test
+# rather than jq's // operator.
 addon_option() {
     [ -f "$ADDON_CONFIG" ] || return 0
     jq -r --arg key "$1" 'if .[$key] == null then empty else .[$key] end' "$ADDON_CONFIG" 2>/dev/null || true

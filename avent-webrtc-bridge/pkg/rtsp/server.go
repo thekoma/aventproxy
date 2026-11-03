@@ -51,7 +51,8 @@ type RTSPServer struct {
 	Talkback bool
 
 	// SpeakerOff asks the monitor to keep its speaker closed on every cloud
-	// session without talkback. On by default; see WebRTCBridge.SpeakerOff.
+	// session without talkback; see WebRTCBridge.SpeakerOff. Off by default
+	// until a tester confirms it (issue #72): only the Dev card turns it on.
 	SpeakerOff bool
 
 	// WebRTCAudio is the audio cloud offers ask for: WebRTCAudioRecvonly (the
@@ -226,7 +227,6 @@ func NewRTSPServer(port int, storageManager *storage.StorageManager) *RTSPServer
 		ctx:            ctx,
 		cancel:         cancel,
 		running:        false,
-		SpeakerOff:     true,
 		WebRTCAudio:    WebRTCAudioRecvonly,
 	}
 }

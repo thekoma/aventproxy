@@ -563,7 +563,7 @@ func TestSessionFlags(t *testing.T) {
 		audio      string
 		wantErr    bool
 	}{
-		{nil, true, rtsp.WebRTCAudioRecvonly, false},
+		{nil, false, rtsp.WebRTCAudioRecvonly, false}, // stable and beta: as before #72's experiment
 		{[]string{"--speaker-off=false"}, false, rtsp.WebRTCAudioRecvonly, false},
 		{[]string{"--speaker-off=true", "--webrtc-audio", "none"}, true, rtsp.WebRTCAudioNone, false},
 		{[]string{"--webrtc-audio", "sendrecv"}, false, "", true},
