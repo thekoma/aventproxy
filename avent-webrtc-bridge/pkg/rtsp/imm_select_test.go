@@ -286,3 +286,27 @@ func TestIMMStepNames(t *testing.T) {
 		}
 	}
 }
+
+// M5: when webrtc fails too, the imm cool-down ends, as the LAN's does.
+func TestWebRTCFailureEndsTheIMMCooldown(t *testing.T) {
+	t.Parallel() // waits out the 3 s between cloud attempts
+	server := newIMMServer(CloudTransportIMM)
+	cs, clientConn := newLANStream(t, server, "hd")
+	a := fakeIMMAttempts(t, cs, nil, func(context.Context) error {
+		return fmt.Errorf("%w: %v", lan.ErrNoAnswer, context.DeadlineExceeded)
+	})
+	cs.cloudStart = func() error {
+		a.cloudStarted.Add(1)
+		return errors.New("cloud down")
+	}
+
+	begin(cs)
+
+	if a.immBuilt.Load() != 1 || a.cloudStarted.Load() != 2 {
+		t.Fatalf("imm built %d, cloud started %d; want 1 and 2", a.immBuilt.Load(), a.cloudStarted.Load())
+	}
+	expectClosed(t, clientConn)
+	if server.immCoolingDown("testdev") {
+		t.Fatal("the imm cool-down must end when webrtc failed as well")
+	}
+}

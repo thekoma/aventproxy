@@ -114,6 +114,21 @@ func (cs *CameraStream) tryIMM(gen uint64) (done bool) {
 	return true
 }
 
+// endIMMCooldown ends a cool-down that alone kept this stream off imm, once
+// the webrtc session has failed as well: there is nothing to wait for, and a
+// monitor that webrtc cannot serve (#59) would otherwise sit out the 5
+// minutes with neither. Called where startStream gives up; callers hold
+// cs.mutex.
+func (cs *CameraStream) endIMMCooldown() {
+	if ok, reason := cs.immEligible(); ok || reason != "cooling down" {
+		return
+	}
+	cs.server.cooldownMutex.Lock()
+	delete(cs.server.immCooldowns, cs.camera.DeviceID)
+	cs.server.cooldownMutex.Unlock()
+	core.Logger.Info().Msgf("Cloud signalling failed too for %s, trying imm again on the next start", cs.camera.DeviceName)
+}
+
 // immDied hands an imm stream that died to the webrtc session, as lanDied
 // does for the LAN.
 func (cs *CameraStream) immDied(source lanStreamer, err error) {

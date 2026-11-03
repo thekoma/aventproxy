@@ -940,6 +940,7 @@ func (cs *CameraStream) startStream(gen uint64) {
 		cs.server.cooldownMutex.Unlock()
 		core.Logger.Info().Msgf("Cloud signalling failed too for %s, trying LAN signalling again on the next start", cs.camera.DeviceName)
 	}
+	cs.endIMMCooldown()
 	clients := cs.teardownLocked()
 	cs.mutex.Unlock()
 	closeClients(clients)
