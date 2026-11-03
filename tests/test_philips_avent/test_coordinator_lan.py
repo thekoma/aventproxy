@@ -25,6 +25,11 @@ class FakeLan:
         self.protocol = protocol
         self.delivered = delivered
         self.sent: list[dict] = []
+        self.keys: list[str] = []
+        self.ip = "10.0.0.7"
+
+    def set_local_key(self, key):
+        self.keys.append(key)
 
     async def set_dps(self, dps):
         self.sent.append(dps)
@@ -35,7 +40,8 @@ class FakeLan:
 
 
 class FakeApi:
-    def __init__(self, rssi_error: Exception | None = None):
+    def __init__(self, rssi_error: Exception | None = None, local_key: str | None = None):
+        self.local_key = local_key
         self.published: list[dict] = []
         self.device_calls = 0
         self.rssi_calls = 0
@@ -47,7 +53,10 @@ class FakeApi:
 
     async def get_device(self, dev_id):
         self.device_calls += 1
-        return {"dps": {**STATE, "207": 2400}}
+        device = {"dps": {**STATE, "207": 2400}}
+        if self.local_key:
+            device["localKey"] = self.local_key
+        return device
 
     async def get_rssi(self, dev_id):
         self.rssi_calls += 1
@@ -278,3 +287,36 @@ class TestPushesLeaveThePollAlone:
         coordinator._on_lan_dps_update({"207": 2500})
         assert coordinator.last_update_success is False
         assert coordinator.data["207"] == 2500
+
+
+class TestRotatedLocalKey:
+    """A key the cloud rotated reaches the running LAN client and the bridge config."""
+
+    def _with_key(self, make, api_key, version=3.3):
+        coordinator = make(version, api=FakeApi(local_key=api_key))
+        coordinator._local_key = "fake-old-key"
+        rewrites = []
+        coordinator._rewrite_bridge_config = rewrites.append
+        return coordinator, rewrites
+
+    def test_a_new_key_is_handed_over_and_the_bridge_config_rewritten(self, make):
+        coordinator, rewrites = self._with_key(make, "fake-new-key")
+        asyncio.run(coordinator._async_update_data())
+        assert coordinator._lan_client.keys == ["fake-new-key"]
+        assert coordinator.local_key == "fake-new-key"
+        assert rewrites == ["10.0.0.7"]
+        asyncio.run(coordinator._async_update_data())
+        assert coordinator._lan_client.keys == ["fake-new-key"]
+        assert rewrites == ["10.0.0.7"]
+
+    def test_the_same_key_changes_nothing(self, make):
+        coordinator, rewrites = self._with_key(make, "fake-old-key")
+        asyncio.run(coordinator._async_update_data())
+        assert coordinator._lan_client.keys == []
+        assert rewrites == []
+
+    def test_a_device_record_without_a_key_keeps_the_one_in_use(self, make):
+        coordinator, rewrites = self._with_key(make, None)
+        asyncio.run(coordinator._async_update_data())
+        assert coordinator.local_key == "fake-old-key"
+        assert rewrites == []

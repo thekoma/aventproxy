@@ -23,7 +23,8 @@ class FakeDevice:
     write_results: ClassVar[list] = []
 
     def __init__(self, dev_id, ip, local_key, version=3.3):
-        self.ip, self.version = ip, version
+        self.ip, self.version, self.local_key = ip, version, local_key
+        self.closed = False
         self.written: list[tuple[str, object]] = []
         self.heartbeat_result = None
         self.status_result = None
@@ -48,7 +49,7 @@ class FakeDevice:
         return FakeDevice.write_results.pop(0) if FakeDevice.write_results else None
 
     def close(self):
-        pass
+        self.closed = True
 
 
 @pytest.fixture
@@ -178,3 +179,32 @@ class TestWrites:
         client = self._connected(lan, 3.3)
         FakeDevice.write_results = [{"Error": "Timeout Waiting for Device", "Err": "902"}]
         assert asyncio.run(client.set_dps({"201": "next"})) == {"success": True}
+
+
+class TestRotatedKey:
+    def test_commands_use_the_new_key(self, lan):
+        client = make_client(lan)
+        client._ip, client._version = "10.0.0.7", 3.3
+        client.set_local_key("fake-new-key")
+        asyncio.run(client.set_dps({"138": True}))
+        assert FakeDevice.instances[-1].local_key == "fake-new-key"
+
+    def test_a_session_opened_with_the_old_key_is_dropped_once(self, lan):
+        client = make_client(lan)
+        old = client._device = FakeDevice("dev", "10.0.0.7", "key")
+        client.connected = True
+        client.set_local_key("fake-new-key")
+        client._drop_session_if_rekeyed()
+        assert old.closed
+        assert client._device is None
+        assert not client.connected
+        assert client._local_key == "fake-new-key"
+        fresh = client._device = FakeDevice("dev", "10.0.0.7", "fake-new-key")
+        client._drop_session_if_rekeyed()
+        assert client._device is fresh
+
+    def test_without_a_session_nothing_is_dropped(self, lan):
+        client = make_client(lan)
+        client.set_local_key("fake-new-key")
+        client._drop_session_if_rekeyed()
+        assert client._device is None

@@ -58,6 +58,7 @@ class TuyaLANClient:
         self._version: float | None = None
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
+        self._rekeyed = False
         self.connected: bool = False
 
     @property
@@ -78,6 +79,25 @@ class TuyaLANClient:
         on a monitor that announces 3.5 reads 3.3 here.
         """
         return self._version if self.connected else None
+
+    def set_local_key(self, local_key: str) -> None:
+        """Use a key the cloud rotated, for every connection from now on.
+
+        A session that is up was opened with the old key, so the run loop drops
+        it at its next turn and reconnects with this one. Called on the event
+        loop, like the run loop itself, so nothing else is using the socket.
+        """
+        self._local_key = local_key
+        self._rekeyed = True
+
+    def _drop_session_if_rekeyed(self) -> None:
+        """Close a session opened with a key that has since been replaced."""
+        if not self._rekeyed:
+            return
+        self._rekeyed = False
+        if self._device:
+            _LOGGER.info("Local key for %s changed, reconnecting the LAN session", self._device_id)
+            self._disconnect()
 
     async def start(self) -> None:
         self._stop_event.clear()
@@ -262,6 +282,7 @@ class TuyaLANClient:
         payload_errors = 0
 
         while not self._stop_event.is_set():
+            self._drop_session_if_rekeyed()
             if not self._device:
                 if not await self._connect():
                     failures += 1

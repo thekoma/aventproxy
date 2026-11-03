@@ -75,6 +75,8 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         self.rssi: int | None = None
         self._local_key = local_key
         self._lan_client: TuyaLANClient | None = None
+        # Rewrites the bridge config; the same callback the LAN client calls on a new address.
+        self._rewrite_bridge_config: Callable[[str], None] | None = None
         self.last_lan_dps: dict[str, Any] = {}
         self.lan_update_sequence = 0
         self._pending_lullaby: str | None = None
@@ -101,6 +103,7 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
             self._local_key = self.device_info.get("localKey")
         if not self._local_key:
             return
+        self._rewrite_bridge_config = on_address_change
         self._lan_client = TuyaLANClient(
             self.hass,
             self.camera_id,
@@ -394,6 +397,26 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         return DPS_ALARM_RECORD in (self.data or {})
 
     @callback
+    def _adopt_local_key(self, key: str | None) -> None:
+        """Take a local key the cloud rotated, for the LAN session and the bridge.
+
+        The key changes when the monitor is paired again. The LAN client kept the
+        one it was started with for the whole run, so it could not reconnect,
+        and the bridge config kept the old one too, until Home Assistant
+        restarted. The bridge config reads the cloud's key, so a rewrite is
+        enough there.
+        """
+        if not key or key == self._local_key:
+            return
+        self._local_key = key
+        if self._lan_client is None:
+            return
+        _LOGGER.info("Local key for %s changed in the cloud, handing it to the LAN session", self.camera_name)
+        self._lan_client.set_local_key(key)
+        if self._rewrite_bridge_config:
+            self._rewrite_bridge_config(self.lan_ip or "")
+
+    @callback
     def _note_cloud_poll(self, paused: bool) -> None:
         """Log when the cloud poll stops or starts again behind a LAN session."""
         if paused == self._cloud_poll_paused:
@@ -427,6 +450,7 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         try:
             device = await self.api.get_device(self.camera_id)
             self.device_info = device
+            self._adopt_local_key(device.get("localKey"))
             await self._refresh_rssi()
             api_dps = device.get("dps", {})
             # Only a SenseIQ monitor has a sleep summary; asking every other
