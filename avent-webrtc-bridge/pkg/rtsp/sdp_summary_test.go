@@ -52,3 +52,22 @@ func TestSummarizeSDPWithoutMedia(t *testing.T) {
 		t.Errorf("got %s", got)
 	}
 }
+
+// The imm description, as pkg/lan offers it and the monitor answers, with
+// fake secrets.
+func TestSummarizeIMMSDPOmitsSecrets(t *testing.T) {
+	sdp := "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE imm0\r\n" +
+		"a=msid-semantic: WMS devfakesession\r\nm=application 9 imm 6001\r\nc=IN IP4 0.0.0.0\r\n" +
+		"a=ice-ufrag:FAKEUFRAG\r\na=ice-pwd:SECRETPWD\r\na=ice-options:trickle\r\n" +
+		"a=aes-key:00112233445566778899aabbccddeeff\r\na=mid:imm0\r\na=rtpmap:6001 AES/KCP 330\r\n" +
+		"a=ssrc:0 cname:fakeuid\r\n"
+	got := summarizeSDP(sdp)
+	for _, secret := range []string{"FAKEUFRAG", "SECRETPWD", "aes-key", "0011223344", "fakeuid", "devfakesession"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("summary leaks %q: %s", secret, got)
+		}
+	}
+	if want := "application(mid=imm0 sendrecv AES/KCP)"; got != want {
+		t.Errorf("summary\n got %s\nwant %s", got, want)
+	}
+}

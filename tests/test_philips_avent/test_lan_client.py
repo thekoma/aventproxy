@@ -26,6 +26,7 @@ class FakeDevice:
         self.ip, self.version, self.local_key = ip, version, local_key
         self.closed = False
         self.written: list[tuple[str, object]] = []
+        self.nowait: list[bool] = []
         self.heartbeat_result = None
         self.status_result = None
         self.status_calls = 0
@@ -44,8 +45,9 @@ class FakeDevice:
         self.status_calls += 1
         return self.status_result
 
-    def set_value(self, key, value):
+    def set_value(self, key, value, nowait=False):
         self.written.append((key, value))
+        self.nowait.append(nowait)
         return FakeDevice.write_results.pop(0) if FakeDevice.write_results else None
 
     def receive(self):
@@ -182,6 +184,24 @@ class TestWrites:
         client = self._connected(lan, 3.3)
         FakeDevice.write_results = [{"Error": "Timeout Waiting for Device", "Err": "902"}]
         assert asyncio.run(client.set_dps({"201": "next"}, repeatable=False)) == {"success": True}
+
+    def test_a_step_is_sent_once_without_waiting_for_the_reply(self, lan):
+        # tinytuya re-sends the frame each time the reply is slower than the socket
+        # timeout, up to its retry limit, so a slow ack used to take Next twice or
+        # more (#91). Without waiting, the frame goes out exactly once.
+        client = self._connected(lan, 3.3)
+        assert asyncio.run(client.set_dps({"201": "next"}, repeatable=False)) == {"success": True}
+        assert FakeDevice.instances[-1].nowait == [True]
+
+    def test_a_step_that_never_left_still_goes_to_the_cloud(self, lan):
+        client = self._connected(lan, 3.3)
+        FakeDevice.write_results = [{"Error": "Network Error: Device Unreachable", "Err": "905"}]
+        assert asyncio.run(client.set_dps({"201": "next"}, repeatable=False)) is None
+
+    def test_an_absolute_value_still_waits_for_the_reply(self, lan):
+        client = self._connected(lan, 3.3)
+        asyncio.run(client.set_dps({"138": True}))
+        assert FakeDevice.instances[-1].nowait == [False]
 
     def test_a_late_reply_sends_an_absolute_value_again(self, lan):
         client = self._connected(lan, 3.5)

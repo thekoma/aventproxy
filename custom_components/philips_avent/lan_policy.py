@@ -35,8 +35,9 @@ LAN_ERR_KEY_OR_VERSION = "914"
 # tinytuya hands a failed write back as an error dict rather than raising.
 # 905 and 914 come from opening the socket, before anything is sent: nothing to
 # connect to, or the session key refused (3.4 and up). tinytuya can also return
-# them on a retry after a first attempt that sent and then failed, which is rare
-# enough to accept. 901 and 902 can come after the send: a connection error
+# them when a send broke off half-way and the reconnect then failed, which is
+# rare enough to accept; a step is never re-sent after a slow reply, because
+# set_dps does not wait for one. 901 and 902 can come after the send: a connection error
 # while reading the reply, or no reply at all. 904, an unreadable reply, means
 # the monitor answered, so the command landed.
 WRITE_NEVER_SENT = frozenset({LAN_ERR_OFFLINE, LAN_ERR_KEY_OR_VERSION})

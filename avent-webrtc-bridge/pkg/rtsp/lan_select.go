@@ -16,7 +16,10 @@ const (
 	// lanFirstFrameDeadline bounds a LAN attempt before the cloud takes over.
 	lanFirstFrameDeadline = 4 * time.Second
 	// lanCooldownPeriod keeps a camera whose LAN path failed on the cloud.
+	// Each further failure in a row doubles it, up to lanMaxCooldown, so a
+	// monitor whose LAN never works is not probed every 5 minutes for good.
 	lanCooldownPeriod = 5 * time.Minute
+	lanMaxCooldown    = time.Hour
 	// lanMinProtocol is the Tuya LAN protocol pkg/lan speaks. A monitor on 3.3
 	// ignores its frames, so trying would only wait out the deadline.
 	lanMinProtocol = 3.5
@@ -28,10 +31,36 @@ func (s *RTSPServer) lanCoolingDown(deviceID string) bool {
 	return time.Now().Before(s.lanCooldowns[deviceID])
 }
 
-func (s *RTSPServer) startLANCooldown(deviceID string) {
+// startLANCooldown records one more LAN failure in a row for the camera and
+// keeps it off the LAN for the period that streak earns; it returns that period.
+func (s *RTSPServer) startLANCooldown(deviceID string) time.Duration {
 	s.cooldownMutex.Lock()
 	defer s.cooldownMutex.Unlock()
-	s.lanCooldowns[deviceID] = time.Now().Add(lanCooldownPeriod)
+	if s.lanFailures == nil {
+		s.lanFailures = make(map[string]int)
+	}
+	s.lanFailures[deviceID]++
+	period := lanCooldownFor(s.lanFailures[deviceID])
+	s.lanCooldowns[deviceID] = time.Now().Add(period)
+	return period
+}
+
+// lanWorked ends the camera's cool-down and its failure streak.
+func (s *RTSPServer) lanWorked(deviceID string) {
+	s.cooldownMutex.Lock()
+	defer s.cooldownMutex.Unlock()
+	delete(s.lanCooldowns, deviceID)
+	delete(s.lanFailures, deviceID)
+}
+
+// lanCooldownFor is the cool-down after the given number of LAN failures in a
+// row: lanCooldownPeriod, doubled for each failure after the first, capped.
+func lanCooldownFor(failures int) time.Duration {
+	period := lanCooldownPeriod
+	for i := 1; i < failures && period < lanMaxCooldown; i++ {
+		period *= 2
+	}
+	return min(period, lanMaxCooldown)
 }
 
 // lanEligible says whether this stream may try the LAN, and if not, why.
@@ -106,8 +135,8 @@ func (cs *CameraStream) tryLAN(gen uint64) (done bool) {
 		core.Logger.Warn().Msgf("Streaming with LAN signalling failed for %s: %v, trying cloud signalling", cs.camera.DeviceName, err)
 		return false
 	}
-	cs.connecting.Store(false)
-	cs.active.Store(true)
+	cs.server.lanWorked(cs.camera.DeviceID)
+	cs.markActive()
 	if len(cs.clients) == 0 { // the last client left during the attempt
 		cs.scheduleShutdown()
 	}
@@ -121,13 +150,18 @@ func (cs *CameraStream) tryLAN(gen uint64) (done bool) {
 // meanwhile: src is stopped, and a restart may own attemptCancel and
 // promoteTimer now, so the caller must leave the stream alone.
 func (cs *CameraStream) runLANAttempt(src lanStreamer) (stopped bool, err error) {
+	return cs.runAttempt(src, lanFirstFrameDeadline)
+}
+
+// runAttempt is runLANAttempt with its own deadline.
+func (cs *CameraStream) runAttempt(src lanStreamer, deadline time.Duration) (stopped bool, err error) {
 	// Only stopStreamInternal cancels this while src starts.
 	stoppedCtx, stop := context.WithCancel(context.Background())
 	defer stop()
 	cs.attemptCancel = stop
 	cs.mutex.Unlock()
 
-	ctx, cancel := context.WithTimeout(stoppedCtx, lanFirstFrameDeadline)
+	ctx, cancel := context.WithTimeout(stoppedCtx, deadline)
 	err = src.Start(ctx)
 	cancel()
 
@@ -149,8 +183,8 @@ func (cs *CameraStream) lanDied(source lanStreamer, err error) {
 		cs.mutex.Unlock()
 		return
 	}
-	cs.server.startLANCooldown(cs.camera.DeviceID)
-	core.Logger.Warn().Msgf("Stream with LAN signalling for %s died: %v; using cloud signalling for %v", cs.camera.DeviceName, err, lanCooldownPeriod)
+	period := cs.server.startLANCooldown(cs.camera.DeviceID)
+	core.Logger.Warn().Msgf("Stream with LAN signalling for %s died: %v; using cloud signalling for %v", cs.camera.DeviceName, err, period)
 	clients := cs.teardownLocked()
 	cs.mutex.Unlock()
 	closeClients(clients)

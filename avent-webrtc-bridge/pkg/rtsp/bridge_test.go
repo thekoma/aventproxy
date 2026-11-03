@@ -1,6 +1,7 @@
 package rtsp
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	pion "github.com/pion/webrtc/v4"
 
 	"avent-webrtc-bridge/pkg/storage"
+	"avent-webrtc-bridge/pkg/tuya"
 )
 
 func TestHandlePeerConnectionStateChangeUnblocksSDH264(t *testing.T) {
@@ -290,4 +292,102 @@ func TestSpeakerOffChecksAudioOnce(t *testing.T) {
 			t.Fatalf("checked a session that had already ended: %q", lines)
 		}
 	})
+}
+
+// Issue #89: a start that times out says which step it was waiting for, so a
+// report's log tells a camera that never answered from a connection that
+// never came up.
+func TestStalledAtNamesTheStep(t *testing.T) {
+	for _, tc := range []struct {
+		answered bool
+		state    pion.PeerConnectionState
+		hevc     bool
+		want     string
+	}{
+		{false, pion.PeerConnectionStateNew, false, "never answered"},
+		{true, pion.PeerConnectionStateConnecting, false, "answered, but the connection"},
+		{true, pion.PeerConnectionStateConnected, true, "never confirmed the video codec"},
+	} {
+		if got := stalledAt(tc.answered, tc.state, tc.hevc); !strings.Contains(got, tc.want) {
+			t.Errorf("stalledAt(%v, %v, %v) = %q, want it to say %q", tc.answered, tc.state, tc.hevc, got, tc.want)
+		}
+	}
+
+	wb := NewWebRTCBridge(&storage.CameraInfo{DeviceName: "Nursery"}, "hd", nil, nil, nil)
+	pc, err := pion.NewPeerConnection(pion.Configuration{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	wb.peerConnection = pc // an offer sent, nothing back
+	if got := wb.stalledStep(); !strings.Contains(got, "never answered") {
+		t.Fatalf("stalledStep() = %q for a session with no answer", got)
+	}
+}
+
+// The camera client's callbacks run on the MQTT dispatch goroutine, which
+// every camera shares. A teardown can hold the bridge's lock (Stop) or the
+// stream's (handleBridgeError) for seconds while it waits for the PUBACK of
+// its own SendDisconnect, and paho processes no PUBACK while a callback
+// blocks: a callback waiting on either lock would hold every camera's
+// publishes, and fail another camera's offer. Reporting an error or a
+// disconnect must therefore not block the dispatch goroutine.
+func TestMQTTCallbacksDoNotBlockTheDispatchGoroutine(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		call func(wb *WebRTCBridge)
+	}{
+		{"disconnect", func(wb *WebRTCBridge) { wb.cameraClient.HandleDisconnect() }},
+		{"error", func(wb *WebRTCBridge) { wb.cameraClient.HandleError(errors.New("bad frame")) }},
+		{"answer that does not apply", func(wb *WebRTCBridge) {
+			wb.cameraClient.HandleAnswer(tuya.AnswerFrame{Mode: "webrtc", Sdp: "not an sdp"})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wb := NewWebRTCBridge(&storage.CameraInfo{DeviceName: "Nursery"}, "hd", nil, nil, nil)
+			pc, err := pion.NewPeerConnection(pion.Configuration{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pc.Close()
+			wb.peerConnection = pc
+			wb.mqttClient = &tuya.MQTTClient{}
+			wb.setupMQTTCameraClient(&tuya.WebRTCConfig{})
+
+			release := make(chan struct{})
+			reported := make(chan error, 1)
+			wb.SetOnError(func(err error) { // the stream's handler, waiting for its lock
+				<-release
+				reported <- err
+			})
+			wb.mutex.Lock() // a Stop waiting for its PUBACK
+			released := false
+			defer func() {
+				if !released {
+					close(release)
+					wb.mutex.Unlock()
+				}
+			}()
+
+			returned := make(chan struct{})
+			go func() {
+				tc.call(wb)
+				close(returned)
+			}()
+			select {
+			case <-returned:
+			case <-time.After(time.Second):
+				t.Fatal("the callback blocked the MQTT dispatch goroutine")
+			}
+
+			released = true
+			close(release)
+			wb.mutex.Unlock()
+			select {
+			case <-reported:
+			case <-time.After(time.Second):
+				t.Fatal("the failure was never reported")
+			}
+		})
+	}
 }

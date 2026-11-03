@@ -104,6 +104,13 @@ WEBRTC_AUDIO=$(addon_option webrtc_audio)
 if [ -n "$WEBRTC_AUDIO" ]; then
     BRIDGE_ARGS+=(--webrtc-audio "$WEBRTC_AUDIO")
 fi
+# Dev card only, like the two above: imm tries the app's own transport over
+# cloud signalling before the webrtc session. Absent elsewhere, so the bridge
+# keeps webrtc.
+CLOUD_TRANSPORT=$(addon_option cloud_transport)
+if [ -n "$CLOUD_TRANSPORT" ]; then
+    BRIDGE_ARGS+=(--cloud-transport "$CLOUD_TRANSPORT")
+fi
 
 # Supervise the bridge here rather than exiting the container when the config
 # changes. The old version killed this script and relied on the supervisor to

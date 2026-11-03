@@ -306,6 +306,9 @@ func (wb *WebRTCBridge) Start() error {
 	}
 
 	if err = wb.waiter.WaitTimeout(answerTimeout); err != nil {
+		if errors.Is(err, utils.ErrWaitTimeout) {
+			return fmt.Errorf("failed to establish connection: %w after %v: %s", err, answerTimeout, wb.stalledStep())
+		}
 		return fmt.Errorf("failed to establish connection: %v", err)
 	}
 
@@ -313,6 +316,25 @@ func (wb *WebRTCBridge) Start() error {
 	core.Logger.Info().Msgf("WebRTC bridge started successfully for camera: %s", wb.camera.DeviceName)
 
 	return nil
+}
+
+// stalledStep names what a start that timed out was waiting for (#89).
+func (wb *WebRTCBridge) stalledStep() string {
+	pc := wb.peerConnection
+	return stalledAt(pc.RemoteDescription() != nil, pc.ConnectionState(), wb.isHEVC)
+}
+
+func stalledAt(answered bool, state pion.PeerConnectionState, hevc bool) string {
+	switch {
+	case !answered:
+		return "the camera never answered the offer"
+	case state != pion.PeerConnectionStateConnected:
+		return fmt.Sprintf("the camera answered, but the connection to it never came up (%s)", state)
+	case hevc:
+		return "connected, but the camera never confirmed the video codec on the datachannel"
+	default:
+		return "connected"
+	}
 }
 
 func (wb *WebRTCBridge) Stop() {
@@ -627,7 +649,15 @@ func (wb *WebRTCBridge) setupMQTTCameraClient(webRTCConfig *tuya.WebRTCConfig) {
 	wb.controls = wb.cameraClient
 	wb.mqttClient.AddCameraClient(wb.cameraClient.SessionId, wb.cameraClient)
 
-	// Setup handlers
+	// Setup handlers. They run on the MQTT client's dispatch goroutine, which
+	// every camera shares (MQTTManager), and paho processes no PUBACK while one
+	// of them blocks. Reporting a failure takes the stream's lock
+	// (handleBridgeError) and a disconnect takes this bridge's, and a teardown
+	// can hold either for seconds while it waits for the PUBACK of its own
+	// SendDisconnect: a handler waiting on one would hold every camera's
+	// publishes and fail another camera's offer. Failures and disconnects are
+	// therefore reported on their own goroutine. The answer and the candidates
+	// are still handled here, in the order they arrive, which they need.
 	wb.answerReceived = false
 	wb.pendingCandidates = nil
 
@@ -640,12 +670,12 @@ func (wb *WebRTCBridge) setupMQTTCameraClient(webRTCConfig *tuya.WebRTCConfig) {
 		}
 
 		if err := wb.peerConnection.SetRemoteDescription(desc); err != nil {
-			wb.handleError(err)
+			go wb.handleError(err)
 			return
 		}
 
 		if err := webrtc.SetAnswer(wb.peerConnection, answer.Sdp); err != nil {
-			wb.handleError(err)
+			go wb.handleError(err)
 			return
 		}
 
@@ -688,15 +718,20 @@ func (wb *WebRTCBridge) setupMQTTCameraClient(webRTCConfig *tuya.WebRTCConfig) {
 	}
 
 	wb.cameraClient.HandleError = func(err error) {
-		wb.handleError(err)
+		go wb.handleError(err)
 	}
 
 	wb.cameraClient.HandleDisconnect = func() {
-		wb.handleError(errors.New("camera client disconnected"))
-		wb.mutex.Lock()
-		wb.connected = false
-		wb.mutex.Unlock()
+		go wb.cameraDisconnected()
 	}
+}
+
+// cameraDisconnected handles the camera ending the session.
+func (wb *WebRTCBridge) cameraDisconnected() {
+	wb.handleError(errors.New("camera client disconnected"))
+	wb.mutex.Lock()
+	wb.connected = false
+	wb.mutex.Unlock()
 }
 
 func (wb *WebRTCBridge) createAndSendOffer() error {

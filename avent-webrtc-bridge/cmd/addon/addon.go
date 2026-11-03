@@ -277,8 +277,20 @@ Example:
 		"without talkback is up (issue #72, experimental)")
 	cmd.Flags().String("webrtc-audio", rtsp.WebRTCAudioRecvonly, "Audio a cloud offer asks the camera for: "+
 		"recvonly, or none to leave it out (issue #72 experiment; RTSP clients see the same description)")
+	cmd.Flags().String("cloud-transport", rtsp.CloudTransportWebRTC, "Cloud session for streams that do not take "+
+		"the LAN: webrtc, or imm to try the app's own transport over cloud signalling first and fall back to "+
+		"webrtc (experimental)")
 	cmd.MarkFlagRequired("config")
 	return cmd
+}
+
+// cloudTransportFlag reads and checks --cloud-transport.
+func cloudTransportFlag(cmd *cobra.Command) (string, error) {
+	v, err := cmd.Flags().GetString("cloud-transport")
+	if err != nil {
+		return "", err
+	}
+	return rtsp.ParseCloudTransport(v)
 }
 
 // sessionFlags reads and checks the issue #72 knobs.
@@ -306,6 +318,10 @@ func runAddon(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid config %s: %w", cfgPath, err)
 	}
 	speakerOff, webrtcAudio, err := sessionFlags(cmd)
+	if err != nil {
+		return err
+	}
+	cloudTransport, err := cloudTransportFlag(cmd)
 	if err != nil {
 		return err
 	}
@@ -401,6 +417,7 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	server.Talkback = cfg.Talkback
 	server.SpeakerOff = speakerOff
 	server.WebRTCAudio = webrtcAudio
+	server.CloudTransport = cloudTransport
 	server.LanStreaming = lanStreamingEnabled(cfg)
 	uid, differ := lanUID(cfg.UID, client.UID)
 	if differ {
@@ -417,6 +434,10 @@ func runAddon(cmd *cobra.Command, args []string) error {
 		core.Logger.Info().Msg("Cloud sessions: audio sendrecv, speaker left to talkback")
 	} else {
 		core.Logger.Info().Msgf("Cloud sessions: audio %s, speaker off %t", webrtcAudio, speakerOff)
+	}
+	if cloudTransport == rtsp.CloudTransportIMM {
+		core.Logger.Info().Msg("Cloud transport imm (experimental): streams that do not take the LAN try imm " +
+			"over cloud signalling first, and fall back to webrtc")
 	}
 	if err := server.Start(); err != nil {
 		return fmt.Errorf("start RTSP server: %w", err)

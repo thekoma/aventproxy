@@ -67,8 +67,8 @@ DPS_APP_TALKING = "253"
 # arrive: an SCD951 owner measured a motion record pushed with the sensor firing
 # 1.3 seconds later, where the poll took 35 (#61), and an SCD973/26 pushed motion
 # and sound records within 2.4 seconds (fork 619981b). coordinator.py therefore
-# pauses the cloud poll behind a 3.4+ session, and below 3.4 keeps the fast poll
-# for monitors reporting alarms in 212.
+# pauses the cloud poll behind a 3.4+ session once the monitor has reported in
+# 212, and otherwise keeps the fast poll for monitors reporting alarms in 212.
 DPS_ALERT_EVENT = "250"
 DPS_DECIBEL_EVENT = "141"
 # Alarm record with the snapshot the camera uploaded. The SCD951 and SCD953 on

@@ -9,6 +9,7 @@ import contextlib
 import json
 import os
 import tempfile
+import time
 
 BRIDGE_CONFIG_PREFIX = "philips_avent_bridge_"
 BRIDGE_CONFIG_SUFFIX = ".json"
@@ -191,6 +192,33 @@ def previous_lan_values(text: str) -> dict[str, dict[str, str]]:
         return {}
 
 
+_TEMP_PREFIX = ".philips_avent_bridge_"
+_TEMP_SUFFIX = ".tmp"
+# A write takes milliseconds. A temporary file older than this was left by a
+# crash, not by a write still in flight in another config entry.
+_LEFTOVER_AGE_SECONDS = 60
+
+
+def _remove_leftover_temp_files(directory: str) -> None:
+    """Remove temporary bridge configs a crash left behind; best effort."""
+    cutoff = time.time() - _LEFTOVER_AGE_SECONDS
+    try:
+        with os.scandir(directory) as entries:
+            leftovers = [
+                entry.path
+                for entry in entries
+                if entry.name.startswith(_TEMP_PREFIX)
+                and entry.name.endswith(_TEMP_SUFFIX)
+                and entry.is_file(follow_symlinks=False)
+                and entry.stat(follow_symlinks=False).st_mtime < cutoff
+            ]
+    except OSError:
+        return
+    for leftover in leftovers:
+        with contextlib.suppress(OSError):
+            os.unlink(leftover)
+
+
 def write_bridge_config_file(path, config: dict) -> None:
     """Write the bridge config, readable only by the owner.
 
@@ -205,11 +233,13 @@ def write_bridge_config_file(path, config: dict) -> None:
     next setup, catch a half-written file: a changed md5 restarts the bridge
     on a config it cannot parse, and the full write then restarts it again
     (#73). The temporary name matches neither the add-on's glob nor the
-    orphan cleanup, and it is removed if the write fails.
+    orphan cleanup, and it is removed if the write fails. One a hard crash
+    left behind still holds a session, so the next write removes it.
     """
     payload = json.dumps(config, indent=2)
     directory = os.path.dirname(os.fspath(path)) or "."
-    fd, tmp = tempfile.mkstemp(prefix=".philips_avent_bridge_", suffix=".tmp", dir=directory)
+    _remove_leftover_temp_files(directory)
+    fd, tmp = tempfile.mkstemp(prefix=_TEMP_PREFIX, suffix=_TEMP_SUFFIX, dir=directory)
     try:
         with os.fdopen(fd, "w") as handle:
             if hasattr(os, "fchmod"):

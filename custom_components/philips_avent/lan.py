@@ -404,6 +404,12 @@ class TuyaLANClient:
         None when the command did not reach the monitor, so the caller can
         send it through the cloud instead; `repeatable` decides how an
         ambiguous error counts (see `lan_write_delivered`).
+
+        A command that is not repeatable (a lullaby step) goes out without
+        waiting for the reply: tinytuya sends the frame again whenever the reply
+        is slower than the socket timeout, so a slow acknowledgement used to
+        take Next twice or more (#91). A socket that never opened still comes
+        back as an error and goes to the cloud.
         """
         if not self._ip:
             return None
@@ -418,7 +424,7 @@ class TuyaLANClient:
             d.set_socketTimeout(SOCKET_TIMEOUT)
             try:
                 for key, value in dps.items():
-                    result = d.set_value(key, value)
+                    result = d.set_value(key, value, nowait=not repeatable)
                     if not lan_write_delivered(result, repeatable=repeatable):
                         return result
                 return None

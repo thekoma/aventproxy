@@ -192,7 +192,7 @@ var errPublishTimeout = errors.New("mqtt publish not acknowledged in time")
 
 func (c *MQTTCameraClient) sendMqttMessage(messageType string, protocol int, transactionID string, data interface{}) error {
 	if c.mqttClient.closed.Load() {
-		return errors.New("mqtt client is closed, send mqtt message fail")
+		return errMQTTClosed
 	}
 
 	jsonMessage, err := json.Marshal(data)
@@ -224,7 +224,18 @@ func (c *MQTTCameraClient) sendMqttMessage(messageType string, protocol int, tra
 		return err
 	}
 
-	token := c.mqttClient.mqtt.Publish(c.publishTopic, 1, false, payload)
+	return c.mqttClient.publish(c.publishTopic, messageType, payload)
+}
+
+var errMQTTClosed = errors.New("mqtt client is closed, send mqtt message fail")
+
+// publish sends one payload with QoS 1 and waits, at most publishTimeout, for
+// the broker's acknowledgement.
+func (c *MQTTClient) publish(topic, messageType string, payload []byte) error {
+	if c.closed.Load() {
+		return errMQTTClosed
+	}
+	token := c.mqtt.Publish(topic, 1, false, payload)
 	if !token.WaitTimeout(publishTimeout) {
 		core.Logger.Error().Msgf("Send mqtt %s message: no acknowledgement within %v", messageType, publishTimeout)
 		return errPublishTimeout

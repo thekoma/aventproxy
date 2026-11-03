@@ -23,6 +23,7 @@ type MQTTClient struct {
 	// is read there while streams add and remove sessions elsewhere.
 	mu      sync.RWMutex
 	cameras map[string]*MQTTCameraClient // sessionId -> camera
+	imm     map[string]*IMMSession       // sessionId -> imm session
 
 	// closed is also set by the broker's goroutine, from onDisconnect.
 	closed    atomic.Bool
@@ -130,6 +131,10 @@ func (c *MQTTClient) Stop() {
 	}
 }
 
+// UID is the account id this client subscribed with: its frames carry it as
+// "from", and the monitor answers to it.
+func (c *MQTTClient) UID() string { return c.uid }
+
 func (c *MQTTClient) IsConnected() bool {
 	return c.mqtt != nil && c.mqtt.IsConnected() && !c.closed.Load()
 }
@@ -180,6 +185,11 @@ func (c *MQTTClient) onDisconnect(client mqtt.Client, err error) {
 }
 
 func (c *MQTTClient) consume(client mqtt.Client, msg mqtt.Message) {
+	if s, ok := c.immSessionFor(msg.Payload()); ok {
+		s.deliver(msg.Payload())
+		return
+	}
+
 	var rmqtt MqttMessage
 	if err := json.Unmarshal(msg.Payload(), &rmqtt); err != nil {
 		core.Logger.Error().Err(err).Msg("Failed to unmarshal mqtt message")

@@ -101,41 +101,67 @@ func bindingResponse(req *stun.Message, from *net.UDPAddr, local iceCreds) (*stu
 	)
 }
 
-// iceConnect runs checks against the monitor until one of them is answered.
+// iceConnect runs checks against the monitor until one of them is answered,
+// and returns the candidate that answered.
+//
+// peers is asked again before every round, so candidates that trickle in
+// while the checks run are tried too; on the LAN it always returns the one
+// candidate the answer named. A response is matched to its check by
+// transaction id, so the candidate returned is the one the check went to; a
+// response that echoes no id of ours counts for the candidate it came from,
+// and one from any other address is ignored.
+//
+// A candidate that rejects its check is not checked again. The checks end at
+// once only when every candidate known has rejected, which on the LAN, with
+// its single candidate, is the first rejection, as it always was; otherwise
+// the others keep their chance, and the last rejection is what ctx's end
+// reports.
 //
 // The monitor's response is deliberately not authenticated: it omits the
 // integrity attribute, so its arrival on the pair is the only signal available.
-func iceConnect(ctx context.Context, sock *net.UDPConn, peer *net.UDPAddr, local, remote iceCreds) error {
+func iceConnect(ctx context.Context, sock *net.UDPConn, peers func() []*net.UDPAddr, local, remote iceCreds) (*net.UDPAddr, error) {
 	// The checks poll with a read deadline; leaving it set would make every
 	// later media read fail instantly.
 	defer func() { _ = sock.SetReadDeadline(time.Time{}) }()
 
 	buf := make([]byte, 2048)
+	sent := map[[stun.TransactionIDSize]byte]*net.UDPAddr{}
+	rejected := map[string]bool{}
+	var lastRejection error
 	next := time.Now()
 	for {
 		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("lan: no answer to the ICE checks: %w", err)
+			if lastRejection != nil {
+				return nil, lastRejection
+			}
+			return nil, fmt.Errorf("lan: no answer to the ICE checks: %w", err)
 		}
 		if time.Now().After(next) {
-			req, err := bindingRequest(local, remote)
-			if err != nil {
-				return err
-			}
-			if _, err := sock.WriteToUDP(req.Raw, peer); err != nil {
-				return err
+			for _, peer := range peers() {
+				if rejected[peer.String()] {
+					continue
+				}
+				req, err := bindingRequest(local, remote)
+				if err != nil {
+					return nil, err
+				}
+				if _, err := sock.WriteToUDP(req.Raw, peer); err != nil {
+					return nil, err
+				}
+				sent[req.TransactionID] = peer
 			}
 			next = time.Now().Add(iceCheckInterval)
 		}
 
 		if err := sock.SetReadDeadline(time.Now().Add(iceCheckInterval)); err != nil {
-			return err
+			return nil, err
 		}
 		n, from, err := sock.ReadFromUDP(buf)
 		if isTimeout(err) {
 			continue
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if !isSTUN(buf[:n]) {
 			continue
@@ -146,18 +172,58 @@ func iceConnect(ctx context.Context, sock *net.UDPConn, peer *net.UDPAddr, local
 		}
 		switch msg.Type.Class {
 		case stun.ClassSuccessResponse:
-			return nil
+			if peer := checked(sent, msg.TransactionID, from, peers()); peer != nil {
+				return peer, nil
+			}
 		case stun.ClassRequest:
 			if resp, err := bindingResponse(msg, from, local); err == nil {
 				_, _ = sock.WriteToUDP(resp.Raw, from)
 			}
 		case stun.ClassErrorResponse:
+			peer := checked(sent, msg.TransactionID, from, peers())
 			var code stun.ErrorCodeAttribute
-			if err := code.GetFrom(msg); err == nil {
-				return fmt.Errorf("lan: monitor rejected the ICE check: %d %s", code.Code, code.Reason)
+			if peer == nil || code.GetFrom(msg) != nil {
+				continue
+			}
+			rejected[peer.String()] = true
+			lastRejection = fmt.Errorf("lan: monitor rejected the ICE check: %d %s", code.Code, code.Reason)
+			if allRejected(peers(), rejected) {
+				return nil, lastRejection
 			}
 		}
 	}
+}
+
+// checked names the candidate a response answers: the one its transaction id
+// went to, or else the candidate it came from. The second keeps dev3's LAN
+// behaviour for a monitor that does not echo the id (RFC 5389 says it must),
+// where a response from the one candidate always counted. A response from an
+// address we never checked answers nothing.
+func checked(sent map[[stun.TransactionIDSize]byte]*net.UDPAddr, tx [stun.TransactionIDSize]byte, from *net.UDPAddr, peers []*net.UDPAddr) *net.UDPAddr {
+	if peer, ok := sent[tx]; ok {
+		return peer
+	}
+	for _, p := range peers {
+		if p.IP.Equal(from.IP) && p.Port == from.Port {
+			return p
+		}
+	}
+	return nil
+}
+
+// allRejected reports whether every candidate has rejected its check.
+func allRejected(peers []*net.UDPAddr, rejected map[string]bool) bool {
+	for _, p := range peers {
+		if !rejected[p.String()] {
+			return false
+		}
+	}
+	return true
+}
+
+// onePeer is the candidate list of a LAN session: the answer names one.
+func onePeer(peer *net.UDPAddr) func() []*net.UDPAddr {
+	return func() []*net.UDPAddr { return []*net.UDPAddr{peer} }
 }
 
 // isTimeout reports a read deadline passing, as opposed to a failed

@@ -74,6 +74,7 @@ func (cs *CameraStream) promote() {
 		cs.mutex.Unlock()
 		return
 	}
+	cs.server.lanWorked(cs.camera.DeviceID)
 	core.Logger.Info().Msgf("%v for %s, moving viewers", errLANAvailable, cs.camera.DeviceName)
 	clients := cs.teardownLocked()
 	cs.mutex.Unlock()
