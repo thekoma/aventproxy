@@ -10,8 +10,12 @@ from datetime import datetime
 
 _LOGGER = logging.getLogger(__name__)
 
-STAGE_NAMES = {"a": "awake", "l": "light", "d": "deep"}
-SLEEP_STAGES = ("awake", "light", "deep")
+# Stage codes in DPS 4. `o` is out of bed, and `i` is what an SCD973 showed for
+# the first three to four minutes of a session before filing that stretch as
+# `o`: the monitor settling on a reading (fork e6c864a). Unmapped, both made the
+# stage read None and dropped their seconds from the history.
+STAGE_NAMES = {"a": "awake", "l": "light", "d": "deep", "o": "out", "i": "settling"}
+SLEEP_STAGES = ("awake", "light", "deep", "out", "settling")
 
 # If st + sd has not moved for this long, DPS 4 is considered to be the
 # persisted last session rather than a live session.

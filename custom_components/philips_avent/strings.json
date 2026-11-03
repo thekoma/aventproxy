@@ -97,7 +97,9 @@
         "state": {
           "awake": "Awake",
           "light": "Light sleep",
-          "deep": "Deep sleep"
+          "deep": "Deep sleep",
+          "out": "Out of bed",
+          "settling": "Settling"
         }
       },
       "device_errors": {

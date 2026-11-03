@@ -87,7 +87,7 @@ def test_sleep_session_rejects_negative_durations():
     assert s["duration_seconds"] is None
     assert s["current_stage_seconds"] is None
     assert s["stages"] == [{"stage": "light", "seconds": 100}, {"stage": "awake", "seconds": 50}]
-    assert s["totals_seconds"] == {"awake": 50, "light": 100, "deep": 0}
+    assert s["totals_seconds"] == {"awake": 50, "light": 100, "deep": 0, "out": 0, "settling": 0}
 
 
 def test_session_end_and_active():
@@ -166,3 +166,23 @@ class TestStatusStaleness:
     def test_window_is_configurable(self):
         assert senseiq.status_is_stale(True, last_status_push=0.0, now=11.0, stale_after=10)
 
+
+
+def test_out_of_bed_and_settling_stages_are_named():
+    # Seen on an SCD973 in the fork (e6c864a): `i` for the first minutes of a
+    # session, later filed as `o`, out of bed. Unmapped, the stage read None.
+    s = senseiq.decode_sleep_session('{"st":1789409794,"sd":400,"css":"i","cssd":100,"ssd":[{"o":180},{"l":120}]}')
+    assert s["current_stage"] == "settling"
+    assert s["stages"] == [{"stage": "out", "seconds": 180}, {"stage": "light", "seconds": 120}]
+    assert s["totals_seconds"]["out"] == 180
+    assert sum(seg["seconds"] for seg in s["stages"]) + s["current_stage_seconds"] == s["duration_seconds"]
+
+
+def test_every_stage_has_a_translated_state():
+    import json
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent.parent / "custom_components" / "philips_avent"
+    for path in (root / "strings.json", *sorted((root / "translations").glob("*.json"))):
+        states = json.loads(path.read_text())["entity"]["sensor"]["sleep_stage"]["state"]
+        assert set(states) == set(senseiq.SLEEP_STAGES), path.name

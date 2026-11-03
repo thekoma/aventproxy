@@ -95,7 +95,9 @@
         "state": {
           "awake": "Éveillé",
           "light": "Sommeil léger",
-          "deep": "Sommeil profond"
+          "deep": "Sommeil profond",
+          "out": "Hors du lit",
+          "settling": "Initialisation"
         }
       },
       "device_errors": {
