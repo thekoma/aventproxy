@@ -81,6 +81,10 @@ type RTPClient struct {
 	backAudioRTPChannel byte
 
 	lastActivity time.Time
+
+	// failing is set while sends to this client fail with an error that is
+	// not a dead client's, so that streak is logged once, not per packet.
+	failing bool
 }
 
 func NewRTPForwarder() *RTPForwarder {
@@ -317,10 +321,17 @@ func (rf *RTPForwarder) forward(data []byte, video bool) {
 		if err := rf.send(client, video, data); err != nil {
 			if isDeadClientError(err) {
 				dead = append(dead, sessionID)
-			} else {
-				core.Logger.Error().Err(err).Msgf("Error forwarding %s packet to client %s", track, sessionID)
+			} else if !client.failing {
+				// A remote client off the network (EHOSTUNREACH, ENETUNREACH)
+				// fails every packet until it comes back or its session ends.
+				client.failing = true
+				core.Logger.Warn().Err(err).Msgf("Cannot send %s to client %s, not logging again until it recovers", track, sessionID)
 			}
 			continue
+		}
+		if client.failing {
+			client.failing = false
+			core.Logger.Info().Msgf("Sending to client %s again", sessionID)
 		}
 		if video && rf.firstVideoPacket {
 			rf.firstVideoPacket = false

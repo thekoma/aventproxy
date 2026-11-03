@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"syscall"
 	"testing"
 	"time"
 
@@ -355,5 +356,45 @@ func TestParameterSetsCachedWithoutClients(t *testing.T) {
 		if got[i].Payload[0]&0x1f != want {
 			t.Errorf("packet %d is NAL type %d, want %d", i, got[i].Payload[0]&0x1f, want)
 		}
+	}
+}
+
+// flakyConn fails its first `fail` writes with an error that is not a dead
+// client's, like EHOSTUNREACH from a phone that left the Wi-Fi for a moment.
+type flakyConn struct {
+	net.Conn
+	fail int
+}
+
+func (c *flakyConn) Write(b []byte) (int, error) {
+	if c.fail > 0 {
+		c.fail--
+		return 0, syscall.EHOSTUNREACH
+	}
+	return len(b), nil
+}
+
+func (c *flakyConn) SetWriteDeadline(time.Time) error { return nil }
+
+// A client that cannot be reached for a while is not dropped, but it must not
+// log an ERROR for every packet either (100-150 a second): once when it
+// starts failing, once when it recovers.
+func TestUnreachableClientLogsOnce(t *testing.T) {
+	session := fmt.Sprintf("flaky-%d", time.Now().UnixNano())
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	rf := NewRTPForwarder()
+	if err := rf.AddTCPClient(session, &flakyConn{Conn: a, fail: 50}, 0, 2, 4); err != nil {
+		t.Fatal(err)
+	}
+	for range 60 {
+		rf.ForwardAudioPacket(&rtp.Packet{Header: rtp.Header{PayloadType: 0}, Payload: make([]byte, 160)})
+	}
+	if n := rf.GetClientCount(); n != 1 {
+		t.Fatalf("an unreachable client was dropped (%d clients)", n)
+	}
+	if lines := testLog.lines(session); len(lines) != 2 {
+		t.Fatalf("want one line when %s starts failing and one when it recovers, got %d: %q", session, len(lines), lines)
 	}
 }
