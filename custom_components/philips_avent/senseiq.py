@@ -152,6 +152,25 @@ def status_is_stale(
     return now - last_status_push > stale_after
 
 
+# The DPS 3 ``r`` flag while the baby moves in the SenseIQ zone (fork e6c864a,
+# SCD973): ``b`` is lying still with a breathing rate measured, ``o`` out of bed.
+STATE_MOVING = "m"
+
+
+def is_baby_moving(raw: object) -> bool | None:
+    """Whether SenseIQ currently sees the baby moving, from DPS 3.
+
+    None when there is no SenseIQ status to read, like `is_baby_present`.
+    """
+    status = decode_status(raw)
+    if status is None:
+        return None
+    state = status.get("state")
+    if not isinstance(state, str) or not state:
+        return None
+    return state == STATE_MOVING
+
+
 def is_baby_present(raw: object) -> bool | None:
     """Whether SenseIQ currently sees the baby, from DPS 3.
 

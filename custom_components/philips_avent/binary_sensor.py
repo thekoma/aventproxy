@@ -52,8 +52,8 @@ async def async_setup_entry(
             AventSoundDetected(coordinator, cam_id),
         ])
         add_entities_when_ready(coordinator, async_add_entities, [
-            # SenseIQ presence, from the live status (DPS 3).
-            (dps_present(DPS_SENSEIQ_STATUS), partial(_one, AventBabyDetected, coordinator, cam_id)),
+            # SenseIQ presence and movement, from the live status (DPS 3).
+            (dps_present(DPS_SENSEIQ_STATUS), partial(_two, AventBabyDetected, AventBabyMoving, coordinator, cam_id)),
             # Dedicated crying alert, on monitors advertising cry detection (DPS 12).
             (dps_present(DPS_CRY_DET_SWITCH), partial(_one, AventCryDetected, coordinator, cam_id)),
         ], entry.async_on_unload)
@@ -62,6 +62,10 @@ async def async_setup_entry(
 
 def _one(cls, coordinator: PhilipsAventCoordinator, cam_id: str) -> list:
     return [cls(coordinator, cam_id)]
+
+
+def _two(first, second, coordinator: PhilipsAventCoordinator, cam_id: str) -> list:
+    return [first(coordinator, cam_id), second(coordinator, cam_id)]
 
 
 class AventLullabyPlaying(CoordinatorEntity, BinarySensorEntity):
@@ -202,6 +206,34 @@ class AventBabyDetected(CoordinatorEntity, BinarySensorEntity):
         if present and self.coordinator.senseiq_status_stale:
             return False
         return present
+
+
+class AventBabyMoving(CoordinatorEntity, BinarySensorEntity):
+    """Whether SenseIQ currently sees the baby moving in the crib.
+
+    The live ``r`` flag in DPS 3, without the latch the motion alert has: it
+    follows the monitor's own reading, which arrives every few seconds over the
+    LAN while the baby is in the SenseIQ zone (fork e6c864a).
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "baby_moving"
+    _attr_icon = "mdi:baby"
+    _attr_device_class = BinarySensorDeviceClass.MOVING
+
+    def __init__(self, coordinator: PhilipsAventCoordinator, cam_id: str):
+        super().__init__(coordinator)
+        self._cam_id = cam_id
+        self._attr_unique_id = f"{cam_id}_baby_moving"
+        self._attr_device_info = build_device_info(coordinator, cam_id)
+
+    @property
+    def is_on(self) -> bool | None:
+        moving = senseiq.is_baby_moving((self.coordinator.data or {}).get(DPS_SENSEIQ_STATUS))
+        # Past the staleness window the pushes have stopped because the baby has left.
+        if moving and self.coordinator.senseiq_status_stale:
+            return False
+        return moving
 
 
 class AventSoundDetected(CoordinatorEntity, BinarySensorEntity):

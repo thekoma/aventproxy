@@ -134,6 +134,9 @@
       "baby_detected": {
         "name": "Bébé détecté"
       },
+      "baby_moving": {
+        "name": "Bébé en mouvement"
+      },
       "crying_detected": {
         "name": "Pleurs détectés"
       }

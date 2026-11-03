@@ -76,6 +76,17 @@ def test_is_baby_present():
     assert senseiq.is_baby_present('{"foo":1}') is None
 
 
+def test_is_baby_moving():
+    assert senseiq.is_baby_moving('{"r":"m","br":0}') is True
+    assert senseiq.is_baby_moving('{"r":"b","br":21}') is False
+    # Out of bed is not moving; the Baby Detected sensor says it is empty.
+    assert senseiq.is_baby_moving('{"r":"o","br":0}') is False
+    # No SenseIQ status, or no flag in it -> unknown.
+    assert senseiq.is_baby_moving(None) is None
+    assert senseiq.is_baby_moving("") is None
+    assert senseiq.is_baby_moving('{"br":0}') is None
+
+
 def test_sleep_session_rejects_negative_durations():
     # A malformed negative duration must not become a reading, and a negative
     # stage segment is dropped rather than skewing the totals.

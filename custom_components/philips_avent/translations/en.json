@@ -134,6 +134,9 @@
       "baby_detected": {
         "name": "Baby Detected"
       },
+      "baby_moving": {
+        "name": "Baby Moving"
+      },
       "crying_detected": {
         "name": "Crying Detected"
       }
