@@ -50,6 +50,31 @@ func (s *IMMSession) Close() {
 	}
 }
 
+// immSessionFor finds the imm session a message is for by its session id
+// alone, before anything decodes it strictly: an imm frame reaches the
+// session's own lenient parser even if a field the webrtc envelope types
+// (seq, rtx, t) comes in another form. Nothing is decoded here while no imm
+// session is open, so the webrtc path is as it was.
+func (c *MQTTClient) immSessionFor(payload []byte) (*IMMSession, bool) {
+	c.mu.RLock()
+	open := len(c.imm) > 0
+	c.mu.RUnlock()
+	if !open {
+		return nil, false
+	}
+	var probe struct {
+		Data struct {
+			Header struct {
+				SessionID string `json:"sessionid"`
+			} `json:"header"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(payload, &probe) != nil {
+		return nil, false
+	}
+	return c.immSession(probe.Data.Header.SessionID)
+}
+
 func (c *MQTTClient) immSession(sessionID string) (*IMMSession, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

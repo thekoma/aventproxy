@@ -147,3 +147,43 @@ func TestRTCConfigCarriesThePassword(t *testing.T) {
 		t.Errorf("config = %+v", cfg)
 	}
 }
+
+// M7: an imm frame whose envelope the webrtc decoder would refuse (a string
+// seq, a string t) still reaches its session.
+func TestIMMSessionGetsAFrameTheStrictDecoderRefuses(t *testing.T) {
+	c := &MQTTClient{}
+	var got []json.RawMessage
+	var mu sync.Mutex
+	s := c.OpenIMMSession("m", "d", "sess-1", func(data json.RawMessage) {
+		mu.Lock()
+		got = append(got, data)
+		mu.Unlock()
+	})
+	defer s.Close()
+	odd := []byte(`{"protocol":302,"pv":"2.2","t":"1","data":{"header":{"type":"answer","sessionid":"sess-1","seq":"0","rtx":"0"},"msg":{"sdp":"v=0"}}}`)
+	var strict MqttMessage
+	if json.Unmarshal(odd, &strict) == nil {
+		t.Fatal("the fixture must be one the strict decoder refuses")
+	}
+	c.consume(nil, fakeMessage{payload: odd})
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 {
+		t.Fatalf("delivered %d frames, want the one", len(got))
+	}
+}
+
+// With no imm session open, consume does what it always did: a camera
+// client's frames still route, and a frame the strict decoder refuses is
+// dropped.
+func TestConsumeWithoutIMMIsUnchanged(t *testing.T) {
+	c := &MQTTClient{}
+	var answers int
+	cam := &MQTTCameraClient{SessionId: "web-1", HandleAnswer: func(AnswerFrame) { answers++ }}
+	c.AddCameraClient("web-1", cam)
+	c.consume(nil, fakeMessage{payload: []byte(`{"protocol":302,"data":{"header":{"type":"answer","sessionid":"web-1"},"msg":{"mode":"webrtc","sdp":"v=0"}}}`)})
+	c.consume(nil, fakeMessage{payload: []byte(`{"protocol":302,"t":"1","data":{"header":{"type":"answer","sessionid":"web-1","seq":"0"},"msg":{"sdp":"v=0"}}}`)})
+	if answers != 1 {
+		t.Fatalf("answers = %d, want the well-formed one only", answers)
+	}
+}

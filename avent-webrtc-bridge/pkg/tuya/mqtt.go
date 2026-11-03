@@ -185,6 +185,11 @@ func (c *MQTTClient) onDisconnect(client mqtt.Client, err error) {
 }
 
 func (c *MQTTClient) consume(client mqtt.Client, msg mqtt.Message) {
+	if s, ok := c.immSessionFor(msg.Payload()); ok {
+		s.deliver(msg.Payload())
+		return
+	}
+
 	var rmqtt MqttMessage
 	if err := json.Unmarshal(msg.Payload(), &rmqtt); err != nil {
 		core.Logger.Error().Err(err).Msg("Failed to unmarshal mqtt message")
@@ -192,10 +197,6 @@ func (c *MQTTClient) consume(client mqtt.Client, msg mqtt.Message) {
 	}
 
 	sessionId := rmqtt.Data.Header.SessionID
-	if s, ok := c.immSession(sessionId); ok {
-		s.deliver(msg.Payload())
-		return
-	}
 	cameraClient, ok := c.cameraClient(sessionId)
 	if !ok {
 		core.Logger.Warn().Msgf("No camera client found for sessionId: %s", sessionId)
