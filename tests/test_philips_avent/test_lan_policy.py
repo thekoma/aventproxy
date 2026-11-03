@@ -118,7 +118,7 @@ class TestShouldReconnect:
 class TestProtocolVersion:
     """Which local protocol version to speak (#51, #62).
 
-    The SCD953 announces 3.5 in its discovery broadcast while the client always
+    The SCD973/26 announces 3.5 in its discovery broadcast while the client always
     built a 3.3 session, and a session at the wrong version cannot read the
     frames the camera sends.
     """

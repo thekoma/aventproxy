@@ -113,8 +113,8 @@ def reconnect_delay(consecutive_failures: int, delay: float = RECONNECT_DELAY) -
     return delay
 
 # Protocol version for the local Tuya session. 3.3 is what the integration has
-# always used and what every model connects with today. The SCD953 announces 3.5
-# in its discovery broadcast (capture on #51), and a session negotiated at the
+# always used, and what an SCD973 on firmware 1.4.0 speaks. An SCD973/26 announces
+# 3.5 in its discovery broadcast (capture on #51), and a session negotiated at the
 # wrong version cannot read frames the camera sends, which is the likely source
 # of the "Unexpected Payload from Device" frames on #62. Try what the camera
 # announces, keep 3.3 as the fallback so local control cannot regress.

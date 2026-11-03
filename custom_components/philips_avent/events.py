@@ -13,6 +13,10 @@ stayed off on several models while the Philips app got the notification (issues
   (from the diagnostics on #61). Its noise alert uses the same shape with
   `cmd: ipc_bang` (from the diagnostics on #42).
 
+Which of the two a monitor uses follows its firmware rather than its model: an
+SCD973/26 reported every alarm in DPS 212 and left 250 and 141 empty (fork
+619981b). Both paths are read on every monitor.
+
 DPS 212 carries its own timestamp, which makes it usable on the cloud poll as
 well: the value sticks around in device state, so freshness comes from the
 timestamp rather than from having seen the push arrive.
