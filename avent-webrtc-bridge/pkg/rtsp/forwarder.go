@@ -259,8 +259,13 @@ func (rf *RTPForwarder) RemoveClient(sessionID string) {
 }
 
 // tcpWriteTimeout bounds one interleaved write. Packets go to every client in
-// turn, so a client that stops reading would otherwise stall all of them.
-var tcpWriteTimeout = 2 * time.Second
+// turn with the forwarder locked, so a client that stops reading would
+// otherwise stall all of them, and the LAN source with them. The bound is the
+// trade-off: a stalled viewer can still hold the others up for this long
+// before it is dropped, while a shorter one drops viewers on a busy host for
+// a hiccup (a dropped Frigate ffmpeg is a recording gap). go2rtc gives up on
+// a silent source after 5 s, which is as long as this can afford to be.
+var tcpWriteTimeout = 5 * time.Second
 
 // isDeadClientError reports whether a client is gone for good rather than hit
 // by a transient failure worth logging. A UDP client that closed its socket
