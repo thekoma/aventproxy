@@ -18,6 +18,7 @@ type recChannel struct {
 	published []string // frame types, in order
 	closed    bool
 	onFrame   func(json.RawMessage)
+	slow      time.Duration // each publish takes this long
 }
 
 func (c *recChannel) Publish(frame any) error {
@@ -33,7 +34,9 @@ func (c *recChannel) Publish(frame any) error {
 	}
 	c.mu.Lock()
 	c.published = append(c.published, typ)
+	slow := c.slow
 	c.mu.Unlock()
+	time.Sleep(slow)
 	return nil
 }
 
@@ -344,6 +347,29 @@ func TestMotoAnswerDuringTheDialDropsTheChannel(t *testing.T) {
 	}
 	if f := nextFrame(t, r.frames); f.Header.Type != lan.TypeAnswer {
 		t.Fatalf("frame = %+v", f)
+	}
+	_ = r.sig.Close()
+}
+
+// M6: teardown sends the disconnect with the stream's lock held; a device
+// channel that does not take it holds that lock for no more than about 1 s,
+// and the moto still gets it.
+func TestDisconnectIsBoundedOnTheDeviceChannel(t *testing.T) {
+	r := newSignalRig(t, true)
+	r.offer(t)
+	r.waitDial(t)
+	r.dev.mu.Lock()
+	r.dev.slow = 3 * time.Second
+	r.dev.mu.Unlock()
+	start := time.Now()
+	if err := r.sig.Send(lan.DisconnectFrame{Header: lan.SignalHeader{Type: lan.TypeDisconnect}}); err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > immDeviceDisconnectWait+500*time.Millisecond {
+		t.Fatalf("the disconnect took %v, want about %v at most", took, immDeviceDisconnectWait)
+	}
+	if m := r.moto.log(); m[len(m)-1] != "disconnect" {
+		t.Fatalf("moto got %v, want the disconnect", m)
 	}
 	_ = r.sig.Close()
 }

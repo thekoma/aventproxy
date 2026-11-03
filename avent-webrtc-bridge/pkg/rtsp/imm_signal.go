@@ -33,6 +33,13 @@ import (
 // one for the answer, and the rest for ICE and the login.
 const immMotoAnswerWait = 3 * time.Second
 
+// immDeviceDisconnectWait bounds the device channel's part of an imm
+// session's disconnect. Teardown sends it with the stream's lock held; the
+// moto's part is bounded like the webrtc session's SendDisconnect
+// (tuya.publishTimeout), and the two run side by side, so the lock is held
+// no longer than for a webrtc session.
+const immDeviceDisconnectWait = time.Second
+
 // The routes, as the log names them.
 const (
 	viaMoto   = "moto"
@@ -94,6 +101,9 @@ func (m *mqttSignaller) Send(frame any) error {
 	ch, dev := m.ch, m.dev
 	m.mu.Unlock()
 
+	if _, isDisconnect := frame.(lan.DisconnectFrame); isDisconnect && dev != nil {
+		return m.sendDisconnect(ch, dev, frame)
+	}
 	err := ch.Publish(frame)
 	if dev != nil {
 		m.devMu.Lock()
@@ -103,6 +113,37 @@ func (m *mqttSignaller) Send(frame any) error {
 		m.devMu.Unlock()
 	}
 	return err
+}
+
+// sendDisconnect ends the session on both routes at once: the moto as the
+// webrtc session does, the device channel within immDeviceDisconnectWait.
+func (m *mqttSignaller) sendDisconnect(ch, dev immChannel, frame any) error {
+	deadline := time.Now().Add(immDeviceDisconnectWait)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		m.devMu.Lock()
+		defer m.devMu.Unlock()
+		if err := publishWithin(dev, frame, immDeviceDisconnectWait); err != nil {
+			core.Logger.Debug().Err(err).Msgf("imm disconnect for %s not sent on the device channel", m.deviceName)
+		}
+	}()
+	err := ch.Publish(frame)
+	select {
+	case <-done:
+	case <-time.After(time.Until(deadline)):
+	}
+	return err
+}
+
+// publishWithin bounds a device-channel publish where the channel allows it.
+func publishWithin(ch immChannel, frame any, wait time.Duration) error {
+	if b, ok := ch.(interface {
+		PublishWithin(any, time.Duration) error
+	}); ok {
+		return b.PublishWithin(frame, wait)
+	}
+	return ch.Publish(frame)
 }
 
 // escalate opens the device channel when the moto has not answered, and
