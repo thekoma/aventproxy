@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -16,9 +18,15 @@ type MQTTClient struct {
 	mqtt           mqtt.Client
 	uid            string
 	subscribeTopic string
-	cameras        map[string]*MQTTCameraClient // sessionId -> camera
-	closed         bool
-	Connected      utils.Waiter
+
+	// The broker delivers messages on its own goroutine, so the session map
+	// is read there while streams add and remove sessions elsewhere.
+	mu      sync.RWMutex
+	cameras map[string]*MQTTCameraClient // sessionId -> camera
+
+	// closed is also set by the broker's goroutine, from onDisconnect.
+	closed    atomic.Bool
+	Connected utils.Waiter
 }
 
 type MqttFrameHeader struct {
@@ -118,15 +126,17 @@ func NewMobileMqttClient(config *MobileMQTTConfig) (*MQTTClient, error) {
 func (c *MQTTClient) Stop() {
 	if c.mqtt != nil {
 		c.mqtt.Disconnect(250)
-		c.closed = true
+		c.closed.Store(true)
 	}
 }
 
 func (c *MQTTClient) IsConnected() bool {
-	return c.mqtt != nil && c.mqtt.IsConnected() && !c.closed
+	return c.mqtt != nil && c.mqtt.IsConnected() && !c.closed.Load()
 }
 
 func (c *MQTTClient) AddCameraClient(sessionId string, cameraClient *MQTTCameraClient) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.cameras == nil {
 		c.cameras = make(map[string]*MQTTCameraClient)
 	}
@@ -134,10 +144,16 @@ func (c *MQTTClient) AddCameraClient(sessionId string, cameraClient *MQTTCameraC
 }
 
 func (c *MQTTClient) RemoveCameraClient(sessionId string) {
-	if c.cameras == nil {
-		return
-	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	delete(c.cameras, sessionId)
+}
+
+func (c *MQTTClient) cameraClient(sessionId string) (*MQTTCameraClient, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	cameraClient, ok := c.cameras[sessionId]
+	return cameraClient, ok
 }
 
 func (c *MQTTClient) onConnect(client mqtt.Client) {
@@ -160,18 +176,18 @@ func (c *MQTTClient) onDisconnect(client mqtt.Client, err error) {
 		c.Connected.Done(errors.New("mqtt client disconnected"))
 	}
 
-	c.closed = true
+	c.closed.Store(true)
 }
 
 func (c *MQTTClient) consume(client mqtt.Client, msg mqtt.Message) {
 	var rmqtt MqttMessage
 	if err := json.Unmarshal(msg.Payload(), &rmqtt); err != nil {
-		core.Logger.Error().Err(err).Msg("Failed to unmarshal mqtt message: %s")
+		core.Logger.Error().Err(err).Msg("Failed to unmarshal mqtt message")
 		return
 	}
 
 	sessionId := rmqtt.Data.Header.SessionID
-	cameraClient, ok := c.cameras[sessionId]
+	cameraClient, ok := c.cameraClient(sessionId)
 	if !ok {
 		core.Logger.Warn().Msgf("No camera client found for sessionId: %s", sessionId)
 		return

@@ -87,3 +87,16 @@ func TestCorrectSPSLevelNeverRaisesOrTouchesOthers(t *testing.T) {
 		t.Error("a too-short SPS must pass through")
 	}
 }
+
+func TestSplitNALKeepsAggregatesWhole(t *testing.T) {
+	// STAP-A, STAP-B, MTAP16 and MTAP24 (24-27) already hold whole NALs;
+	// fragmenting one would wrap an aggregate in an FU-A, which no decoder reads.
+	p := &codecs.H264Payloader{}
+	for nalType := byte(24); nalType <= 27; nalType++ {
+		agg := make([]byte, 2000)
+		agg[0] = 0x60 | nalType
+		if out := splitNAL(agg, p); len(out) != 1 || len(out[0]) != 2000 {
+			t.Errorf("type %d must come back as one piece, got %d pieces", nalType, len(out))
+		}
+	}
+}

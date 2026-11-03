@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"avent-webrtc-bridge/pkg/storage"
+
+	"github.com/pion/rtp"
 )
 
 // fakeLAN is a lanStreamer whose Start runs start, or succeeds when start is nil.
@@ -63,6 +65,7 @@ type attempts struct {
 	cloudStarted atomic.Int32
 	lanFwd       *RTPForwarder // the forwarder the LAN source was built on
 	cloudFwd     *RTPForwarder // the forwarder the cloud attempt ran on
+	cloudBridge  *WebRTCBridge // the bridge the cloud attempt ran on
 }
 
 func fakeAttempts(t *testing.T, cs *CameraStream, lanStart func(context.Context) error) *attempts {
@@ -73,11 +76,12 @@ func fakeAttempts(t *testing.T, cs *CameraStream, lanStart func(context.Context)
 		return a.lan
 	}
 	cs.cloudStart = func() error {
-		if cs.webrtcBridge.OnError == nil {
+		if cs.webrtcBridge.errorHandler() == nil {
 			t.Error("cloud attempt on a bridge with no error handler")
 		}
 		a.cloudStarted.Add(1)
 		a.cloudFwd = cs.webrtcBridge.rtpForwarder
+		a.cloudBridge = cs.webrtcBridge
 		return nil
 	}
 	return a
@@ -111,15 +115,15 @@ func newLANStream(t *testing.T, server *RTSPServer, resolution string) (*CameraS
 // begin runs startStream as AddClient does, in the caller's goroutine.
 func begin(cs *CameraStream) {
 	cs.mutex.Lock()
-	cs.connecting = true
+	gen := cs.claimStart()
 	cs.mutex.Unlock()
-	cs.startStream()
+	cs.startStream(gen)
 }
 
 func streamState(cs *CameraStream) (active, connecting bool, lan lanStreamer) {
 	cs.mutex.RLock()
 	defer cs.mutex.RUnlock()
-	return cs.active, cs.connecting, cs.lan
+	return cs.active.Load(), cs.connecting.Load(), cs.lan
 }
 
 func TestLANSuccessSkipsCloud(t *testing.T) {
@@ -152,7 +156,7 @@ func TestLANFailureFallsBackToCloud(t *testing.T) {
 	server := newLANServer()
 	cs, _ := newLANStream(t, server, "hd")
 	cs.bridgeStarted = true // a reused stream: the LAN attempt needs a fresh bridge
-	original := cs.webrtcBridge.rtpForwarder
+	original := cs.webrtcBridge
 	a := fakeAttempts(t, cs, func(context.Context) error {
 		return fmt.Errorf("%w: %w", errNoFirstFrame, context.DeadlineExceeded)
 	})
@@ -172,11 +176,11 @@ func TestLANFailureFallsBackToCloud(t *testing.T) {
 	if !a.lan.isStopped() {
 		t.Fatal("a failed LAN source must be stopped")
 	}
-	if a.lanFwd == original {
-		t.Fatal("the LAN attempt ran on the forwarder of a bridge that had already run")
+	if a.cloudBridge == original {
+		t.Fatal("the cloud fallback ran on a bridge that had already run")
 	}
-	if a.cloudFwd != a.lanFwd {
-		t.Fatal("the cloud fallback must reuse the forwarder clients set up on during the LAN attempt")
+	if a.lanFwd != cs.forwarder || a.cloudFwd != cs.forwarder {
+		t.Fatal("both attempts must feed the stream's forwarder, where clients set up during the LAN attempt are")
 	}
 }
 
@@ -390,7 +394,7 @@ func TestClientLeavingDuringLANAttemptSchedulesShutdown(t *testing.T) {
 
 	cs.mutex.RLock()
 	defer cs.mutex.RUnlock()
-	if !cs.active || cs.lan == nil {
+	if !cs.active.Load() || cs.lan == nil {
 		t.Fatal("expected the stream on the LAN")
 	}
 	if cs.shutdownTimer == nil {
@@ -450,5 +454,47 @@ func TestCloudFailureEndsTheCooldown(t *testing.T) {
 				t.Fatalf("cooling down = %v, want %v", cooling, !tc.cleared)
 			}
 		})
+	}
+}
+
+// The cloud fallback starts a new source on the forwarder the failed LAN
+// attempt fed: that attempt's parameter sets must not carry over, while the
+// clocks keep running, since clients that set up during the attempt stay
+// attached and must never see timestamps go back.
+func TestFallbackForgetsTheLANAttemptsMedia(t *testing.T) {
+	server := newLANServer()
+	cs, _ := newLANStream(t, server, "hd")
+	lanVideo := &rtp.Packet{Payload: []byte{0x67, 0x42}} // an SPS, then nothing
+	lanAudio := &rtp.Packet{Header: rtp.Header{PayloadType: 0}, Payload: make([]byte, 160)}
+	var a *attempts
+	a = fakeAttempts(t, cs, func(context.Context) error {
+		a.lanFwd.ForwardVideoPacket(lanVideo)
+		a.lanFwd.ForwardAudioPacket(lanAudio)
+		time.Sleep(50 * time.Millisecond) // the attempt runs a while before it gives up
+		return fmt.Errorf("%w: %w", errNoFirstFrame, context.DeadlineExceeded)
+	})
+	t.Cleanup(cs.stopStream)
+
+	begin(cs)
+
+	if a.cloudStarted.Load() != 1 {
+		t.Fatal("the cloud did not take over")
+	}
+	cs.forwarder.mutex.RLock()
+	sps := cs.forwarder.spsPacket
+	cs.forwarder.mutex.RUnlock()
+	if sps != nil {
+		t.Fatal("the cloud stream inherited the failed LAN attempt's SPS")
+	}
+
+	cloudVideo := &rtp.Packet{Header: rtp.Header{Marker: true}, Payload: []byte{0x65, 0x88}}
+	cloudAudio := &rtp.Packet{Header: rtp.Header{PayloadType: 0}, Payload: make([]byte, 160)}
+	cs.forwarder.ForwardVideoPacket(cloudVideo)
+	cs.forwarder.ForwardAudioPacket(cloudAudio)
+	if int32(cloudVideo.Timestamp-lanVideo.Timestamp) <= 0 {
+		t.Errorf("video went back from %d to %d at the fallback", lanVideo.Timestamp, cloudVideo.Timestamp)
+	}
+	if int32(cloudAudio.Timestamp-lanAudio.Timestamp) <= 0 {
+		t.Errorf("audio went back from %d to %d at the fallback", lanAudio.Timestamp, cloudAudio.Timestamp)
 	}
 }

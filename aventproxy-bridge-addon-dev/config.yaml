@@ -14,8 +14,12 @@ apparmor: true
 options:
   cameras: []
   rtsp_bind_address: "localhost"
+  speaker_off: true
+  webrtc_audio: "recvonly"
 schema:
   rtsp_bind_address: str?
+  speaker_off: bool?
+  webrtc_audio: list(recvonly|none)?
   signing_key: str?
   sid: str?
   ecode: str?

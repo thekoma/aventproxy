@@ -2,8 +2,12 @@ package addon
 
 import (
 	"errors"
+	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"avent-webrtc-bridge/pkg/rtsp"
@@ -482,23 +486,32 @@ func TestCloudFallbackUser(t *testing.T) {
 	a, b := addonUser("addon_a", "ua"), addonUser("addon_b", "ub")
 	other := storage.UserSession{Region: "other", UserKey: "other_x"}
 
+	// The registry from the last cloud start: addon_b registered camera "a".
+	registry := []storage.CameraInfo{{UserKey: "addon_b", DeviceID: "a"}, {UserKey: "addon_a", DeviceID: "other-cam"}}
+
 	cases := []struct {
-		name    string
-		uid     string
-		targets map[string]rtsp.LANTarget
-		stored  []storage.UserSession
-		wantKey string // empty: the original error
+		name     string
+		uid      string
+		targets  map[string]rtsp.LANTarget
+		stored   []storage.UserSession
+		registry []storage.CameraInfo
+		wantKey  string // empty: the original error
 	}{
-		{"configured uid picks the matching user", "ub", targets, []storage.UserSession{a, b}, "addon_b"},
-		{"configured uid skips other regions", "ua", targets, []storage.UserSession{other, a}, "addon_a"},
-		{"configured uid without a match fails", "uz", targets, []storage.UserSession{a, b}, ""},
-		{"no uid fails, even with a sole add-on user", "", targets, []storage.UserSession{a}, ""},
-		{"no LAN targets fails", "ua", nil, []storage.UserSession{a}, ""},
-		{"no stored add-on user fails", "ua", targets, []storage.UserSession{other}, ""},
+		{"configured uid picks the matching user", "ub", targets, []storage.UserSession{a, b}, nil, "addon_b"},
+		{"configured uid skips other regions", "ua", targets, []storage.UserSession{other, a}, nil, "addon_a"},
+		{"configured uid without a match fails", "uz", targets, []storage.UserSession{a, b}, nil, ""},
+		{"no uid fails, even with a sole add-on user", "", targets, []storage.UserSession{a}, registry, ""},
+		{"no LAN targets fails", "ua", nil, []storage.UserSession{a}, nil, ""},
+		{"no stored add-on user fails", "ua", targets, []storage.UserSession{other}, nil, ""},
+		// The user is saved under the cloud's user id. Should it ever differ
+		// from the integration's uid, the cameras still name the account.
+		{"a uid that differs falls back to the user owning a LAN camera", "uz", targets, []storage.UserSession{a, b}, registry, "addon_b"},
+		{"the configured uid wins over camera ownership", "ua", targets, []storage.UserSession{a, b}, registry, "addon_a"},
+		{"owning only other cameras is not enough", "uz", targets, []storage.UserSession{a}, registry, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			u, err := cloudFallbackUser(errCloud, c.uid, c.targets, c.stored)
+			u, err := cloudFallbackUser(errCloud, c.uid, c.targets, c.stored, c.registry)
 			if c.wantKey == "" {
 				if u != nil || !errors.Is(err, errCloud) {
 					t.Errorf("got %+v, %v; want the original error", u, err)
@@ -526,6 +539,48 @@ func TestLanUID(t *testing.T) {
 		got, differ := lanUID(c.cfgUID, c.cloudUID)
 		if got != c.want || differ != c.differ {
 			t.Errorf("lanUID(%q, %q) = %q, %v; want %q, %v", c.cfgUID, c.cloudUID, got, differ, c.want, c.differ)
+		}
+	}
+}
+
+func TestCloudCheckWarning(t *testing.T) {
+	unreachable := fmt.Errorf("API verification failed: %w", &url.Error{Op: "Post", URL: "https://a1.tuyaeu.com/api.json", Err: &net.OpError{Op: "dial", Err: errors.New("no route to host")}})
+	if got := cloudCheckWarning(unreachable); !strings.HasPrefix(got, "Cloud unreachable,") {
+		t.Errorf("a network error reads %q", got)
+	}
+	expired := fmt.Errorf("API verification failed: %w", errors.New("API error: session expired (code: USER_SESSION_INVALID)"))
+	if got := cloudCheckWarning(expired); strings.Contains(got, "unreachable") {
+		t.Errorf("an API error such as an expired sid reads %q; the cloud answered", got)
+	}
+}
+
+// The issue #72 knobs come from the Dev card's options through run.sh. A card
+// that does not define them passes no flag, and the defaults apply.
+func TestSessionFlags(t *testing.T) {
+	for _, tc := range []struct {
+		args       []string
+		speakerOff bool
+		audio      string
+		wantErr    bool
+	}{
+		{nil, false, rtsp.WebRTCAudioRecvonly, false}, // stable and beta: as before #72's experiment
+		{[]string{"--speaker-off=false"}, false, rtsp.WebRTCAudioRecvonly, false},
+		{[]string{"--speaker-off=true", "--webrtc-audio", "none"}, true, rtsp.WebRTCAudioNone, false},
+		{[]string{"--webrtc-audio", "sendrecv"}, false, "", true},
+	} {
+		cmd := NewAddonCmd()
+		if err := cmd.ParseFlags(tc.args); err != nil {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		speakerOff, audio, err := sessionFlags(cmd)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("%v: want an error", tc.args)
+			}
+			continue
+		}
+		if err != nil || speakerOff != tc.speakerOff || audio != tc.audio {
+			t.Errorf("%v: got %v, %q, %v; want %v, %q", tc.args, speakerOff, audio, err, tc.speakerOff, tc.audio)
 		}
 	}
 }
