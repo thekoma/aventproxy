@@ -433,12 +433,25 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         #61, and an SCD973/26 in the fork) depend on the negotiated protocol for
         it: 212 never arrived on 3.3, while from 3.4 up it pushes within a couple
         of seconds (#61 rc9, fork 619981b), which is why a 3.4+ session stops the
-        cloud poll altogether (`lan_serves_state`). DPS 212 is also a single slot
+        cloud poll altogether (`cloud_poll_pausable`). DPS 212 is also a single slot
         holding the newest alarm rather than a queue, so a second alert
         overwrites the first and whatever the poll misses is gone. Below 3.4 the
         fast poll therefore stays for these monitors as the floor.
         """
         return DPS_ALARM_RECORD in (self.data or {})
+
+    @property
+    def cloud_poll_pausable(self) -> bool:
+        """Whether the cloud poll can pause: a 3.4+ session carries state and this monitor's alarms.
+
+        Alarms push over a 3.4+ session in DPS 212 (fork 619981b). A monitor that
+        has never reported 212 may raise its alerts in 250 and 141 instead, as
+        the SCD973 on 3.3 does, and nothing shows those pushing on 3.4+: it keeps
+        polling until 212 turns up. A 212 monitor polls on the 30 s tick
+        (`poll_should_stay_fast`), so a dropped session resumes the poll within
+        30 s.
+        """
+        return self.data is not None and self.lan_serves_state and self.alerts_need_the_cloud
 
     @callback
     def _adopt_local_key(self, key: str | None) -> None:
@@ -480,10 +493,10 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
 
         # A 3.4+ session pushes state and alarms as they happen, so polling the
         # cloud would fetch a copy (fork a59b77f, 619981b). The tick keeps its
-        # interval, so the poll is back within one tick of the session dropping,
-        # and it still refreshes what only the cloud knows. The first refresh
-        # always asks the cloud: it fills device_info and the local key.
-        if self.data is not None and self.lan_serves_state:
+        # 30 s interval, so the poll is back within 30 s of the session
+        # dropping, and it still refreshes what only the cloud knows. The first
+        # refresh always asks the cloud: it fills device_info and the local key.
+        if self.cloud_poll_pausable:
             self._note_cloud_poll(paused=True)
             try:
                 if await self._fetch_rssi():

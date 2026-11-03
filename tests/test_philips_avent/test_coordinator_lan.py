@@ -15,7 +15,8 @@ from .ha_stand_in import home_assistant_installed, load
 
 pytestmark = pytest.mark.skipif(home_assistant_installed(), reason="uses a stand-in for Home Assistant")
 
-STATE = {"138": False, "207": 2345}
+# DPS 212 has reported an alarm before, so a 3.4+ session can pause the poll.
+STATE = {"138": False, "207": 2345, "212": "eyJjbWQiOiJpcGNfbW90aW9uIn0="}
 
 
 class FakeEntry:
@@ -139,6 +140,17 @@ class TestPoll:
         data = asyncio.run(coordinator._async_update_data())
         assert coordinator.api.device_calls == 0
         assert data == STATE
+
+    def test_a_paused_poll_ticks_fast_so_it_resumes_quickly(self, make):
+        coordinator = make(3.5)
+        asyncio.run(coordinator._async_update_data())
+        assert coordinator.update_interval.total_seconds() == 30
+
+    def test_a_monitor_that_never_reported_dps_212_keeps_polling(self, make):
+        # Its alerts may come in 250 and 141, which nothing shows pushing on 3.4+.
+        coordinator = make(3.5, data={"138": False, "207": 2345})
+        asyncio.run(coordinator._async_update_data())
+        assert coordinator.api.device_calls == 1
 
     def test_the_first_refresh_always_asks_the_cloud(self, make):
         coordinator = make(3.5, data=None)
