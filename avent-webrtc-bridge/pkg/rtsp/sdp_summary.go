@@ -31,7 +31,8 @@ func summarizeSDP(raw string) string {
 		case line == "a=sendrecv", line == "a=sendonly", line == "a=recvonly", line == "a=inactive":
 			sections[len(sections)-1].dir = line[2:]
 		case strings.HasPrefix(line, "a=rtpmap:"):
-			if f := strings.Fields(line); len(f) == 2 {
+			// imm's rtpmap has a third field: "a=rtpmap:6001 AES/KCP 330".
+			if f := strings.Fields(line); len(f) >= 2 {
 				sections[len(sections)-1].codecs = append(sections[len(sections)-1].codecs, f[1])
 			}
 		}

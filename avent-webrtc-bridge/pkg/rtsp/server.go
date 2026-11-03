@@ -60,6 +60,11 @@ type RTSPServer struct {
 	// either way.
 	WebRTCAudio string
 
+	// CloudTransport is CloudTransportWebRTC (the default, "" too) or
+	// CloudTransportIMM, which tries an imm session over cloud signalling
+	// before the webrtc one (experimental, Dev card only; see tryIMM).
+	CloudTransport string
+
 	// BindAddress limits the interfaces the RTSP server listens on. The server
 	// has no authentication, so anyone who can reach the port can watch the
 	// camera. Accepted values (see bindHosts):
@@ -78,6 +83,7 @@ type RTSPServer struct {
 
 	cooldownMutex sync.Mutex
 	lanCooldowns  map[string]time.Time // device id -> end of its LAN cool-down
+	immCooldowns  map[string]time.Time // device id -> end of its imm cool-down; made on first use
 
 	// newStream, if set, prepares every stream getOrCreateStream creates,
 	// before any client can reach it (tests only).
@@ -221,6 +227,7 @@ type CameraStream struct {
 	attemptCancel context.CancelFunc              // ends a LAN attempt or probe in flight
 	promoteTimer  *time.Timer                     // moves a cloud stream back to the LAN; see armPromotion
 	mediaTimer    *time.Timer                     // fails a cloud session that carries no media; see armMediaCheck
+	immFactory    func(*RTPForwarder) lanStreamer // builds an imm source; nil means newIMMSource
 }
 
 // cloudRetryDelay separates the two cloud attempts of a stream start.
@@ -873,7 +880,7 @@ func (cs *CameraStream) startStream(gen uint64) {
 	}
 	cs.mutex.Unlock()
 
-	if cs.tryLAN(gen) {
+	if cs.tryLAN(gen) || cs.tryIMM(gen) {
 		return
 	}
 

@@ -120,13 +120,18 @@ func (cs *CameraStream) tryLAN(gen uint64) (done bool) {
 // meanwhile: src is stopped, and a restart may own attemptCancel and
 // promoteTimer now, so the caller must leave the stream alone.
 func (cs *CameraStream) runLANAttempt(src lanStreamer) (stopped bool, err error) {
+	return cs.runAttempt(src, lanFirstFrameDeadline)
+}
+
+// runAttempt is runLANAttempt with its own deadline.
+func (cs *CameraStream) runAttempt(src lanStreamer, deadline time.Duration) (stopped bool, err error) {
 	// Only stopStreamInternal cancels this while src starts.
 	stoppedCtx, stop := context.WithCancel(context.Background())
 	defer stop()
 	cs.attemptCancel = stop
 	cs.mutex.Unlock()
 
-	ctx, cancel := context.WithTimeout(stoppedCtx, lanFirstFrameDeadline)
+	ctx, cancel := context.WithTimeout(stoppedCtx, deadline)
 	err = src.Start(ctx)
 	cancel()
 

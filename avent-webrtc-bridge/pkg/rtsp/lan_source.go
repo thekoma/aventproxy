@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"avent-webrtc-bridge/pkg/core"
 	"avent-webrtc-bridge/pkg/lan"
@@ -50,6 +52,18 @@ type LANSource struct {
 	newClient                 func(lan.ClientConfig) lanClient // test seam
 	firstFrame                chan struct{}                    // closed once an SPS or IDR reached the forwarder
 
+	// Set by the imm path (imm_source.go) and nil on the LAN path, which then
+	// behaves as it always has. prepare completes the client config in Start,
+	// before anything connects, without the lock; its error ends the attempt.
+	// frameWait bounds the wait for the first frame once the handshake is
+	// done. stall says why that wait failed.
+	prepare   func(ctx context.Context, cfg *lan.ClientConfig) error
+	frameWait time.Duration
+	stall     func() error
+
+	// Messages forwarded, for the imm session's diagnostics.
+	videoFrames, audioFrames atomic.Uint64
+
 	// mu also covers forwarding, so once Stop returns nothing more is forwarded.
 	mu       sync.Mutex
 	client   lanClient
@@ -58,6 +72,8 @@ type LANSource struct {
 	stopped  bool
 	running  bool // Start succeeded; a death now goes to onError
 	reported bool // a death was handled
+
+	preparing bool // under mu: prepare is running, so the source is used
 
 	videoSSRC, audioSSRC uint32
 	videoSeq, audioSeq   uint16
@@ -97,13 +113,11 @@ func (s *LANSource) SetOnError(fn func(error)) {
 // errNoFirstFrame. The stream itself lives until Stop.
 func (s *LANSource) Start(ctx context.Context) error {
 	s.mu.Lock()
-	if s.stopped || s.client != nil {
+	if s.stopped || s.client != nil || s.preparing {
 		s.mu.Unlock()
 		return errors.New("lan: source already used")
 	}
-	// Not ctx: lan.Client ends the stream, without OnClosed, when its context does.
-	life, cancel := context.WithCancelCause(context.Background())
-	client := s.newClient(lan.ClientConfig{
+	cfg := lan.ClientConfig{
 		DeviceID: s.deviceID,
 		LocalKey: s.target.LocalKey,
 		Password: s.target.Password,
@@ -112,7 +126,23 @@ func (s *LANSource) Start(ctx context.Context) error {
 		OnVideo:  s.onVideo,
 		OnAudio:  s.onAudio,
 		OnClosed: s.onClosed,
-	})
+	}
+	if s.prepare != nil {
+		s.preparing = true
+		s.mu.Unlock()
+		if err := s.prepare(ctx, &cfg); err != nil {
+			s.Stop()
+			return err
+		}
+		s.mu.Lock()
+		if s.stopped {
+			s.mu.Unlock()
+			return errors.New("lan: source stopped")
+		}
+	}
+	// Not ctx: lan.Client ends the stream, without OnClosed, when its context does.
+	life, cancel := context.WithCancelCause(context.Background())
+	client := s.newClient(cfg)
 	s.client, s.cancel = client, cancel
 	// A fresh SSRC per session keeps a reconnect from looking like the old stream.
 	s.videoSSRC, s.audioSSRC = rand.Uint32(), rand.Uint32()
@@ -125,12 +155,18 @@ func (s *LANSource) Start(ctx context.Context) error {
 	if err := client.Start(life); err != nil {
 		return s.abort(ctx, life, err)
 	}
+	wait := ctx
+	if s.frameWait > 0 {
+		var done context.CancelFunc
+		wait, done = context.WithTimeout(ctx, s.frameWait)
+		defer done()
+	}
 	select {
 	case <-s.firstFrame:
-	case <-ctx.Done():
-		return s.abort(ctx, life, nil)
+	case <-wait.Done():
+		return s.abort(wait, life, nil)
 	case <-life.Done(): // stopped, or died before the first frame
-		return s.abort(ctx, life, nil)
+		return s.abort(wait, life, nil)
 	}
 	if !stopClosing() { // ctx ended just as the frame came and closed the client
 		return s.abort(ctx, life, nil)
@@ -153,10 +189,13 @@ func (s *LANSource) abort(ctx, life context.Context, err error) error {
 		err = cause
 	}
 	if ctx.Err() != nil {
+		if err == nil && s.stall != nil {
+			err = s.stall()
+		}
 		if err == nil {
 			err = errors.New("connected, no SPS or IDR")
 		}
-		err = fmt.Errorf("%w: %w (%v)", errNoFirstFrame, ctx.Err(), err)
+		err = fmt.Errorf("%w: %w (%w)", errNoFirstFrame, ctx.Err(), err)
 	}
 	s.Stop()
 	return err
@@ -219,6 +258,7 @@ func (s *LANSource) onVideo(frame *lan.VideoFrame) {
 	if s.stopped {
 		return
 	}
+	s.videoFrames.Add(1)
 	// The forwarder sets the timestamp: one per picture, from the marker.
 	for _, payload := range splitNAL(nal, &s.payloader) {
 		s.videoSeq++
@@ -259,6 +299,7 @@ func (s *LANSource) onAudio(frame *lan.AudioFrame) {
 		}
 		return
 	}
+	s.audioFrames.Add(1)
 	samples := s.downsampler.process(pcm16LE(frame.Samples))
 	if len(samples) == 0 {
 		return
