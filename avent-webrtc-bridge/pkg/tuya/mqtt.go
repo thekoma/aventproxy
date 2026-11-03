@@ -23,6 +23,7 @@ type MQTTClient struct {
 	// is read there while streams add and remove sessions elsewhere.
 	mu      sync.RWMutex
 	cameras map[string]*MQTTCameraClient // sessionId -> camera
+	imm     map[string]*IMMSession       // sessionId -> imm session
 
 	// closed is also set by the broker's goroutine, from onDisconnect.
 	closed    atomic.Bool
@@ -130,6 +131,10 @@ func (c *MQTTClient) Stop() {
 	}
 }
 
+// UID is the account id this client subscribed with: its frames carry it as
+// "from", and the monitor answers to it.
+func (c *MQTTClient) UID() string { return c.uid }
+
 func (c *MQTTClient) IsConnected() bool {
 	return c.mqtt != nil && c.mqtt.IsConnected() && !c.closed.Load()
 }
@@ -187,6 +192,10 @@ func (c *MQTTClient) consume(client mqtt.Client, msg mqtt.Message) {
 	}
 
 	sessionId := rmqtt.Data.Header.SessionID
+	if s, ok := c.immSession(sessionId); ok {
+		s.deliver(msg.Payload())
+		return
+	}
 	cameraClient, ok := c.cameraClient(sessionId)
 	if !ok {
 		core.Logger.Warn().Msgf("No camera client found for sessionId: %s", sessionId)
