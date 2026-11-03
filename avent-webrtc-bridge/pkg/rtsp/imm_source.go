@@ -30,7 +30,7 @@ const (
 	// immHandshakeTimeout bounds the cloud round trip, the monitor's
 	// candidate gathering, ICE and the login. The first frame then has
 	// lanFirstFrameDeadline, as on the LAN.
-	immHandshakeTimeout = 8 * time.Second
+	immHandshakeTimeout = 10 * time.Second
 	// immAttemptDeadline bounds a whole attempt: the cloud calls before the
 	// offer, the handshake and the first frame. It is how long a viewer can
 	// wait before the webrtc fallback starts.
@@ -96,6 +96,12 @@ func (cs *CameraStream) newIMMSource(forwarder *RTPForwarder) lanStreamer {
 	cloud := immCloud{deviceID: cs.camera.DeviceID, deviceName: cs.camera.DeviceName}
 	if s.MobileClient != nil {
 		cloud.api = s.MobileClient
+	}
+	if s.MobileClient != nil {
+		mc := s.MobileClient
+		cloud.deviceChannel = func(deviceID, localKey string, onData func(json.RawMessage)) (immChannel, error) {
+			return dialIMMDeviceChannel(mc, deviceID, localKey, onData)
+		}
 	}
 	if s.mqttManager != nil {
 		cloud.broker = func(deviceID string) (immBroker, error) {
@@ -182,6 +188,9 @@ type immCloud struct {
 	deviceID, deviceName string
 	api                  immCloudAPI
 	broker               func(deviceID string) (immBroker, error)
+	// deviceChannel opens the device's own channel, the second route tried
+	// when the moto relay does not answer (imm_signal.go). nil: moto only.
+	deviceChannel func(deviceID, localKey string, onData func(json.RawMessage)) (immChannel, error)
 }
 
 // prepare fills the client config: the moto relay, the ICE servers, the media
@@ -249,12 +258,20 @@ func (ic immCloud) prepare(ctx context.Context, cfg *lan.ClientConfig, onControl
 	cfg.ICEServers = lanICEServers(r.rtc.P2PConfig.Ices)
 	cfg.HandshakeTimeout = immHandshakeTimeout
 	cfg.OnControl = onControl
-	cfg.Signaller = &mqttSignaller{
+	sig := &mqttSignaller{
 		deviceName: ic.deviceName,
 		open: func(sessionID string, onFrame func(json.RawMessage)) immChannel {
 			return r.broker.open(moto, ic.deviceID, sessionID, onFrame)
 		},
+		motoWait: immMotoAnswerWait,
 	}
+	if ic.deviceChannel != nil {
+		localKey := cfg.LocalKey // never logged
+		sig.device = func(onData func(json.RawMessage)) (immChannel, error) {
+			return ic.deviceChannel(ic.deviceID, localKey, onData)
+		}
+	}
+	cfg.Signaller = sig
 	core.Logger.Debug().Msgf("imm session for %s: %d ICE servers, address hint %t",
 		ic.deviceName, len(cfg.ICEServers), cfg.IP != "")
 	return nil
@@ -267,57 +284,4 @@ func lanICEServers(in []tuya.ICEServer) []lan.ICEServer {
 		out = append(out, lan.ICEServer{URLs: s.Urls, Username: s.Username, Credential: s.Credential, TTL: s.Ttl})
 	}
 	return out
-}
-
-// mqttSignaller is lan.Signaller over the cloud broker. It is also where the
-// session's signalling is logged: the descriptions only through summarizeSDP,
-// so ICE credentials and the aes-key never reach the log.
-type mqttSignaller struct {
-	deviceName string
-	open       func(sessionID string, onFrame func(json.RawMessage)) immChannel
-
-	ch     immChannel
-	frames chan lan.SignalFrame
-}
-
-var _ lan.Signaller = (*mqttSignaller)(nil)
-
-func (m *mqttSignaller) Open(sessionID string) (<-chan lan.SignalFrame, error) {
-	m.frames = make(chan lan.SignalFrame, 64)
-	m.ch = m.open(sessionID, m.receive)
-	return m.frames, nil
-}
-
-func (m *mqttSignaller) Send(frame any) error {
-	if f, ok := frame.(lan.SignalFrame); ok && f.Header.Type == lan.TypeOffer {
-		core.Logger.Info().Msgf("Offer to %s: mode=imm over cloud signalling %s", m.deviceName, summarizeSDP(f.Msg.SDP))
-	}
-	return m.ch.Publish(frame)
-}
-
-func (m *mqttSignaller) Close() error {
-	if m.ch != nil {
-		m.ch.Close()
-	}
-	return nil
-}
-
-// receive runs on the broker's goroutine.
-func (m *mqttSignaller) receive(data json.RawMessage) {
-	f, err := lan.ParseSignalFrame(data)
-	if err != nil {
-		core.Logger.Debug().Err(err).Msgf("Unreadable imm frame from %s", m.deviceName)
-		return
-	}
-	switch f.Header.Type {
-	case lan.TypeAnswer:
-		core.Logger.Info().Msgf("Answer from %s: %s", m.deviceName, summarizeSDP(f.Msg.SDP))
-	case lan.TypeDisconnect:
-		core.Logger.Info().Msgf("Disconnect from %s on the imm session", m.deviceName)
-	}
-	select {
-	case m.frames <- f:
-	default:
-		core.Logger.Warn().Msgf("Dropped an imm %s frame from %s: the session is not reading", f.Header.Type, m.deviceName)
-	}
 }

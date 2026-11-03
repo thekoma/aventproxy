@@ -296,3 +296,42 @@ func TestIMMSourceReportsACloudFailure(t *testing.T) {
 		t.Fatalf("Start error = %v, want errIMMCloud", err)
 	}
 }
+
+// The device channel, when there is one, gets the media login's local key:
+// the app frames that channel with the same key.
+func TestIMMPrepareWiresTheDeviceChannel(t *testing.T) {
+	var gotDevice, gotKey string
+	cloud := immCloud{
+		deviceID: "testdev", deviceName: "Test Cam",
+		api:    &fakeCloudAPI{rtc: testRTCConfig()},
+		broker: fakeBroker(&fakeChannel{}),
+		deviceChannel: func(deviceID, localKey string, _ func(json.RawMessage)) (immChannel, error) {
+			gotDevice, gotKey = deviceID, localKey
+			return &fakeChannel{}, nil
+		},
+	}
+	cfg := lan.ClientConfig{LocalKey: "fake-old-key", Password: "fake-old-pass"}
+	if err := cloud.prepare(context.Background(), &cfg, nil); err != nil {
+		t.Fatal(err)
+	}
+	sig, ok := cfg.Signaller.(*mqttSignaller)
+	if !ok || sig.device == nil || sig.motoWait != immMotoAnswerWait {
+		t.Fatalf("signaller = %+v, want a device channel after %v", cfg.Signaller, immMotoAnswerWait)
+	}
+	if _, err := sig.device(func(json.RawMessage) {}); err != nil {
+		t.Fatal(err)
+	}
+	if gotDevice != "testdev" || gotKey != "fake-cloud-key" {
+		t.Errorf("device channel opened for %q with the wrong key", gotDevice)
+	}
+
+	// Without an opener the session stays on the moto.
+	cloud.deviceChannel = nil
+	cfg = lan.ClientConfig{LocalKey: "fake-old-key", Password: "fake-old-pass"}
+	if err := cloud.prepare(context.Background(), &cfg, nil); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Signaller.(*mqttSignaller).device != nil {
+		t.Error("no opener, yet a device channel")
+	}
+}
