@@ -138,6 +138,8 @@ class AventMotionDetected(CoordinatorEntity, BinarySensorEntity):
             self._last_lan_update_sequence = sequence
             fresh_dps = self.coordinator.last_lan_dps
 
+        # The switch check is for DPS 250 only: the monitor also sets it on
+        # sound-only triggers (a3c554c). DPS 212 names its own cause.
         if (
             fresh_dps
             and fresh_dps.get(DPS_ALERT_EVENT) == "motion_detection"
@@ -278,6 +280,9 @@ class AventSoundDetected(CoordinatorEntity, BinarySensorEntity):
             self._last_lan_update_sequence = sequence
             fresh_dps = self.coordinator.last_lan_dps
 
+        # No sound-switch check, unlike motion: that one exists because DPS 250
+        # also fires on sound-only triggers (a3c554c). Nothing like it has been
+        # seen for DPS 141, which the monitor does not raise with sound off.
         if fresh_dps and fresh_dps.get(DPS_DECIBEL_EVENT) == "decibel_upload":
             return True
 
