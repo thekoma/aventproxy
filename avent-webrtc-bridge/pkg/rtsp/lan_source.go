@@ -264,7 +264,7 @@ func (s *LANSource) onAudio(frame *lan.AudioFrame) {
 		return
 	}
 	s.audioSeq++
-	// The forwarder sets the timestamp from the wall clock at 8 kHz.
+	// The forwarder sets the timestamp by counting these 8 kHz samples.
 	s.forwarder.ForwardAudioPacket(&rtp.Packet{
 		Header: rtp.Header{
 			Version:        2,

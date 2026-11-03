@@ -3,6 +3,7 @@ package rtsp
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"testing"
@@ -67,23 +68,55 @@ func TestFrameClockKeepsAdvancingAfter32Bits(t *testing.T) {
 // readInterleaved collects the RTP packets a TCP client receives.
 func readInterleaved(t *testing.T, conn net.Conn, n int) []*rtp.Packet {
 	t.Helper()
+	packets, err := readInterleavedErr(conn, n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return packets
+}
+
+// readInterleavedErr is readInterleaved for a goroutine other than the test's.
+func readInterleavedErr(conn net.Conn, n int) ([]*rtp.Packet, error) {
 	var packets []*rtp.Packet
 	header := make([]byte, 4)
 	for len(packets) < n {
 		if _, err := io.ReadFull(conn, header); err != nil {
-			t.Fatalf("read header: %v", err)
+			return packets, fmt.Errorf("read header after %d packets: %w", len(packets), err)
 		}
 		body := make([]byte, binary.BigEndian.Uint16(header[2:4]))
 		if _, err := io.ReadFull(conn, body); err != nil {
-			t.Fatalf("read body: %v", err)
+			return packets, fmt.Errorf("read body: %w", err)
 		}
 		p := &rtp.Packet{}
 		if err := p.Unmarshal(body); err != nil {
-			t.Fatalf("unmarshal: %v", err)
+			return packets, fmt.Errorf("unmarshal: %w", err)
 		}
 		packets = append(packets, p)
 	}
-	return packets
+	return packets, nil
+}
+
+// collect reads n interleaved packets in the background; wait returns them.
+func collect(t *testing.T, conn net.Conn, n int) (wait func() []*rtp.Packet) {
+	t.Helper()
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	type result struct {
+		packets []*rtp.Packet
+		err     error
+	}
+	done := make(chan result, 1)
+	go func() {
+		packets, err := readInterleavedErr(conn, n)
+		done <- result{packets, err}
+	}()
+	return func() []*rtp.Packet {
+		t.Helper()
+		r := <-done
+		if r.err != nil {
+			t.Fatal(r.err)
+		}
+		return r.packets
+	}
 }
 
 func TestForwardVideoInjectsParameterSetsInOrder(t *testing.T) {
@@ -104,15 +137,14 @@ func TestForwardVideoInjectsParameterSetsInOrder(t *testing.T) {
 		{Header: rtp.Header{SequenceNumber: 14, Marker: true}, Payload: []byte{0x7c, 0x45}},
 	}
 
-	done := make(chan []*rtp.Packet)
-	go func() { done <- readInterleaved(t, client, 7) }()
+	wait := collect(t, client, 7)
 	for i, p := range send {
 		if i == 3 {
 			time.Sleep(20 * time.Millisecond)
 		}
 		rf.ForwardVideoPacket(p)
 	}
-	got := <-done
+	got := wait()
 
 	wantSeq := []uint16{10, 11, 12, 13, 14, 15, 16}
 	for i, p := range got {
@@ -264,5 +296,64 @@ func TestStalledTCPClientIsDropped(t *testing.T) {
 	}
 	if _, err := server.Write([]byte{0}); !errors.Is(err, io.ErrClosedPipe) {
 		t.Fatalf("the stalled client's connection was left open: %v", err)
+	}
+}
+
+// Audio timestamps count samples: they say when the audio was recorded, not
+// when its packet happened to arrive (fork 00d7e2f). Stamped from the wall
+// clock, a burst of packets got nearly one timestamp and a consumer that
+// honours timestamps played them over each other.
+func TestForwardAudioStampsBySamples(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+	rf := NewRTPForwarder()
+	if err := rf.AddTCPClient("s1", server, 0, 2, 4); err != nil {
+		t.Fatal(err)
+	}
+
+	wait := collect(t, client, 3)
+	for range 3 { // a burst: 60 ms of audio delivered at once
+		rf.ForwardAudioPacket(&rtp.Packet{Header: rtp.Header{PayloadType: 0}, Payload: make([]byte, 160)})
+	}
+	got := wait()
+	for i := 1; i < len(got); i++ {
+		if d := got[i].Timestamp - got[i-1].Timestamp; d != 160 {
+			t.Errorf("packet %d is %d ticks after the previous one, want 160 (its samples)", i, d)
+		}
+	}
+}
+
+func TestAudioClockCatchesUpAfterSilence(t *testing.T) {
+	c := audioClock{started: true, wallStart: time.Now().Add(-3 * time.Second), next: 160}
+	got := c.timestamp(160, 8000)
+	if got < 8000*29/10 || got > 8000*35/10 {
+		t.Fatalf("after 3 s of silence the clock reads %d, want about 24000", got)
+	}
+	if next := c.timestamp(160, 8000); next != got+160 {
+		t.Fatalf("next packet at %d, want %d", next, got+160)
+	}
+}
+
+// Parameter sets that arrive before anyone watches are kept, so the first
+// viewer still gets them ahead of the next keyframe.
+func TestParameterSetsCachedWithoutClients(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+	rf := NewRTPForwarder()
+	rf.ForwardVideoPacket(&rtp.Packet{Header: rtp.Header{SequenceNumber: 1}, Payload: []byte{0x67, 0x42}}) // SPS
+	rf.ForwardVideoPacket(&rtp.Packet{Header: rtp.Header{SequenceNumber: 2}, Payload: []byte{0x68, 0xce}}) // PPS
+
+	if err := rf.AddTCPClient("s1", server, 0, 2, 4); err != nil {
+		t.Fatal(err)
+	}
+	wait := collect(t, client, 3)
+	rf.ForwardVideoPacket(&rtp.Packet{Header: rtp.Header{SequenceNumber: 3, Marker: true}, Payload: []byte{0x65, 0x88}}) // IDR
+	got := wait()
+	for i, want := range []byte{7, 8, 5} {
+		if got[i].Payload[0]&0x1f != want {
+			t.Errorf("packet %d is NAL type %d, want %d", i, got[i].Payload[0]&0x1f, want)
+		}
 	}
 }

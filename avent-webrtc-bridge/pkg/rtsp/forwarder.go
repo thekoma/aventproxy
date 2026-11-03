@@ -41,11 +41,10 @@ type RTPForwarder struct {
 	ppsPacket *rtp.Packet
 
 	// Timestamp rebasing. The camera sends one constant RTP timestamp, so
-	// timestamps come from the wall clock: per frame for video (every packet
-	// of a frame must share one), per packet for audio.
-	videoTs        frameClock
-	audioTimeStart time.Time
-	audioTsStarted bool
+	// video timestamps come from the wall clock, one per frame (every packet
+	// of a frame must share one), and audio ones count samples.
+	videoTs frameClock
+	audioTs audioClock
 
 	// Packets injected into the video stream (cached SPS/PPS) shift the
 	// sequence numbers of everything after them.
@@ -394,10 +393,8 @@ func (rf *RTPForwarder) ForwardVideoPacket(packet *rtp.Packet) {
 	rf.mutex.Lock()
 	defer rf.mutex.Unlock()
 
-	if len(rf.clients) == 0 {
-		return
-	}
-
+	// The clock and the parameter-set cache run whether or not anyone
+	// watches: the first viewer still needs the SPS and PPS that came before.
 	packet.Timestamp = rf.videoTs.timestamp(packet.Marker, 90000)
 	packet.SequenceNumber += rf.videoSeqOffset
 
@@ -411,6 +408,10 @@ func (rf *RTPForwarder) ForwardVideoPacket(packet *rtp.Packet) {
 		rf.ppsPacket = packet.Clone()
 	case 24:
 		rf.cacheSTAP(packet)
+	}
+
+	if len(rf.clients) == 0 {
+		return
 	}
 
 	// Before IDR keyframe (5), inject cached SPS/PPS. They belong to the
@@ -440,22 +441,23 @@ func (rf *RTPForwarder) forwardVideoData(packet *rtp.Packet) {
 	rf.forward(data, true)
 }
 
-// ForwardAudioPacket restamps a PCMU RTP packet from the wall clock and sends
-// it to every client.
+// ForwardAudioPacket restamps a G.711 RTP packet by its samples and sends it
+// to every client.
 func (rf *RTPForwarder) ForwardAudioPacket(packet *rtp.Packet) {
 	rf.mutex.Lock()
 	defer rf.mutex.Unlock()
 
+	// G.711 (PCMU 0, PCMA 8) carries one sample per byte at 8 kHz. Anything
+	// else is stamped from the wall clock.
+	samples := -1
+	if packet.PayloadType == 0 || packet.PayloadType == 8 {
+		samples = len(packet.Payload)
+	}
+	packet.Timestamp = rf.audioTs.timestamp(samples, 8000)
+
 	if len(rf.clients) == 0 {
 		return
 	}
-
-	// Rebase timestamp to wall clock (8kHz for PCMU)
-	if !rf.audioTsStarted {
-		rf.audioTimeStart = time.Now()
-		rf.audioTsStarted = true
-	}
-	packet.Timestamp = rtpTicks(time.Since(rf.audioTimeStart), 8000)
 
 	data, err := packet.Marshal()
 	if err != nil {
@@ -609,6 +611,43 @@ func (c *frameClock) timestamp(marker bool, clockRate int) uint32 {
 	}
 	c.open = !marker
 	return c.frameTs
+}
+
+// audioClock stamps audio packets by the samples they carry, which is what a
+// continuous stream needs: the timestamp says when the audio was recorded,
+// not when its packet arrived. Packets reach the bridge in bursts (WebRTC
+// jitter, KCP retransmits), and wall-clock stamps gave a burst nearly one
+// timestamp. When the count falls behind the wall clock by more than
+// audioMaxLag (a silence, or packets lost on the way) it catches up instead
+// of pretending no time passed. It never steps back: timestamps that ran
+// ahead after a burst stay ahead.
+type audioClock struct {
+	started   bool
+	wallStart time.Time
+	next      uint32 // timestamp of the next packet
+}
+
+const audioMaxLag = time.Second
+
+// timestamp returns the RTP timestamp of a packet carrying samples samples, or
+// the wall-clock time when samples is negative (an unknown codec).
+func (c *audioClock) timestamp(samples, clockRate int) uint32 {
+	now := time.Now()
+	if !c.started {
+		c.started = true
+		c.wallStart = now
+		c.next = 0
+	}
+	wall := rtpTicks(now.Sub(c.wallStart), clockRate)
+	maxLag := int32(rtpTicks(audioMaxLag, clockRate))
+	if samples < 0 || int32(wall-c.next) > maxLag {
+		c.next = wall
+	}
+	ts := c.next
+	if samples > 0 {
+		c.next += uint32(samples)
+	}
+	return ts
 }
 
 // rtpTicks converts elapsed time to RTP clock ticks, wrapping at 2^32 the way
