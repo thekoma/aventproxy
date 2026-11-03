@@ -26,7 +26,13 @@ def home_assistant_installed() -> bool:
 
 
 class DataUpdateCoordinator:
-    """What the coordinator uses of Home Assistant's base class."""
+    """What the coordinator uses of Home Assistant's base class, scheduling included.
+
+    `async_set_updated_data` behaves as in Home Assistant 2026.10
+    (helpers/update_coordinator.py): it moves the next refresh a full interval
+    out, marks the last update successful, then notifies the listeners.
+    `scheduled_for` stands for the next refresh, on the `clock` tests set.
+    """
 
     def __init__(self, hass, logger, name=None, update_interval=None):
         self.hass = hass
@@ -34,12 +40,22 @@ class DataUpdateCoordinator:
         self.name = name
         self.update_interval = update_interval
         self.data = None
+        self.last_update_success = True
+        self.clock = lambda: 0.0
+        self.scheduled_for = None
+        self.listener_updates = 0
+
+    def _schedule_refresh(self):
+        self.scheduled_for = self.clock() + self.update_interval.total_seconds()
 
     def async_set_updated_data(self, data):
+        self._schedule_refresh()
         self.data = data
+        self.last_update_success = True
+        self.async_update_listeners()
 
     def async_update_listeners(self):
-        pass
+        self.listener_updates += 1
 
 
 class UpdateFailed(Exception):

@@ -211,8 +211,22 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         if DPS_SENSEIQ_STATUS in dps:
             self._note_senseiq_push()
         dps = self._hold_lullaby_state(dps)
-        merged = {**self.data, **dps}
-        self.async_set_updated_data(merged)
+        self._show_lan_state({**self.data, **dps})
+
+    @callback
+    def _show_lan_state(self, data: dict[str, Any]) -> None:
+        """Show state the LAN session reported, leaving the cloud poll where it is.
+
+        `async_set_updated_data` also reschedules the next refresh a full
+        interval out, so pushes arriving faster than the poll interval (a
+        SenseIQ status every few seconds) postponed the poll indefinitely. On a
+        3.3 session, where alarms arrive only through the poll, they stopped
+        arriving. Availability stays with the poll too: a push does not mark a
+        failed cloud poll as recovered, which would flap the entities on every
+        tick of an outage.
+        """
+        self.data = data
+        self.async_update_listeners()
 
     @callback
     def _hold_lullaby_state(self, dps: dict[str, Any]) -> dict[str, Any]:
@@ -269,7 +283,7 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         if self.data is None or value is None:
             return
         _LOGGER.debug("Lullaby state settled at %r for %s", value, self.camera_name)
-        self.async_set_updated_data({**self.data, DPS_LULLABY_STATE: value})
+        self._show_lan_state({**self.data, DPS_LULLABY_STATE: value})
 
     @callback
     def _apply_optimistic(self, dps: dict, extra: dict | None = None) -> None:

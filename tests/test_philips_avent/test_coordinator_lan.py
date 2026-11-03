@@ -228,3 +228,53 @@ class TestLocalKey:
         asyncio.run(coordinator.start_lan())
         assert started == []
         assert coordinator.local_key is None
+
+
+class TestPushesLeaveThePollAlone:
+    """Home Assistant's async_set_updated_data reschedules the next refresh a full interval out.
+
+    Called on every push, SenseIQ statuses every few seconds kept a 3.3 monitor's
+    cloud poll, its only source of alarms, from ever running.
+    """
+
+    def _scheduled(self, coordinator):
+        clock = [0.0]
+        coordinator.clock = lambda: clock[0]
+        coordinator._schedule_refresh()  # what Home Assistant does after a refresh
+        return clock, coordinator.scheduled_for
+
+    def test_the_stand_in_reschedules_as_home_assistant_does(self, make):
+        coordinator = make(3.3)
+        clock, due = self._scheduled(coordinator)
+        clock[0] = 10
+        coordinator.async_set_updated_data(dict(STATE))
+        assert coordinator.scheduled_for == due + 10
+
+    def test_pushes_faster_than_the_poll_do_not_delay_it(self, make):
+        coordinator = make(3.3)
+        clock, due = self._scheduled(coordinator)
+        for second in range(3, 300, 3):
+            clock[0] = second
+            coordinator._on_lan_dps_update({"3": f'{{"r":"b","br":{20 + second % 3}}}', "207": 2300 + second})
+        assert coordinator.scheduled_for == due
+        assert coordinator.data["207"] == 2300 + 297
+        assert coordinator.listener_updates == 99
+
+    def test_a_settled_lullaby_state_does_not_delay_it_either(self, make):
+        import time
+
+        coordinator = make(3.3)
+        clock, due = self._scheduled(coordinator)
+        clock[0] = 10
+        coordinator._pending_lullaby = "playing"
+        coordinator._pending_lullaby_since = time.monotonic() - 60
+        coordinator._commit_lullaby_state()
+        assert coordinator.data["246"] == "playing"
+        assert coordinator.scheduled_for == due
+
+    def test_a_push_does_not_mark_a_failed_poll_as_recovered(self, make):
+        coordinator = make(3.3)
+        coordinator.last_update_success = False
+        coordinator._on_lan_dps_update({"207": 2500})
+        assert coordinator.last_update_success is False
+        assert coordinator.data["207"] == 2500
