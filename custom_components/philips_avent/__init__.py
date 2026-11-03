@@ -292,11 +292,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             seed = previous.get(cam_id, {})
             await coordinator.start_lan(_on_address_change, seed.get("lan_ip") or None, seed.get("lan_protocol", ""))
 
-        passwords.update(
-            await fetch_p2p_passwords(
-                api, list(coordinators), {k: v["p2p_password"] for k, v in previous.items()}
+        # With LAN streaming off the bridge file carries no P2P password, so there is nothing to fetch.
+        if entry.options.get(CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING):
+            passwords.update(
+                await fetch_p2p_passwords(
+                    api, list(coordinators), {k: v["p2p_password"] for k, v in previous.items()}
+                )
             )
-        )
         hass.data.setdefault(DOMAIN, {})[entry.entry_id] = data
         ready = True
         await _rewrite_bridge_config()

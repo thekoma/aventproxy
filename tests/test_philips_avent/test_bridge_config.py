@@ -156,6 +156,23 @@ class TestBuildBridgeConfig:
     def test_lan_streaming_written_when_off(self):
         assert build_bridge_config(**self.BASE, lan_streaming=False)["lan_streaming"] is False
 
+    def test_lan_secrets_stay_out_while_lan_streaming_is_off(self):
+        lan = {"abc123": {"local_key": "lk", "p2p_password": "pw", "lan_ip": "192.168.1.9", "lan_protocol": "3.5"}}
+        config = build_bridge_config(**self.BASE, lan_streaming=False, lan=lan)
+        camera = config["cameras"][0]
+        assert (camera["local_key"], camera["p2p_password"]) == ("", "")
+        # Not credentials, and the seed for the next setup's LAN client.
+        assert (camera["lan_ip"], camera["lan_protocol"]) == ("192.168.1.9", "3.5")
+        assert lan["abc123"]["local_key"] == "lk"
+
+    def test_lan_off_gives_identical_json_across_restarts(self):
+        # run.sh restarts the bridge on any md5 change (issue #73).
+        lan = {"abc123": {"local_key": "lk", "p2p_password": "", "lan_ip": "192.168.1.9", "lan_protocol": "3.3"}}
+        again = {"abc123": {"local_key": "lk", "p2p_password": "pw", "lan_ip": "192.168.1.9", "lan_protocol": "3.3"}}
+        first = json.dumps(build_bridge_config(**self.BASE, lan_streaming=False, lan=lan), indent=2)
+        second = json.dumps(build_bridge_config(**self.BASE, lan_streaming=False, lan=again), indent=2)
+        assert first == second
+
     def test_unchanged_inputs_give_identical_json(self):
         # run.sh restarts the bridge on any md5 change (issue #73).
         lan = {"abc123": {"local_key": "lk", "p2p_password": "pw", "lan_ip": "192.168.1.9", "lan_protocol": "3.3"}}

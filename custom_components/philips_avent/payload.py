@@ -106,7 +106,17 @@ def build_bridge_config(
     defaults to off (issue #72).
     `uid` and `lan_streaming` steer the LAN path; `lan` maps a camera id to its
     `local_key`, `p2p_password`, `lan_ip` and `lan_protocol`.
+
+    With LAN streaming off the bridge never uses the local key or the P2P
+    password, so they stay out of a file that every backup copies. The address
+    and protocol stay: they are no credentials, and the next setup seeds the LAN
+    client from them, which keeps the file the same across restarts.
     """
+    if not lan_streaming:
+        lan = {
+            camera_id: {**values, "local_key": "", "p2p_password": ""}
+            for camera_id, values in (lan or {}).items()
+        }
     return {
         "signing_key": signing_key,
         "sid": sid,
