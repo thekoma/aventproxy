@@ -65,8 +65,8 @@ func (c *fakeChannel) Close() {
 	c.mu.Unlock()
 }
 
-func fakeBroker(ch *fakeChannel) func(string) (immBroker, error) {
-	return func(string) (immBroker, error) {
+func fakeBroker(ch *fakeChannel) func(context.Context, string) (immBroker, error) {
+	return func(context.Context, string) (immBroker, error) {
 		return immBroker{
 			uid: "cloud-uid",
 			open: func(motoID, deviceID, sessionID string, onFrame func(json.RawMessage)) immChannel {
@@ -148,7 +148,7 @@ func TestIMMPrepareFailures(t *testing.T) {
 		"no cloud client": {},
 		"api error":       {api: &fakeCloudAPI{err: errors.New("PERMISSION_DENIED")}, broker: fakeBroker(&fakeChannel{})},
 		"no moto":         {api: &fakeCloudAPI{rtc: noMoto}, broker: fakeBroker(&fakeChannel{})},
-		"no mqtt": {api: &fakeCloudAPI{rtc: testRTCConfig()}, broker: func(string) (immBroker, error) {
+		"no mqtt": {api: &fakeCloudAPI{rtc: testRTCConfig()}, broker: func(context.Context, string) (immBroker, error) {
 			return immBroker{}, errors.New("broker down")
 		}},
 	}
@@ -365,5 +365,34 @@ func TestIMMMediaIdleIsNamed(t *testing.T) {
 	err := src.Start(context.Background())
 	if got := immStep(err); got != "no media after login" {
 		t.Fatalf("immStep = %q for %v", got, err)
+	}
+}
+
+// M4: an MQTT connect that outlives the attempt starts nothing after it: no
+// cloud call, and the broker is asked with the attempt's context, so its
+// backoff stops too.
+func TestIMMPrepareStopsWithTheAttempt(t *testing.T) {
+	api := &fakeCloudAPI{rtc: testRTCConfig()}
+	release := make(chan struct{})
+	gotCtx := make(chan context.Context, 1)
+	cloud := immCloud{deviceID: "testdev", api: api, broker: func(ctx context.Context, _ string) (immBroker, error) {
+		gotCtx <- ctx
+		<-release
+		return immBroker{uid: "cloud-uid"}, nil
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := cloud.prepare(ctx, &lan.ClientConfig{}, nil); !errors.Is(err, errIMMCloud) {
+		t.Fatalf("err = %v, want errIMMCloud at the deadline", err)
+	}
+	if bctx := <-gotCtx; bctx.Err() == nil {
+		t.Error("the broker was not given the attempt's context")
+	}
+	close(release)
+	time.Sleep(50 * time.Millisecond)
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if len(api.calls) != 0 {
+		t.Fatalf("cloud calls after the attempt ended: %v", api.calls)
 	}
 }

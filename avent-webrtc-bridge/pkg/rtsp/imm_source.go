@@ -104,8 +104,8 @@ func (cs *CameraStream) newIMMSource(forwarder *RTPForwarder) lanStreamer {
 		}
 	}
 	if s.mqttManager != nil {
-		cloud.broker = func(deviceID string) (immBroker, error) {
-			c, err := s.mqttManager.GetClient(deviceID)
+		cloud.broker = func(ctx context.Context, deviceID string) (immBroker, error) {
+			c, err := s.mqttManager.GetClientContext(ctx, deviceID)
 			if err != nil {
 				return immBroker{}, err
 			}
@@ -187,7 +187,7 @@ func (s *immSource) stallReason() error {
 type immCloud struct {
 	deviceID, deviceName string
 	api                  immCloudAPI
-	broker               func(deviceID string) (immBroker, error)
+	broker               func(ctx context.Context, deviceID string) (immBroker, error)
 	// deviceChannel opens the device's own channel, the second route tried
 	// when the moto relay does not answer (imm_signal.go). nil: moto only.
 	deviceChannel func(deviceID, localKey string, onData func(json.RawMessage)) (immChannel, error)
@@ -207,22 +207,36 @@ func (ic immCloud) prepare(ctx context.Context, cfg *lan.ClientConfig, onControl
 		err    error
 	}
 	done := make(chan result, 1)
+	// Detached, so the attempt's deadline holds even if a call hangs. Every
+	// step checks ctx first, and the broker comes first and is ctx-aware: once
+	// the attempt is over this goroutine starts nothing more, and above all no
+	// MQTT backoff that the webrtc fallback's GetClient would queue behind.
+	// The broker first is also the webrtc session's order (startCloud).
 	go func() {
+		b, err := ic.broker(ctx, ic.deviceID)
+		if err != nil {
+			done <- result{err: fmt.Errorf("%w: MQTT: %v", errIMMCloud, err)}
+			return
+		}
+		if ctx.Err() != nil {
+			return
+		}
 		if err := ic.api.P2PPreLink(ic.deviceID); err != nil {
 			core.Logger.Debug().Err(err).Msgf("P2P pre-link for %s failed (imm, non-fatal)", ic.deviceName)
+		}
+		if ctx.Err() != nil {
+			return
 		}
 		resp, err := ic.api.GetWebRTCConfig(ic.deviceID)
 		if err != nil {
 			done <- result{err: fmt.Errorf("%w: rtc.config.get: %v", errIMMCloud, err)}
 			return
 		}
+		if ctx.Err() != nil {
+			return
+		}
 		if err := ic.api.RTCSessionInit(ic.deviceID); err != nil {
 			core.Logger.Debug().Err(err).Msgf("RTC session init for %s failed (imm, non-fatal)", ic.deviceName)
-		}
-		b, err := ic.broker(ic.deviceID)
-		if err != nil {
-			done <- result{err: fmt.Errorf("%w: MQTT: %v", errIMMCloud, err)}
-			return
 		}
 		done <- result{rtc: &resp.Result, broker: b}
 	}()
