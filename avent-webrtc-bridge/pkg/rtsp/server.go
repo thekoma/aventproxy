@@ -239,7 +239,12 @@ var cloudRetryDelay = 3 * time.Second
 // connects, or once the HEVC datachannel confirms its codec, which is no
 // proof that anything will follow. A working camera sends its first packet
 // within a second or two.
-var cloudMediaTimeout = 20 * time.Second
+//
+// It holds a time.Duration and is atomic because tests shorten it while timers
+// that earlier tests armed may still be running.
+var cloudMediaTimeout atomic.Int64
+
+func init() { cloudMediaTimeout.Store(int64(20 * time.Second)) }
 
 type ServerConfig struct {
 	Port                 int
@@ -1012,7 +1017,8 @@ func (cs *CameraStream) startCloud() error {
 func (cs *CameraStream) armMediaCheck() {
 	bridge := cs.webrtcBridge
 	var timer *time.Timer
-	timer = time.AfterFunc(cloudMediaTimeout, func() {
+	timeout := time.Duration(cloudMediaTimeout.Load())
+	timer = time.AfterFunc(timeout, func() {
 		// Taken before timer is read: armMediaCheck's caller holds it while timer is set.
 		cs.mutex.Lock()
 		if cs.mediaTimer != timer { // the stream stopped, or restarted, since
@@ -1026,7 +1032,7 @@ func (cs *CameraStream) armMediaCheck() {
 			return
 		}
 		core.Logger.Warn().Msgf("Cloud session for %s is up but carried no media in %v; closing its clients so they reconnect to a new one",
-			cs.camera.DeviceName, cloudMediaTimeout)
+			cs.camera.DeviceName, timeout)
 		clients := cs.teardownLocked()
 		cs.mutex.Unlock()
 		closeClients(clients)

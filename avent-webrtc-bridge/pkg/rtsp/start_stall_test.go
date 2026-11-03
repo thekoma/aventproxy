@@ -440,9 +440,9 @@ func TestClientRegisteredDuringATeardownIsClosed(t *testing.T) {
 
 // shortMediaCheck makes a cloud session that carries no media fail after d.
 func shortMediaCheck(t *testing.T, d time.Duration) {
-	old := cloudMediaTimeout
-	cloudMediaTimeout = d
-	t.Cleanup(func() { cloudMediaTimeout = old })
+	old := cloudMediaTimeout.Load()
+	cloudMediaTimeout.Store(int64(d))
+	t.Cleanup(func() { cloudMediaTimeout.Store(old) })
 }
 
 // sessionMedia is what a test stream's cloud sessions carry.
