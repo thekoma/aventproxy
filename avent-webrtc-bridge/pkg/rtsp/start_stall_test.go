@@ -386,16 +386,21 @@ func TestClientRegisteredDuringATeardownIsClosed(t *testing.T) {
 	}, "a client is left in the stream with no forwarder entry")
 }
 
-// shortVideoWatch makes a cloud session that carries no video fail after d.
-func shortVideoWatch(t *testing.T, d time.Duration) {
-	old := cloudVideoTimeout
-	cloudVideoTimeout = d
-	t.Cleanup(func() { cloudVideoTimeout = old })
+// shortMediaCheck makes a cloud session that carries no media fail after d.
+func shortMediaCheck(t *testing.T, d time.Duration) {
+	old := cloudMediaTimeout
+	cloudMediaTimeout = d
+	t.Cleanup(func() { cloudMediaTimeout = old })
 }
 
-// silentStream is a stream with one client whose cloud attempts succeed,
-// carrying video only if video is set.
-func silentStream(t *testing.T, video *atomic.Bool) (*CameraStream, net.Conn) {
+// sessionMedia is what a test stream's cloud sessions carry.
+type sessionMedia struct {
+	video, audio atomic.Bool
+}
+
+// mediaStream is a stream with one client whose cloud attempts succeed and
+// carry what media says.
+func mediaStream(t *testing.T, media *sessionMedia) (*CameraStream, net.Conn) {
 	t.Helper()
 	_, cs := newTestCameraStream(t)
 	cs.camera.DeviceName = fmt.Sprintf("Silent Cam %d", time.Now().UnixNano())
@@ -406,8 +411,11 @@ func silentStream(t *testing.T, video *atomic.Bool) (*CameraStream, net.Conn) {
 	})
 	cs.clients["s1"] = &RTSPClient{conn: serverConn, session: "s1", stream: cs}
 	cs.cloudStart = func() error {
-		if video.Load() {
+		if media.video.Load() {
 			cs.webrtcBridge.videoPackets.Add(1)
+		}
+		if media.audio.Load() {
+			cs.webrtcBridge.audioPackets.Add(1)
 		}
 		return nil
 	}
@@ -416,13 +424,13 @@ func silentStream(t *testing.T, video *atomic.Bool) (*CameraStream, net.Conn) {
 }
 
 // Issue #89: a cloud session can come up (ICE connected, or the HEVC
-// datachannel confirmed its codec) and then carry no video at all. Its
-// clients would wait for good, and every later one would join the dead
-// stream: the session must count as failed, its clients closed, so the next
-// one starts afresh.
-func TestCloudSessionWithoutVideoCountsAsFailed(t *testing.T) {
-	shortVideoWatch(t, 100*time.Millisecond)
-	cs, clientConn := silentStream(t, new(atomic.Bool))
+// datachannel confirmed its codec) and then carry nothing at all. Its clients
+// would wait for good, and every later one would join the dead stream: the
+// session must count as failed, its clients closed, so the next one starts
+// afresh.
+func TestCloudSessionWithoutMediaCountsAsFailed(t *testing.T) {
+	shortMediaCheck(t, 100*time.Millisecond)
+	cs, clientConn := mediaStream(t, new(sessionMedia))
 
 	begin(cs)
 	if active, _, _ := streamState(cs); !active {
@@ -433,37 +441,53 @@ func TestCloudSessionWithoutVideoCountsAsFailed(t *testing.T) {
 		t.Fatalf("active=%v connecting=%v, want the silent session torn down", active, connecting)
 	}
 	for _, line := range testLog.lines(cs.camera.DeviceName) {
-		if strings.Contains(line, `"level":"warn"`) && strings.Contains(line, "no video") {
+		if strings.Contains(line, `"level":"warn"`) && strings.Contains(line, "no media") {
 			return
 		}
 	}
-	t.Fatalf("no warning naming the missing video in %q", testLog.lines(cs.camera.DeviceName))
+	t.Fatalf("no warning naming the missing media in %q", testLog.lines(cs.camera.DeviceName))
 }
 
-func TestCloudSessionWithVideoIsKept(t *testing.T) {
-	shortVideoWatch(t, 50*time.Millisecond)
-	video := new(atomic.Bool)
-	video.Store(true)
-	cs, clientConn := silentStream(t, video)
+// A session that carries either kind of media is alive. Audio alone is what a
+// monitor in privacy mode sends ("camera off, audio only",
+// examples/DPS_REFERENCE.md): tearing that session down would start a new
+// one every ~25 s for as long as a viewer stays, and each new session can
+// pause a playing lullaby (#72).
+func TestCloudSessionWithMediaIsKept(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		video, audio bool
+	}{
+		{"video", true, false},
+		{"audio only, as in privacy mode", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			shortMediaCheck(t, 50*time.Millisecond)
+			media := new(sessionMedia)
+			media.video.Store(tc.video)
+			media.audio.Store(tc.audio)
+			cs, clientConn := mediaStream(t, media)
 
-	begin(cs)
-	time.Sleep(200 * time.Millisecond)
-	if active, _, _ := streamState(cs); !active {
-		t.Fatal("a session carrying video was torn down")
+			begin(cs)
+			time.Sleep(200 * time.Millisecond)
+			if active, _, _ := streamState(cs); !active {
+				t.Fatal("a session carrying media was torn down")
+			}
+			expectOpen(t, clientConn)
+		})
 	}
-	expectOpen(t, clientConn)
 }
 
 // The check belongs to the session it was armed for: a restart in between
 // gets its own.
-func TestVideoCheckOfAStoppedSessionLeavesTheRestartAlone(t *testing.T) {
-	shortVideoWatch(t, 100*time.Millisecond)
-	video := new(atomic.Bool)
-	cs, clientConn := silentStream(t, video)
+func TestMediaCheckOfAStoppedSessionLeavesTheRestartAlone(t *testing.T) {
+	shortMediaCheck(t, 100*time.Millisecond)
+	media := new(sessionMedia)
+	cs, clientConn := mediaStream(t, media)
 
 	begin(cs) // silent
 	cs.stopStream()
-	video.Store(true)
+	media.video.Store(true)
 	begin(cs) // carries video
 	time.Sleep(300 * time.Millisecond)
 	if active, _, _ := streamState(cs); !active {
