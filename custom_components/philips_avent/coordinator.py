@@ -46,6 +46,11 @@ RSSI_INTERVAL = timedelta(minutes=5)
 SLEEP_DAY_INTERVAL = timedelta(minutes=15)
 
 
+# What a cloud call can fail with, once Tuya errors are mapped to UpdateFailed or
+# ConfigEntryAuthFailed. A load balancer's HTML error page is a JSON ValueError.
+CLOUD_FAILURES = (UpdateFailed, ConfigEntryAuthFailed, aiohttp.ClientError, TimeoutError, ValueError)
+
+
 def _session_rejected(err: TuyaAPIError) -> bool:
     """Whether the cloud refused the stored session, which only a reauth fixes."""
     return "SID_INVALID" in str(err) or "USER_SESSION_LOSS" in str(err)
@@ -360,29 +365,36 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         self._apply_optimistic(dps, optimistic)
         return await self.api.set_dps(self.camera_id, dps)
 
-    async def _refresh_rssi(self) -> None:
-        """Refresh the WiFi signal, at most once per RSSI_INTERVAL."""
+    async def _fetch_rssi(self) -> bool:
+        """Refresh the WiFi signal if it is due; True when the cloud answered.
+
+        At most once per RSSI_INTERVAL. Raises one of CLOUD_FAILURES, with a
+        refused session as ConfigEntryAuthFailed: behind a paused poll this is
+        the one regular cloud call left, so it is what tells the cloud is gone,
+        back, or refusing the session.
+        """
         now = utcnow()
         if self._rssi_refreshed_at and now - self._rssi_refreshed_at < RSSI_INTERVAL:
-            return
+            return False
         self._rssi_refreshed_at = now
         try:
             rssi_data = await self.api.get_rssi(self.camera_id)
         except TuyaAPIError as err:
-            # Behind a paused poll this is the one regular cloud call left, so a
-            # refused session must still reach the reauth flow from here.
             if _session_rejected(err):
                 raise ConfigEntryAuthFailed(f"Authentication failed: {err}") from err
-            _LOGGER.debug("WiFi signal refresh failed for %s: %s", self.camera_name, err)
-            return
-        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
-            # A failed reading must not fail the DPS poll it rides along with,
-            # nor the tick that stands in for one behind a LAN session. A load
-            # balancer's HTML error page arrives as a JSON ValueError.
-            _LOGGER.debug("WiFi signal refresh failed for %s: %s", self.camera_name, err)
-            return
+            raise UpdateFailed(f"WiFi signal refresh failed: {err}") from err
         if isinstance(rssi_data, dict):
             self.rssi = rssi_data.get("value")
+        return True
+
+    async def _refresh_rssi(self) -> None:
+        """Refresh the WiFi signal alongside the DPS poll, which a failure must not fail."""
+        try:
+            await self._fetch_rssi()
+        except ConfigEntryAuthFailed:
+            raise
+        except CLOUD_FAILURES as err:
+            _LOGGER.debug("WiFi signal refresh failed for %s: %s", self.camera_name, err)
 
     async def _refresh_sleep_day(self) -> None:
         """Fetch and decode the SenseIQ nightly sleep summary, throttled.
@@ -474,8 +486,9 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         if self.data is not None and self.lan_serves_state:
             self._note_cloud_poll(paused=True)
             try:
-                await self._refresh_rssi()
-            except ConfigEntryAuthFailed as err:
+                if await self._fetch_rssi():
+                    self._note_cloud_recovered()
+            except CLOUD_FAILURES as err:
                 self._cover_cloud_failure(err)
             if DPS_SENSEIQ_STATUS in self.data:
                 await self._refresh_sleep_day()
@@ -484,19 +497,31 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
 
         try:
             data = await self._poll_cloud()
-        except (UpdateFailed, ConfigEntryAuthFailed, aiohttp.ClientError, TimeoutError, ValueError) as err:
+        except CLOUD_FAILURES as err:
             # Without a live LAN session availability follows the poll, and Home
-            # Assistant logs the failure and the recovery once each.
+            # Assistant logs the failure itself. The episode stays open, so a
+            # session that comes back during it does not log a second warning.
             if self.data is None or not self.lan_live:
-                self._cloud_failing = False
+                self._cloud_failing = True
                 raise
             self._cover_cloud_failure(err)
             return self.data
-        if self._cloud_failing:
-            self._cloud_failing = False
-            self._reauth_requested = False
-            _LOGGER.info("Cloud poll for %s recovered", self.camera_name)
+        self._note_cloud_recovered()
         return data
+
+    @callback
+    def _note_cloud_recovered(self) -> None:
+        """Close a cloud failure episode with one INFO line.
+
+        Skipped when the last refresh raised: Home Assistant then logs its own
+        recovery as soon as this one succeeds.
+        """
+        if not self._cloud_failing:
+            return
+        self._cloud_failing = False
+        self._reauth_requested = False
+        if self.last_update_success:
+            _LOGGER.info("Cloud for %s answers again", self.camera_name)
 
     @callback
     def _cover_cloud_failure(self, err: Exception) -> None:
@@ -512,11 +537,11 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
             if entry := getattr(self, "config_entry", None):
                 entry.async_start_reauth(self.hass)
         if self._cloud_failing:
-            _LOGGER.debug("Cloud poll for %s still failing: %s", self.camera_name, err)
+            _LOGGER.debug("Cloud for %s still failing: %s", self.camera_name, err)
             return
         self._cloud_failing = True
         _LOGGER.warning(
-            "Cloud poll for %s failed (%s); its LAN session keeps it available until the cloud answers again",
+            "Cloud for %s failed (%s); its LAN session keeps it available until the cloud answers again",
             self.camera_name, err,
         )
 

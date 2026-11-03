@@ -367,7 +367,7 @@ class TestCloudFailureBehindALanSession:
         return sys.modules[type(coordinator).__module__]
 
     def _messages(self, caplog, level):
-        return [r.getMessage() for r in caplog.records if r.levelname == level and "Cloud poll" in r.getMessage()]
+        return [r.getMessage() for r in caplog.records if r.levelname == level and "Cloud for" in r.getMessage()]
 
     def test_failures_keep_the_state_and_log_once_each_way(self, make, caplog):
         caplog.set_level("DEBUG")
@@ -469,3 +469,71 @@ class TestOnlyAProvenSessionCounts:
         coordinator._commit_lullaby_state()
         assert coordinator.data["246"] == "playing"
         assert coordinator.last_update_success is False
+
+
+class TestOneWarningAndOneRecoveryPerOutage:
+    """Each cloud outage logs one failure line and one recovery line, however the session behaves (review M4)."""
+
+    def _messages(self, caplog, level):
+        return [r.getMessage() for r in caplog.records if r.levelname == level and "Cloud for" in r.getMessage()]
+
+    def _poll(self, coordinator):
+        """What Home Assistant does around _async_update_data, for last_update_success."""
+        try:
+            data = asyncio.run(coordinator._async_update_data())
+        except (aiohttp.ClientError, ValueError):
+            coordinator.last_update_success = False
+            return None
+        coordinator.last_update_success = True
+        return data
+
+    def test_a_session_that_flaps_during_the_outage_warns_once(self, make, caplog):
+        caplog.set_level("DEBUG")
+        coordinator = make(3.3, api=FakeApi(device_error=aiohttp.ClientError("cloud down")))
+        lan = coordinator._lan_client
+        assert self._poll(coordinator) == STATE
+        lan.connected = lan.proven = False
+        assert self._poll(coordinator) is None
+        lan.connected = lan.proven = True
+        coordinator._mark_lan_live()
+        assert self._poll(coordinator) == STATE
+        coordinator.api.device_error = None
+        assert self._poll(coordinator)["207"] == 2400
+        assert len(self._messages(caplog, "WARNING")) == 1
+        assert len(self._messages(caplog, "INFO")) == 1
+
+    def test_a_recovery_after_the_session_came_back_is_logged(self, make, caplog):
+        # Home Assistant's own "recovered" is skipped once the session restored
+        # availability, so this one has to come from us.
+        caplog.set_level("DEBUG")
+        coordinator = make(3.3, api=FakeApi(device_error=aiohttp.ClientError("cloud down")))
+        lan = coordinator._lan_client
+        lan.connected = lan.proven = False
+        assert self._poll(coordinator) is None
+        lan.connected = lan.proven = True
+        coordinator._mark_lan_live()
+        coordinator.api.device_error = None
+        assert self._poll(coordinator)["207"] == 2400
+        assert len(self._messages(caplog, "INFO")) == 1
+        assert self._messages(caplog, "WARNING") == []
+
+    def test_without_a_session_home_assistant_logs_the_recovery(self, make, caplog):
+        caplog.set_level("DEBUG")
+        coordinator = make(None, api=FakeApi(device_error=aiohttp.ClientError("cloud down")))
+        assert self._poll(coordinator) is None
+        coordinator.api.device_error = None
+        assert self._poll(coordinator)
+        assert self._messages(caplog, "INFO") == []
+        assert self._messages(caplog, "WARNING") == []
+
+    def test_behind_a_paused_poll_the_signal_call_opens_and_closes_the_episode(self, make, caplog):
+        caplog.set_level("DEBUG")
+        coordinator = make(3.5, api=FakeApi(rssi_error=aiohttp.ClientError("cloud down")))
+        assert self._poll(coordinator) == STATE
+        coordinator._rssi_refreshed_at = None
+        assert self._poll(coordinator) == STATE
+        assert len(self._messages(caplog, "WARNING")) == 1
+        coordinator.api.rssi_error = None
+        coordinator._rssi_refreshed_at = None
+        assert self._poll(coordinator) == STATE
+        assert len(self._messages(caplog, "INFO")) == 1
