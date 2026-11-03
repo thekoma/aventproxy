@@ -83,6 +83,7 @@ type RTSPServer struct {
 
 	cooldownMutex sync.Mutex
 	lanCooldowns  map[string]time.Time // device id -> end of its LAN cool-down
+	lanFailures   map[string]int       // device id -> LAN failures in a row; made on first use
 	immCooldowns  map[string]time.Time // device id -> end of its imm cool-down; made on first use
 
 	// newStream, if set, prepares every stream getOrCreateStream creates,
@@ -937,6 +938,7 @@ func (cs *CameraStream) startStream(gen uint64) {
 	if ok, reason := cs.lanEligible(); !ok && reason == "cooling down" {
 		cs.server.cooldownMutex.Lock()
 		delete(cs.server.lanCooldowns, cs.camera.DeviceID)
+		delete(cs.server.lanFailures, cs.camera.DeviceID) // the LAN may not have been at fault
 		cs.server.cooldownMutex.Unlock()
 		core.Logger.Info().Msgf("Cloud signalling failed too for %s, trying LAN signalling again on the next start", cs.camera.DeviceName)
 	}
