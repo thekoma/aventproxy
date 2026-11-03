@@ -54,7 +54,7 @@ func TestHandleBridgeErrorClosesClientsAndClearsActive(t *testing.T) {
 	}
 	stream.clients[client.session] = client
 
-	stream.handleBridgeError(errors.New("WebRTC connection failed/closed"))
+	stream.handleBridgeError(stream.webrtcBridge, errors.New("WebRTC connection failed/closed"))
 
 	stream.mutex.RLock()
 	active := stream.active.Load()
@@ -88,9 +88,9 @@ func TestHandleBridgeErrorReentrancy(t *testing.T) {
 	}
 	stream.clients[client.session] = client
 
-	stream.handleBridgeError(errors.New("first"))
+	stream.handleBridgeError(stream.webrtcBridge, errors.New("first"))
 	// Second call must be a no-op (already torn down / handlingError guard).
-	stream.handleBridgeError(errors.New("second"))
+	stream.handleBridgeError(stream.webrtcBridge, errors.New("second"))
 
 	stream.mutex.RLock()
 	active := stream.active.Load()
@@ -150,7 +150,7 @@ func TestAddClientRestartsAfterBridgeError(t *testing.T) {
 		started <- struct{}{}
 	}
 
-	stream.handleBridgeError(errors.New("WebRTC connection failed/closed"))
+	stream.handleBridgeError(stream.webrtcBridge, errors.New("WebRTC connection failed/closed"))
 
 	clientConn, serverConn := net.Pipe()
 	defer clientConn.Close()
@@ -190,7 +190,7 @@ func TestReplaceBridgeReattachesErrorHandler(t *testing.T) {
 		t.Fatal("expected a bridge with an error handler on a new stream")
 	}
 
-	stream.handleBridgeError(errors.New("WebRTC connection failed/closed"))
+	stream.handleBridgeError(stream.webrtcBridge, errors.New("WebRTC connection failed/closed"))
 
 	if first.errorHandler() != nil {
 		t.Error("teardown should clear OnError on the failed bridge")
@@ -317,4 +317,48 @@ func TestRemoveClientDoesNotHoldServerLockOnStream(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	server.mutex.Unlock()
+}
+
+// A failed cloud attempt's bridge can still report an error afterwards (ICE
+// failing, or a disconnect that arrived during Start). The start loop owns
+// that failure and retries; the late report must not tear the retry down.
+func TestBridgeErrorWhileConnectingIsLeftToTheStart(t *testing.T) {
+	_, stream := newTestCameraStream(t)
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+	stream.clients["sess1"] = &RTSPClient{conn: serverConn, session: "sess1", stream: stream}
+	stream.mutex.Lock()
+	stream.claimStart() // between the two cloud attempts
+	stream.mutex.Unlock()
+
+	stream.webrtcBridge.errorHandler()(errors.New("WebRTC connection failed/closed"))
+
+	if !stream.connecting.Load() {
+		t.Fatal("a failed attempt's error ended the start that is about to retry")
+	}
+	expectOpen(t, clientConn)
+}
+
+// The handler of a bridge that was replaced may already be running when the
+// replacement takes over: it must not tear down the healthy new session.
+func TestReplacedBridgeErrorLeavesTheNewOneAlone(t *testing.T) {
+	_, stream := newTestCameraStream(t)
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+	stream.clients["sess1"] = &RTSPClient{conn: serverConn, session: "sess1", stream: stream}
+
+	stale := stream.webrtcBridge.errorHandler()
+	stream.mutex.Lock()
+	stream.replaceBridge()
+	stream.active.Store(true)
+	stream.mutex.Unlock()
+
+	stale(errors.New("WebRTC connection failed/closed"))
+
+	if !stream.active.Load() {
+		t.Fatal("the replaced bridge's error stopped the stream on its successor")
+	}
+	expectOpen(t, clientConn)
 }

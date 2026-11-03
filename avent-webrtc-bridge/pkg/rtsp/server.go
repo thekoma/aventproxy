@@ -850,19 +850,25 @@ func (cs *CameraStream) startCloud() error {
 
 // attachBridgeErrorHandler wires WebRTC OnError to handleBridgeError on the current bridge.
 func (cs *CameraStream) attachBridgeErrorHandler() {
-	if cs.webrtcBridge == nil {
+	bridge := cs.webrtcBridge
+	if bridge == nil {
 		return
 	}
-	cs.webrtcBridge.SetOnError(func(err error) {
-		cs.handleBridgeError(err)
+	bridge.SetOnError(func(err error) {
+		cs.handleBridgeError(bridge, err)
 	})
 }
 
 // handleBridgeError tears down a failed WebRTC session and force-closes RTSP clients
 // so they reconnect against a fresh stream (required for persistent clients like Scrypted).
-func (cs *CameraStream) handleBridgeError(err error) {
+//
+// Only an error from the bridge an active stream runs on counts. While the
+// stream is connecting, the start owns a failed attempt and retries it; and a
+// replaced bridge's handler can already be running when its successor takes
+// over, and must leave the successor alone.
+func (cs *CameraStream) handleBridgeError(bridge *WebRTCBridge, err error) {
 	cs.mutex.Lock()
-	if cs.handlingError || (!cs.active.Load() && !cs.connecting.Load()) {
+	if cs.handlingError || !cs.active.Load() || cs.webrtcBridge != bridge {
 		cs.mutex.Unlock()
 		return
 	}
