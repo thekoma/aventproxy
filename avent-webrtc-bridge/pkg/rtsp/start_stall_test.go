@@ -324,3 +324,89 @@ func TestClientJoiningAfterATeardownIsClosed(t *testing.T) {
 		t.Fatalf("%d cloud attempts; the late client must not restart the stream it never joined", n)
 	}
 }
+
+// shortVideoWatch makes a cloud session that carries no video fail after d.
+func shortVideoWatch(t *testing.T, d time.Duration) {
+	old := cloudVideoTimeout
+	cloudVideoTimeout = d
+	t.Cleanup(func() { cloudVideoTimeout = old })
+}
+
+// silentStream is a stream with one client whose cloud attempts succeed,
+// carrying video only if video is set.
+func silentStream(t *testing.T, video *atomic.Bool) (*CameraStream, net.Conn) {
+	t.Helper()
+	_, cs := newTestCameraStream(t)
+	cs.camera.DeviceName = fmt.Sprintf("Silent Cam %d", time.Now().UnixNano())
+	clientConn, serverConn := net.Pipe()
+	t.Cleanup(func() {
+		clientConn.Close()
+		serverConn.Close()
+	})
+	cs.clients["s1"] = &RTSPClient{conn: serverConn, session: "s1", stream: cs}
+	cs.cloudStart = func() error {
+		if video.Load() {
+			cs.webrtcBridge.videoPackets.Add(1)
+		}
+		return nil
+	}
+	t.Cleanup(cs.stopStream)
+	return cs, clientConn
+}
+
+// Issue #89: a cloud session can come up (ICE connected, or the HEVC
+// datachannel confirmed its codec) and then carry no video at all. Its
+// clients would wait for good, and every later one would join the dead
+// stream: the session must count as failed, its clients closed, so the next
+// one starts afresh.
+func TestCloudSessionWithoutVideoCountsAsFailed(t *testing.T) {
+	shortVideoWatch(t, 100*time.Millisecond)
+	cs, clientConn := silentStream(t, new(atomic.Bool))
+
+	begin(cs)
+	if active, _, _ := streamState(cs); !active {
+		t.Fatal("the cloud attempt did not bring the stream up")
+	}
+	expectClosed(t, clientConn)
+	if active, connecting, _ := streamState(cs); active || connecting {
+		t.Fatalf("active=%v connecting=%v, want the silent session torn down", active, connecting)
+	}
+	for _, line := range testLog.lines(cs.camera.DeviceName) {
+		if strings.Contains(line, `"level":"warn"`) && strings.Contains(line, "no video") {
+			return
+		}
+	}
+	t.Fatalf("no warning naming the missing video in %q", testLog.lines(cs.camera.DeviceName))
+}
+
+func TestCloudSessionWithVideoIsKept(t *testing.T) {
+	shortVideoWatch(t, 50*time.Millisecond)
+	video := new(atomic.Bool)
+	video.Store(true)
+	cs, clientConn := silentStream(t, video)
+
+	begin(cs)
+	time.Sleep(200 * time.Millisecond)
+	if active, _, _ := streamState(cs); !active {
+		t.Fatal("a session carrying video was torn down")
+	}
+	expectOpen(t, clientConn)
+}
+
+// The check belongs to the session it was armed for: a restart in between
+// gets its own.
+func TestVideoCheckOfAStoppedSessionLeavesTheRestartAlone(t *testing.T) {
+	shortVideoWatch(t, 100*time.Millisecond)
+	video := new(atomic.Bool)
+	cs, clientConn := silentStream(t, video)
+
+	begin(cs) // silent
+	cs.stopStream()
+	video.Store(true)
+	begin(cs) // carries video
+	time.Sleep(300 * time.Millisecond)
+	if active, _, _ := streamState(cs); !active {
+		t.Fatal("the first session's check tore down the restarted one")
+	}
+	expectOpen(t, clientConn)
+}

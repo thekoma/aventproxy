@@ -218,10 +218,17 @@ type CameraStream struct {
 	cloudStart    func() error                    // the cloud attempt; callers hold mutex
 	attemptCancel context.CancelFunc              // ends a LAN attempt or probe in flight
 	promoteTimer  *time.Timer                     // moves a cloud stream back to the LAN; see armPromotion
+	videoTimer    *time.Timer                     // fails a cloud session that carries no video; see armVideoCheck
 }
 
 // cloudRetryDelay separates the two cloud attempts of a stream start.
 var cloudRetryDelay = 3 * time.Second
+
+// cloudVideoTimeout bounds how long a cloud session that came up may carry no
+// video before it counts as failed (#89): Start returns once ICE connects, or
+// once the HEVC datachannel confirms its codec, which is no proof that video
+// will follow. A working camera sends its first packet within a second or two.
+var cloudVideoTimeout = 20 * time.Second
 
 type ServerConfig struct {
 	Port                 int
@@ -874,6 +881,7 @@ func (cs *CameraStream) startStream(gen uint64) {
 				cs.scheduleShutdown()
 			}
 			cs.armPromotion()
+			cs.armVideoCheck()
 			cs.mutex.Unlock()
 			core.Logger.Info().Msgf("Streaming %s with cloud signalling", cs.camera.DeviceName)
 			return
@@ -955,6 +963,35 @@ func (cs *CameraStream) startCloud() error {
 	return cs.webrtcBridge.Start()
 }
 
+// armVideoCheck fails the cloud session that just came up if it has carried
+// no video after cloudVideoTimeout: its clients would wait for good, and every
+// later one would join the dead stream instead of starting a fresh one (#89).
+// The failure is handled as a WebRTC error is: the clients are closed and
+// reconnect. Callers hold cs.mutex.
+func (cs *CameraStream) armVideoCheck() {
+	bridge := cs.webrtcBridge
+	var timer *time.Timer
+	timer = time.AfterFunc(cloudVideoTimeout, func() {
+		// Taken before timer is read: armVideoCheck's caller holds it while timer is set.
+		cs.mutex.Lock()
+		if cs.videoTimer != timer { // the stream stopped, or restarted, since
+			cs.mutex.Unlock()
+			return
+		}
+		cs.videoTimer = nil
+		if !cs.active.Load() || cs.webrtcBridge != bridge || bridge.videoPackets.Load() > 0 {
+			cs.mutex.Unlock()
+			return
+		}
+		core.Logger.Warn().Msgf("Cloud session for %s is up but carried no video in %v; closing its clients so they reconnect to a new one",
+			cs.camera.DeviceName, cloudVideoTimeout)
+		clients := cs.teardownLocked()
+		cs.mutex.Unlock()
+		closeClients(clients)
+	})
+	cs.videoTimer = timer
+}
+
 // attachBridgeErrorHandler wires WebRTC OnError to handleBridgeError on the current bridge.
 func (cs *CameraStream) attachBridgeErrorHandler() {
 	bridge := cs.webrtcBridge
@@ -1033,6 +1070,10 @@ func (cs *CameraStream) stopStreamInternal() {
 	if cs.promoteTimer != nil {
 		cs.promoteTimer.Stop()
 		cs.promoteTimer = nil
+	}
+	if cs.videoTimer != nil {
+		cs.videoTimer.Stop()
+		cs.videoTimer = nil
 	}
 
 	// Only log if we were actually active
