@@ -9,6 +9,7 @@ these tests pin the mode, not just the contents.
 import json
 import os
 import stat
+import time
 
 from payload import write_bridge_config_file
 
@@ -107,3 +108,38 @@ class TestAtomicReplace:
         first = path.read_bytes()
         write_bridge_config_file(path, {"sid": "s", "cameras": [{"camera_id": "a"}]})
         assert path.read_bytes() == first
+
+
+class TestLeftovers:
+    """A hard crash between creating the temporary file and the replace leaves it behind.
+
+    It holds the live session, so the next write removes it, but only once it is a
+    minute old: another write may be in flight and its temporary file must survive.
+    """
+
+    @staticmethod
+    def _leftover(tmp_path, name, age_seconds):
+        leftover = tmp_path / name
+        leftover.write_text('{"sid": "old"}')
+        then = time.time() - age_seconds
+        os.utime(leftover, (then, then))
+        return leftover
+
+    def test_an_old_temporary_file_is_removed(self, tmp_path):
+        leftover = self._leftover(tmp_path, ".philips_avent_bridge_crashed.tmp", 3600)
+        write_bridge_config_file(tmp_path / "philips_avent_bridge_abc.json", {"sid": "s"})
+        assert not leftover.exists()
+
+    def test_a_fresh_temporary_file_is_left_alone(self, tmp_path):
+        in_flight = self._leftover(tmp_path, ".philips_avent_bridge_busy.tmp", 0)
+        write_bridge_config_file(tmp_path / "philips_avent_bridge_abc.json", {"sid": "s"})
+        assert in_flight.exists()
+
+    def test_other_files_are_never_touched(self, tmp_path):
+        others = [
+            self._leftover(tmp_path, "philips_avent_bridge_other.json", 3600),
+            self._leftover(tmp_path, ".philips_avent_bridge_note.txt", 3600),
+            self._leftover(tmp_path, "unrelated.tmp", 3600),
+        ]
+        write_bridge_config_file(tmp_path / "philips_avent_bridge_abc.json", {"sid": "s"})
+        assert all(p.exists() for p in others)
