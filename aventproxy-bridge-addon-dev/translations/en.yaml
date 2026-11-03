@@ -8,3 +8,17 @@ configuration:
       rtsp://localhost:38554. Use 0.0.0.0 (every interface), one address or a
       comma-separated list only when another machine (VLC, Frigate, a separate
       go2rtc) must open the stream, and then restrict the port on your network.
+  speaker_off:
+    name: Keep the monitor's speaker off (issue #72 test)
+    description: >-
+      Once a stream is up, ask the monitor to keep its speaker closed, so that
+      watching does not pause a playing lullaby. On by default. Turn it off
+      only to compare with the old behaviour. Never sent when two-way audio is
+      on.
+  webrtc_audio:
+    name: Audio requested from the monitor (issue #72 test)
+    description: >-
+      "recvonly" (default) asks the monitor for its audio. "none" streams video
+      only, to test whether the monitor opens its speaker only when audio is
+      requested. Home Assistant and other RTSP clients see the same stream
+      description either way; with "none" its audio track stays silent.

@@ -85,6 +85,25 @@ case "$RTSP_BIND" in
         ;;
 esac
 
+# Issue #72 experiment knobs. Only the Dev card defines these options: on the
+# other cards they are absent from options.json, no flag is passed, and the
+# bridge keeps its defaults (speaker off, recvonly audio). A false must still
+# reach the bridge, hence the null test rather than jq's // operator.
+addon_option() {
+    [ -f "$ADDON_CONFIG" ] || return 0
+    jq -r --arg key "$1" 'if .[$key] == null then empty else .[$key] end' "$ADDON_CONFIG" 2>/dev/null || true
+}
+
+BRIDGE_ARGS=(addon --config "$CONFIG_PATH" --bind "$RTSP_BIND")
+SPEAKER_OFF=$(addon_option speaker_off)
+if [ -n "$SPEAKER_OFF" ]; then
+    BRIDGE_ARGS+=("--speaker-off=$SPEAKER_OFF")
+fi
+WEBRTC_AUDIO=$(addon_option webrtc_audio)
+if [ -n "$WEBRTC_AUDIO" ]; then
+    BRIDGE_ARGS+=(--webrtc-audio "$WEBRTC_AUDIO")
+fi
+
 # Supervise the bridge here rather than exiting the container when the config
 # changes. The old version killed this script and relied on the supervisor to
 # bring the add-on back; after two Home Assistant restarts in quick succession it
@@ -105,7 +124,7 @@ trap shutdown TERM INT
 while true; do
     CONFIG_HASH=$(md5sum "$CONFIG_PATH" 2>/dev/null | cut -d' ' -f1)
 
-    avent-webrtc-bridge addon --config "$CONFIG_PATH" --bind "$RTSP_BIND" &
+    avent-webrtc-bridge "${BRIDGE_ARGS[@]}" &
     BRIDGE_PID=$!
     echo "Bridge started (pid $BRIDGE_PID)"
 
