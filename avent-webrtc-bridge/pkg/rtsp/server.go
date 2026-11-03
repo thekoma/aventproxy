@@ -50,6 +50,10 @@ type RTSPServer struct {
 	// default; see WebRTCBridge.Talkback and issue #72.
 	Talkback bool
 
+	// SpeakerOff asks the monitor to keep its speaker closed on every cloud
+	// session without talkback. On by default; see WebRTCBridge.SpeakerOff.
+	SpeakerOff bool
+
 	// BindAddress limits the interfaces the RTSP server listens on. The server
 	// has no authentication, so anyone who can reach the port can watch the
 	// camera. Accepted values (see bindHosts):
@@ -217,6 +221,7 @@ func NewRTSPServer(port int, storageManager *storage.StorageManager) *RTSPServer
 		ctx:            ctx,
 		cancel:         cancel,
 		running:        false,
+		SpeakerOff:     true,
 	}
 }
 
@@ -640,9 +645,7 @@ func NewCameraStream(camera *storage.CameraInfo, resolution string, user *storag
 
 	stream.forwarder = NewRTPForwarder()
 	stream.webrtcBridge = NewWebRTCBridge(camera, resolution, user, storageManager, stream.forwarder)
-	if server != nil {
-		stream.webrtcBridge.Talkback = server.Talkback
-	}
+	stream.configureBridge()
 	stream.lanFactory = stream.newLANSource
 	stream.cloudStart = stream.startCloud
 
@@ -824,15 +827,22 @@ func (cs *CameraStream) replaceBridge() {
 	}
 	cs.webrtcBridge = NewWebRTCBridge(cs.camera, cs.resolution, cs.user, storageManager, cs.forwarder)
 	cs.bridgeStarted = false
-
-	if cs.server != nil {
-		cs.webrtcBridge.Talkback = cs.server.Talkback
-		if cs.server.MobileClient != nil {
-			cs.webrtcBridge.SetMobileClient(cs.server.MobileClient)
-		}
+	cs.configureBridge()
+	if cs.server != nil && cs.server.MobileClient != nil {
+		cs.webrtcBridge.SetMobileClient(cs.server.MobileClient)
 	}
 
 	cs.attachBridgeErrorHandler()
+}
+
+// configureBridge copies the server's session settings onto the current
+// bridge, the first one and every replacement alike.
+func (cs *CameraStream) configureBridge() {
+	if cs.server == nil {
+		return
+	}
+	cs.webrtcBridge.Talkback = cs.server.Talkback
+	cs.webrtcBridge.SpeakerOff = cs.server.SpeakerOff
 }
 
 // startCloud is the default cloudStart. It fetches the MQTT client only now,

@@ -590,11 +590,11 @@ func (s *RTSPServer) generateSDP(camera *storage.CameraInfo, baseURL string) str
 
 	finalSdp := sdp + videoSdp + audioSdp
 
-	// Only advertise a return channel when talkback is on. Clients set up
-	// whatever the description offers, ffmpeg and Home Assistant both do, and
-	// every session that set one up coincided with the camera flipping DPS 253
-	// (app_talking) and interrupting a playing lullaby (issue #72). Making the
-	// WebRTC offer recvonly was not enough on its own.
+	// Only advertise a return channel when talkback is on: clients set up
+	// whatever the description offers (ffmpeg and Home Assistant both do),
+	// and without talkback nothing would use it. It is not what interrupts a
+	// playing lullaby (issue #72): DPS 253 flipped without it as well, which
+	// points at the webrtc session itself (see WebRTCBridge.SpeakerOff).
 	if s.Talkback {
 		finalSdp += backchannelAudio
 	}

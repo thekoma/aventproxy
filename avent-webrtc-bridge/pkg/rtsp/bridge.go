@@ -44,6 +44,7 @@ type WebRTCBridge struct {
 	dataChannel    *pion.DataChannel
 	mqttClient     *tuya.MQTTClient
 	cameraClient   *tuya.MQTTCameraClient
+	controls       cameraControls // the camera client's 312 controls; a seam for tests
 	rtpForwarder   *RTPForwarder
 	ownsForwarder  bool // the bridge made rtpForwarder, so Stop stops it
 
@@ -77,12 +78,16 @@ type WebRTCBridge struct {
 	// talkback packet, on other goroutines.
 	backchannel atomic.Pointer[pion.TrackLocalStaticRTP]
 
-	// Talkback offers the camera two-way audio. Off by default: an offer with
-	// a sendrecv audio direction makes the camera set DPS 253 (app_talking),
-	// take the speaker and stop whatever lullaby is playing, then restart it
-	// with a fresh timer when the stream closes (issue #72). Watching must not
-	// disturb the room, so the caller opts in.
+	// Talkback offers the camera two-way audio. Off by default, because
+	// nothing in Home Assistant talks. It is not what stops a playing lullaby
+	// (issue #72): DPS 253 (app_talking) flips with a recvonly offer and no
+	// backchannel too, which points at the webrtc session mode itself; see
+	// SpeakerOff.
 	Talkback bool
+
+	// SpeakerOff asks the monitor, once the session is up, to keep its
+	// speaker closed (312 "speaker", value 0). Never sent with Talkback.
+	SpeakerOff bool
 
 	// Callbacks
 	OnVideoPacket func(packet *rtp.Packet)
@@ -498,14 +503,49 @@ func (wb *WebRTCBridge) handlePeerConnectionStateChange(state pion.PeerConnectio
 
 	if state == pion.PeerConnectionStateConnected {
 		core.Logger.Info().Msgf("WebRTC connection established")
-
+		wb.sendSessionControls()
 		if !wb.isHEVC {
-			if wb.resolution == "hd" {
-				_ = wb.cameraClient.SendResolution(0)
-			}
 			wb.waiter.Done(nil)
 		}
 	}
+}
+
+// cameraControls is the part of the MQTT camera client the bridge drives once
+// the connection is up.
+type cameraControls interface {
+	SendResolution(resolution int) error
+	SendSpeaker(speaker int) error
+}
+
+// sendSessionControls sends the 312 controls a cloud session needs once it is
+// up: the HD request, as before (H.264 only), and a speaker-off unless
+// talkback is on.
+//
+// Issue #72: a "webrtc"-mode session sets DPS 253 (app_talking) and pauses a
+// playing lullaby whatever audio direction the offer carries. The official
+// app never uses this mode: it streams over imm and starts a preview with
+// IOCtrl commands 6 and 9, sending the speaker command (8) only while the
+// parent talks. A webrtc client has no IOCtrls, so the monitor opens its
+// speaker for the whole session; 312 "speaker" is this mode's counterpart of
+// command 8. Unconfirmed on hardware: the session's log lines (this one, and
+// the audio packet count at Stop) are what settle it.
+func (wb *WebRTCBridge) sendSessionControls() {
+	if wb.controls == nil {
+		return
+	}
+	if !wb.isHEVC && wb.resolution == "hd" {
+		if err := wb.controls.SendResolution(0); err != nil {
+			core.Logger.Warn().Err(err).Msgf("Could not ask %s for HD", wb.camera.DeviceName)
+		}
+	}
+	if wb.Talkback || !wb.SpeakerOff {
+		return
+	}
+	if err := wb.controls.SendSpeaker(0); err != nil {
+		core.Logger.Warn().Err(err).Msgf("Could not ask %s to keep its speaker off", wb.camera.DeviceName)
+		return
+	}
+	core.Logger.Info().Msgf("Asked %s to keep its speaker off (issue #72)", wb.camera.DeviceName)
 }
 
 func (wb *WebRTCBridge) setupMQTTCameraClient(webRTCConfig *tuya.WebRTCConfig) {
@@ -519,6 +559,7 @@ func (wb *WebRTCBridge) setupMQTTCameraClient(webRTCConfig *tuya.WebRTCConfig) {
 
 	// Create MQTT camera client
 	wb.cameraClient = tuya.NewMqttCameraClient(wb.mqttClient, device, webRTCConfig)
+	wb.controls = wb.cameraClient
 	wb.mqttClient.AddCameraClient(wb.cameraClient.SessionId, wb.cameraClient)
 
 	// Setup handlers
