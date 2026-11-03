@@ -175,19 +175,32 @@ class TestLanWriteDelivered:
     """tinytuya returns a failed write as an error dict; the cloud mirror used to hide it."""
 
     def test_a_reply_or_no_reply_counts_as_delivered(self):
-        assert lan_write_delivered(None)
-        assert lan_write_delivered({"dps": {"138": True}, "t": 1})
+        for repeatable in (True, False):
+            assert lan_write_delivered(None, repeatable=repeatable)
+            assert lan_write_delivered({"dps": {"138": True}, "t": 1}, repeatable=repeatable)
 
-    def test_no_socket_means_the_command_never_left(self):
-        assert not lan_write_delivered({"Error": "Network Error: Device Unreachable", "Err": LAN_ERR_OFFLINE})
-        assert not lan_write_delivered({"Error": "Network Error: Unable to Connect", "Err": LAN_ERR_CONNECT})
-        assert not lan_write_delivered({"Error": "Check device key or version", "Err": "914"})
+    def test_a_socket_that_never_opened_means_the_command_never_left(self):
+        for repeatable in (True, False):
+            assert not lan_write_delivered(
+                {"Error": "Network Error: Device Unreachable", "Err": LAN_ERR_OFFLINE}, repeatable=repeatable
+            )
+            assert not lan_write_delivered({"Error": "Check device key or version", "Err": "914"}, repeatable=repeatable)
 
-    def test_a_late_or_unreadable_reply_is_not_sent_twice(self):
-        # A repeated relative step would advance the lullaby twice (issue #91).
-        assert lan_write_delivered({"Error": "Timeout Waiting for Device", "Err": "902"})
-        assert lan_write_delivered({"Error": "Unexpected Payload from Device", "Err": LAN_ERR_PAYLOAD})
+    def test_an_ambiguous_error_sends_an_absolute_value_again(self):
+        # Sending the night light state twice is harmless; losing it is not.
+        assert not lan_write_delivered({"Error": "Network Error: Unable to Connect", "Err": LAN_ERR_CONNECT}, repeatable=True)
+        assert not lan_write_delivered({"Error": "Timeout Waiting for Device", "Err": "902"}, repeatable=True)
 
+    def test_an_ambiguous_error_never_repeats_a_lullaby_step(self):
+        # A step taken twice skips a track (issue #91); a lost one is preferred.
+        assert lan_write_delivered({"Error": "Network Error: Unable to Connect", "Err": LAN_ERR_CONNECT}, repeatable=False)
+        assert lan_write_delivered({"Error": "Timeout Waiting for Device", "Err": "902"}, repeatable=False)
+
+    def test_an_unreadable_reply_means_the_monitor_answered(self):
+        for repeatable in (True, False):
+            assert lan_write_delivered(
+                {"Error": "Unexpected Payload from Device", "Err": LAN_ERR_PAYLOAD}, repeatable=repeatable
+            )
 
 class TestKeyedProtocol:
     """What a session carries on its own depends on the protocol it negotiated (fork c3d0b83, 619981b)."""

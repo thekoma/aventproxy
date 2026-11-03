@@ -29,15 +29,18 @@ LAN_ERR_CONNECT = "901"
 LAN_ERR_PAYLOAD = "904"
 LAN_ERR_OFFLINE = "905"
 CONNECTION_ERRORS = frozenset({LAN_ERR_CONNECT, LAN_ERR_OFFLINE})
+LAN_ERR_TIMEOUT = "902"
 LAN_ERR_KEY_OR_VERSION = "914"
 
-# tinytuya hands a failed write back as an error dict rather than raising. These
-# codes come from opening the socket, so the command never went out: nothing to
-# connect to, the session key refused (3.4 and up), or the connect itself
-# failing. A timeout (902) or an unreadable reply (904) arrives after the send,
-# so the command most likely landed, and repeating it through the cloud could
-# advance a lullaby step twice (issue #91).
-WRITE_NOT_DELIVERED = frozenset({LAN_ERR_CONNECT, LAN_ERR_OFFLINE, LAN_ERR_KEY_OR_VERSION})
+# tinytuya hands a failed write back as an error dict rather than raising.
+# 905 and 914 come from opening the socket, before anything is sent: nothing to
+# connect to, or the session key refused (3.4 and up). tinytuya can also return
+# them on a retry after a first attempt that sent and then failed, which is rare
+# enough to accept. 901 and 902 can come after the send: a connection error
+# while reading the reply, or no reply at all. 904, an unreadable reply, means
+# the monitor answered, so the command landed.
+WRITE_NEVER_SENT = frozenset({LAN_ERR_OFFLINE, LAN_ERR_KEY_OR_VERSION})
+WRITE_MAYBE_SENT = frozenset({LAN_ERR_CONNECT, LAN_ERR_TIMEOUT})
 
 # Reconnect once this many unparseable frames arrive in a row.
 MAX_PAYLOAD_ERRORS = 3
@@ -48,16 +51,27 @@ def is_connection_error(err_code: str | None) -> bool:
     return str(err_code or "") in CONNECTION_ERRORS
 
 
-def lan_write_delivered(result: object) -> bool:
+def lan_write_delivered(result: object, *, repeatable: bool) -> bool:
     """Whether a tinytuya `set_value` result means the command reached the monitor.
 
     Before this, every write that did not raise counted as sent, and the cloud
     mirror hid the ones that never left: harmless while every command also went
     through the cloud, a lost command once it no longer does.
+
+    `repeatable` says whether sending the command twice is harmless. An
+    absolute value is, so anything short of an answer sends it through the cloud
+    as well. A relative lullaby step is not (issue #91): it goes to the cloud
+    only when it never left, and a step lost to an ambiguous error is preferred
+    to one taken twice.
     """
     if not isinstance(result, dict):
         return True
-    return str(result.get("Err") or "") not in WRITE_NOT_DELIVERED
+    code = str(result.get("Err") or "")
+    if code in WRITE_NEVER_SENT:
+        return False
+    if code in WRITE_MAYBE_SENT:
+        return not repeatable
+    return True
 
 
 def should_reconnect(err_code: str | None, consecutive_payload_errors: int) -> bool:

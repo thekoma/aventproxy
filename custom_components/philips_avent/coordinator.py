@@ -354,7 +354,7 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         """
         local_only = self.lan_serves_state
         if self._lan_client and self._lan_client.connected:
-            result = await self._lan_client.set_dps(dps)
+            result = await self._lan_client.set_dps(dps, repeatable=mirror_dps_to_cloud(dps))
             if result:
                 _LOGGER.debug("DPS sent via LAN for %s: %s", self.camera_name, dps)
                 self._apply_optimistic(dps, optimistic)

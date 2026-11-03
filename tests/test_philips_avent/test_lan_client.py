@@ -178,10 +178,15 @@ class TestWrites:
         FakeDevice.write_results = [{"Error": "Network Error: Device Unreachable", "Err": "905"}]
         assert asyncio.run(client.set_dps({"138": True})) is None
 
-    def test_a_late_reply_still_counts_as_sent(self, lan):
+    def test_a_late_reply_never_repeats_a_step(self, lan):
         client = self._connected(lan, 3.3)
         FakeDevice.write_results = [{"Error": "Timeout Waiting for Device", "Err": "902"}]
-        assert asyncio.run(client.set_dps({"201": "next"})) == {"success": True}
+        assert asyncio.run(client.set_dps({"201": "next"}, repeatable=False)) == {"success": True}
+
+    def test_a_late_reply_sends_an_absolute_value_again(self, lan):
+        client = self._connected(lan, 3.5)
+        FakeDevice.write_results = [{"Error": "Timeout Waiting for Device", "Err": "902"}]
+        assert asyncio.run(client.set_dps({"138": True})) is None
 
 
 class TestRotatedKey:

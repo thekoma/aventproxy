@@ -36,14 +36,16 @@ class FakeLan:
         self.protocol = protocol
         self.delivered = delivered
         self.sent: list[dict] = []
+        self.repeatable: list[bool] = []
         self.keys: list[str] = []
         self.ip = "10.0.0.7"
 
     def set_local_key(self, key):
         self.keys.append(key)
 
-    async def set_dps(self, dps):
+    async def set_dps(self, dps, *, repeatable=True):
         self.sent.append(dps)
+        self.repeatable.append(repeatable)
         return {"success": True} if self.delivered else None
 
     async def stop(self):
@@ -108,6 +110,13 @@ class TestCommands:
         coordinator = make(3.3)
         asyncio.run(coordinator.set_dps({"201": "next"}))
         assert coordinator.api.published == []
+        # And tells the LAN client a step must not be sent twice.
+        assert coordinator._lan_client.repeatable == [False]
+
+    def test_absolute_values_may_be_sent_again(self, make):
+        coordinator = make(3.3)
+        asyncio.run(coordinator.set_dps({"138": True}))
+        assert coordinator._lan_client.repeatable == [True]
 
     def test_a_3_5_session_keeps_a_delivered_command_local(self, make):
         coordinator = make(3.5)

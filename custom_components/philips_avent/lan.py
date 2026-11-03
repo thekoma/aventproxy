@@ -383,7 +383,7 @@ class TuyaLANClient:
                 last_data = now
                 failures = 0
 
-    async def set_dps(self, dps: dict) -> dict | None:
+    async def set_dps(self, dps: dict, *, repeatable: bool = True) -> dict | None:
         """Send DPS command via a temporary LAN connection.
 
         Uses a separate short-lived socket so the persistent listener
@@ -391,7 +391,8 @@ class TuyaLANClient:
         device ignores batched commands for certain codes (e.g. 201 + 202).
 
         None when the command did not reach the monitor, so the caller can
-        send it through the cloud instead.
+        send it through the cloud instead; `repeatable` decides how an
+        ambiguous error counts (see `lan_write_delivered`).
         """
         if not self._ip:
             return None
@@ -407,7 +408,7 @@ class TuyaLANClient:
             try:
                 for key, value in dps.items():
                     result = d.set_value(key, value)
-                    if not lan_write_delivered(result):
+                    if not lan_write_delivered(result, repeatable=repeatable):
                         return result
                 return None
             finally:
