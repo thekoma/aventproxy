@@ -130,7 +130,7 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
 
     @property
     def local_key(self) -> str | None:
-        """The key the LAN session was started with; the cloud's current one is in device_info."""
+        """The key the LAN session uses: the one it started with, or the one the cloud rotated to."""
         return self._local_key
 
     @property
@@ -228,9 +228,9 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         interval out, so pushes arriving faster than the poll interval (a
         SenseIQ status every few seconds) postponed the poll indefinitely. On a
         3.3 session, where alarms arrive only through the poll, they stopped
-        arriving. Availability stays with the poll too: a push does not mark a
-        failed cloud poll as recovered, which would flap the entities on every
-        tick of an outage.
+        arriving. A push does end a failed poll's verdict, through
+        `_mark_lan_live`: the session it came on keeps the entities available,
+        and a poll does not fail while that session is up.
         """
         self.data = data
         self._mark_lan_live(notify=False)
