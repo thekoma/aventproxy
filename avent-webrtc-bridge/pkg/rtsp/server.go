@@ -82,6 +82,8 @@ type RTSPServer struct {
 	// newStream, if set, prepares every stream getOrCreateStream creates,
 	// before any client can reach it (tests only).
 	newStream func(*CameraStream)
+	// beforeJoin, if set, runs at the start of every joinStream (tests only).
+	beforeJoin func(*RTSPClient)
 }
 
 // describeBind is the human-readable form of BindAddress for the log.
@@ -614,6 +616,9 @@ func (s *RTSPServer) addClient(client *RTSPClient) {
 // that would never send it anything.
 func (s *RTSPServer) joinStream(client *RTSPClient, stops uint64) {
 	defer close(client.attached)
+	if s.beforeJoin != nil {
+		s.beforeJoin(client)
+	}
 	if client.stream.attach(client, stops) {
 		return
 	}

@@ -30,6 +30,9 @@ type stallHarness struct {
 
 	mu      sync.Mutex
 	created map[string]int
+
+	// joinGate, while set, holds every client's join until it is closed.
+	joinGate atomic.Pointer[chan struct{}]
 }
 
 // newStallHarness starts the server. start is every cloud attempt of every
@@ -64,6 +67,11 @@ func newStallHarness(t *testing.T, start func(cs *CameraStream) error) *stallHar
 		h.created[cs.camera.DeviceID]++
 		h.mu.Unlock()
 		cs.cloudStart = func() error { return start(cs) }
+	}
+	h.server.beforeJoin = func(*RTSPClient) {
+		if gate := h.joinGate.Load(); gate != nil {
+			<-*gate
+		}
 	}
 	if err := h.server.Start(); err != nil {
 		t.Fatalf("start: %v", err)
@@ -324,6 +332,43 @@ func TestClientJoiningAfterATeardownIsClosed(t *testing.T) {
 	if n := attempts.Load(); n != 1 {
 		t.Fatalf("%d cloud attempts; the late client must not restart the stream it never joined", n)
 	}
+}
+
+// A client that leaves before its join has run must still leave the stream.
+// Removed first, it would be added by the late join as a dead client: the
+// stream would never empty, and its camera session would stay up for good.
+func TestClientLeavingBeforeItJoinedLeavesNoGhost(t *testing.T) {
+	h := newStallHarness(t, func(cs *CameraStream) error { return nil })
+	first := dialRTSP(t, h.port, "/cam1")
+	first.play(time.Second)
+	waitUntil(t, func() bool {
+		cs := h.stream("cam1")
+		return cs != nil && cs.active.Load()
+	}, "the stream never started")
+	cs := h.stream("cam1")
+
+	release := make(chan struct{})
+	h.joinGate.Store(&release) // the next join waits, as one behind a start does
+	ghost := dialRTSP(t, h.port, "/cam1")
+	if code := ghost.describe(time.Second); code != 200 {
+		t.Fatalf("DESCRIBE = %d, want 200", code)
+	}
+	ghost.conn.Close()
+	waitUntil(t, func() bool {
+		h.server.mutex.RLock()
+		defer h.server.mutex.RUnlock()
+		return len(h.server.clients) == 1
+	}, "the server never noticed the client leave")
+	time.Sleep(50 * time.Millisecond) // its removeClient goes on to the stream
+	h.joinGate.Store(nil)
+	close(release)
+	first.conn.Close()
+
+	waitUntil(t, func() bool {
+		cs.mutex.RLock()
+		defer cs.mutex.RUnlock()
+		return len(cs.clients) == 0
+	}, "a client that left before it joined stayed in the stream")
 }
 
 // slowStopLAN holds stopStreamInternal in the middle of a teardown, before the
