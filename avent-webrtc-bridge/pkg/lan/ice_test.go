@@ -113,17 +113,60 @@ func TestICEReportsTheLastRejectionAtTheEnd(t *testing.T) {
 	}
 }
 
-// A success that answers no check of ours chooses nothing: the checks go on
-// until the real answer.
-func TestICEIgnoresASuccessToNoCheck(t *testing.T) {
+// A success from an address we never checked chooses nothing: the checks go
+// on until the real answer.
+func TestICEIgnoresASuccessFromAStranger(t *testing.T) {
+	good := stunPeer(t, 300*time.Millisecond, success)
+	sock := checkingSocket(t)
+	stranger, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stranger.Close()
 	var forged [stun.TransactionIDSize]byte
 	copy(forged[:], "not-our-txid")
-	stranger := stunPeer(t, 0, func([stun.TransactionIDSize]byte) *stun.Message { return success(forged) })
-	good := stunPeer(t, 300*time.Millisecond, success)
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(20 * time.Millisecond):
+				_, _ = stranger.WriteToUDP(success(forged).Raw, sock.LocalAddr().(*net.UDPAddr))
+			}
+		}
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	peer, err := iceConnect(ctx, checkingSocket(t), func() []*net.UDPAddr { return []*net.UDPAddr{stranger, good} }, testLocal, testRemote)
+	peer, err := iceConnect(ctx, sock, onePeer(good), testLocal, testRemote)
 	if err != nil || peer.String() != good.String() {
 		t.Fatalf("peer = %v, err = %v; want %v", peer, err, good)
+	}
+}
+
+// dev3's LAN behaviour (review N1): a monitor that does not echo the
+// transaction id still connects, and still rejects at once, because its reply
+// comes from the candidate we checked.
+func TestICEUnechoedReplyFromTheCandidateCounts(t *testing.T) {
+	fresh := func([stun.TransactionIDSize]byte) [stun.TransactionIDSize]byte {
+		var tx [stun.TransactionIDSize]byte
+		copy(tx[:], "fresh-txid12")
+		return tx
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ok := stunPeer(t, 0, func(tx [stun.TransactionIDSize]byte) *stun.Message { return success(fresh(tx)) })
+	peer, err := iceConnect(ctx, checkingSocket(t), onePeer(ok), testLocal, testRemote)
+	if err != nil || peer.String() != ok.String() {
+		t.Fatalf("success without the echo: peer %v, err %v; want %v", peer, err, ok)
+	}
+
+	bad := stunPeer(t, 0, func(tx [stun.TransactionIDSize]byte) *stun.Message { return rejection(fresh(tx)) })
+	start := time.Now()
+	_, err = iceConnect(ctx, checkingSocket(t), onePeer(bad), testLocal, testRemote)
+	if err == nil || !strings.Contains(err.Error(), "monitor rejected the ICE check: 401") || time.Since(start) > time.Second {
+		t.Fatalf("rejection without the echo: err %v after %v; want it at once", err, time.Since(start))
 	}
 }

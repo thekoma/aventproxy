@@ -168,15 +168,21 @@ func (m *mqttSignaller) escalate() {
 	m.devMu.Lock()
 	defer m.devMu.Unlock()
 	m.mu.Lock()
-	// The dial takes a second or two: the session may have ended meanwhile,
-	// or the moto answered late. Either way the offer must not go out again.
-	if m.closed || m.answered != "" {
+	// The dial takes a second or two. If the session ended meanwhile, or the
+	// moto answered late, the channel is not needed: let it go, and never
+	// send the offer again. If the device channel itself answered (its
+	// subscription is live before the dial returns), keep it for the
+	// candidates that follow on it, but the offer has evidently arrived.
+	if m.closed || m.answered == viaMoto {
 		m.mu.Unlock()
 		dev.Close()
 		return
 	}
 	m.dev = dev
-	replay := append([]any(nil), m.sent...)
+	var replay []any
+	if m.answered == "" {
+		replay = append(replay, m.sent...)
+	}
 	m.mu.Unlock()
 	for _, frame := range replay {
 		if err := dev.Publish(frame); err != nil {
