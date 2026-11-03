@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"avent-webrtc-bridge/pkg/storage"
+
+	"github.com/pion/rtp"
 )
 
 // fakeLAN is a lanStreamer whose Start runs start, or succeeds when start is nil.
@@ -452,5 +454,29 @@ func TestCloudFailureEndsTheCooldown(t *testing.T) {
 				t.Fatalf("cooling down = %v, want %v", cooling, !tc.cleared)
 			}
 		})
+	}
+}
+
+// The cloud fallback starts a new source on the forwarder the failed LAN
+// attempt fed: parameter sets and clocks from that attempt must not carry over.
+func TestFallbackForgetsTheLANAttemptsMedia(t *testing.T) {
+	server := newLANServer()
+	cs, _ := newLANStream(t, server, "hd")
+	var a *attempts
+	a = fakeAttempts(t, cs, func(context.Context) error {
+		a.lanFwd.ForwardVideoPacket(&rtp.Packet{Payload: []byte{0x67, 0x42}}) // an SPS, then nothing
+		return fmt.Errorf("%w: %w", errNoFirstFrame, context.DeadlineExceeded)
+	})
+	t.Cleanup(cs.stopStream)
+
+	begin(cs)
+
+	if a.cloudStarted.Load() != 1 {
+		t.Fatal("the cloud did not take over")
+	}
+	cs.forwarder.mutex.RLock()
+	defer cs.forwarder.mutex.RUnlock()
+	if cs.forwarder.spsPacket != nil || cs.forwarder.videoTs.started {
+		t.Fatal("the cloud stream inherited the failed LAN attempt's SPS and clock")
 	}
 }

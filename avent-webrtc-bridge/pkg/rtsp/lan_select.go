@@ -101,6 +101,7 @@ func (cs *CameraStream) tryLAN(gen uint64) (done bool) {
 	if err != nil {
 		cs.lan = nil
 		source.Stop()
+		cs.forwarder.ResetMedia() // the cloud is a new source on the same clients
 		cs.server.startLANCooldown(cs.camera.DeviceID)
 		core.Logger.Warn().Msgf("Streaming with LAN signalling failed for %s: %v, trying cloud signalling", cs.camera.DeviceName, err)
 		return false

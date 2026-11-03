@@ -473,13 +473,26 @@ func (rf *RTPForwarder) Stop() {
 		client.close()
 		delete(rf.clients, sessionID)
 	}
+	rf.resetMediaLocked()
+
+	core.Logger.Trace().Msg("RTPForwarder stopped and all clients cleared")
+}
+
+// ResetMedia forgets the parameter sets, clocks and sequence offset of the
+// source that fed the forwarder so far, keeping the clients: the next packet
+// starts a new source, as when the cloud takes over from a failed LAN attempt.
+func (rf *RTPForwarder) ResetMedia() {
+	rf.mutex.Lock()
+	defer rf.mutex.Unlock()
+	rf.resetMediaLocked()
+}
+
+func (rf *RTPForwarder) resetMediaLocked() {
 	rf.firstVideoPacket = true
 	rf.firstAudioPacket = true
 	rf.spsPacket, rf.ppsPacket = nil, nil
 	rf.videoTs, rf.audioTs = frameClock{}, audioClock{}
 	rf.videoSeqOffset = 0
-
-	core.Logger.Trace().Msg("RTPForwarder stopped and all clients cleared")
 }
 
 // SetBackchannelSink sets where talkback audio from the clients goes: the
