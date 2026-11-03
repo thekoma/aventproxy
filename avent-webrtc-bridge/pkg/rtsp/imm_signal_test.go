@@ -373,3 +373,48 @@ func TestDisconnectIsBoundedOnTheDeviceChannel(t *testing.T) {
 	}
 	_ = r.sig.Close()
 }
+
+// N2: an answer that arrives on the device channel during its own dial (the
+// subscription is live before the dial returns) keeps the channel, so its
+// later candidates arrive; only the replay is skipped.
+func TestDeviceChannelAnswerDuringTheDialKeepsIt(t *testing.T) {
+	r := newSignalRig(t, true)
+	r.dialHold = make(chan struct{})
+	r.offer(t)
+	deadline := time.After(2 * time.Second)
+	for r.dials.Load() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("never dialled")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	// The dial waits on dialHold before it records onFrame: answer through the
+	// signaller's device receiver directly, as the live subscription would.
+	r.sig.receiver(viaDevice)(json.RawMessage(fmt.Sprintf(`{"header":{"type":"answer","sessionid":%q},"msg":{"sdp":"v=0"}}`, r.session)))
+	close(r.dialHold)
+	r.waitDial(t)
+	time.Sleep(50 * time.Millisecond)
+	if r.dev.isClosed() {
+		t.Fatal("the channel that answered was closed")
+	}
+	if got := r.dev.log(); len(got) != 0 {
+		t.Fatalf("the offer was replayed after the device channel answered: %v", got)
+	}
+	if f := nextFrame(t, r.frames); f.Header.Type != lan.TypeAnswer {
+		t.Fatalf("frame = %+v", f)
+	}
+	// Its later candidates arrive, and our later frames go out on it.
+	r.dev.say(r.session, lan.TypeCandidate)
+	if f := nextFrame(t, r.frames); f.Header.Type != lan.TypeCandidate {
+		t.Fatalf("frame = %+v, want the device channel's candidate", f)
+	}
+	r.candidate(t, "c5")
+	if got := r.dev.log(); len(got) != 1 || got[0] != "candidate:c5" {
+		t.Fatalf("device channel got %v, want our later candidate", got)
+	}
+	_ = r.sig.Close()
+	if !r.dev.isClosed() {
+		t.Error("Close must close the device channel")
+	}
+}
