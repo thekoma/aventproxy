@@ -19,12 +19,22 @@ import (
 // media of the LAN path. It is for monitors that cannot take a LAN offer
 // (Tuya LAN 3.3), and it is opt-in and experimental: the Dev card's
 // cloud_transport option. See WHITEPAPER section 21 and pkg/lan/cloud.go.
+//
+// Issue #72: the session sends what the app's live view sends (pkg/lan's
+// startup sequence, StartPreview without the talk command 8) and no 312
+// speaker request. That request is a webrtc-mode control with no imm
+// counterpart; on imm the speaker stays closed because nothing asks for it.
+// The audio check and the per-session counts are kept, as on webrtc.
 
 const (
 	// immHandshakeTimeout bounds the cloud round trip, the monitor's
 	// candidate gathering, ICE and the login. The first frame then has
 	// lanFirstFrameDeadline, as on the LAN.
-	immHandshakeTimeout = 10 * time.Second
+	immHandshakeTimeout = 8 * time.Second
+	// immAttemptDeadline bounds a whole attempt: the cloud calls before the
+	// offer, the handshake and the first frame. It is how long a viewer can
+	// wait before the webrtc fallback starts.
+	immAttemptDeadline = 2*time.Second + immHandshakeTimeout + lanFirstFrameDeadline
 	// immAudioCheckDelay is when an imm session says whether audio flows.
 	immAudioCheckDelay = 10 * time.Second
 )

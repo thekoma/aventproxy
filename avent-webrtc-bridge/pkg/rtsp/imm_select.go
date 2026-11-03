@@ -92,7 +92,7 @@ func (cs *CameraStream) tryIMM(gen uint64) (done bool) {
 	source := factory(cs.forwarder)
 	cs.lan = source // the stream's non-webrtc source; Stop and teardown end it
 	source.SetOnError(func(err error) { cs.immDied(source, err) })
-	stopped, err := cs.runAttempt(source, immHandshakeTimeout+lanFirstFrameDeadline)
+	stopped, err := cs.runAttempt(source, immAttemptDeadline)
 	defer cs.mutex.Unlock()
 	if stopped {
 		return true
