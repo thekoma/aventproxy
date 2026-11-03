@@ -160,7 +160,12 @@ func (m *mqttSignaller) Close() error {
 	return nil
 }
 
-// receiver reads one route's frames, on its broker goroutine. The device
+// receiver reads one route's frames, on its broker's dispatch goroutine,
+// which every camera's signalling shares on the moto route (MQTTManager). It
+// never blocks there: a short lock, and a send that drops rather than waits.
+// The answer and the candidates are queued here, in arrival order. A
+// disconnect is queued too, and acted on by the session's own goroutine
+// (lan.Client's pump), which is where the stream's lock is taken. The device
 // channel carries every 302 frame for the monitor, the phone app's sessions
 // included, so only this session's frames are kept.
 func (m *mqttSignaller) receiver(via string) func(json.RawMessage) {
