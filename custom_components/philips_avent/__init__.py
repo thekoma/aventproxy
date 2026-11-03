@@ -254,16 +254,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     }
     ready = False
 
+    def _live() -> bool:
+        # False once setup failed or the entry unloaded: hass.data no longer holds this setup's data.
+        return ready and hass.data.get(DOMAIN, {}).get(entry.entry_id) is data
+
     async def _rewrite_bridge_config() -> None:
         # One writer at a time; no API call, so this works while the cloud is down.
         async with write_lock:
+            # A rewrite queued during the setup write can get the lock only after
+            # that setup failed, and must not write for an entry that is gone.
+            if not _live():
+                return
             lan = lan_credentials(coordinators, passwords)
             await _write_bridge_config(hass, entry, api, cameras, lan)
 
     def _on_address_change(_ip: str) -> None:
         # On the event loop. Before `ready` it is dropped: the setup write reads every address.
         # After an unload the entry data is gone, and unload cancels a task already queued.
-        if ready and hass.data.get(DOMAIN, {}).get(entry.entry_id) is data:
+        if _live():
             entry.async_create_background_task(hass, _rewrite_bridge_config(), "philips_avent_bridge_config")
 
     try:
