@@ -8,3 +8,14 @@ configuration:
       przez rtsp://localhost:38554. Wpisz 0.0.0.0 (wszystkie interfejsy), jeden adres
       albo listę po przecinku tylko wtedy, gdy strumień ma otwierać inna maszyna
       (VLC, Frigate, osobne go2rtc) — i wtedy ogranicz dostęp do portu w sieci.
+  speaker_off:
+    name: Wyłączony głośnik monitora
+    description: >-
+      Prosi monitor, by trzymał głośnik wyłączony, gdy Home Assistant ogląda
+      obraz, żeby nie przerywać odtwarzanej kołysanki (zgłoszenie #72,
+      eksperymentalne).
+  webrtc_audio:
+    name: Dźwięk pobierany z monitora
+    description: >-
+      Dźwięk pobierany z monitora w sesjach przez chmurę: recvonly (domyślnie)
+      albo none (tylko obraz, do testów zgłoszenia #72).

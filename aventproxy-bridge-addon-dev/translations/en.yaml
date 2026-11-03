@@ -9,16 +9,12 @@ configuration:
       comma-separated list only when another machine (VLC, Frigate, a separate
       go2rtc) must open the stream, and then restrict the port on your network.
   speaker_off:
-    name: Keep the monitor's speaker off (issue #72 test)
+    name: Keep the monitor's speaker off
     description: >-
-      Once a stream is up, ask the monitor to keep its speaker closed, so that
-      watching does not pause a playing lullaby. On by default. Turn it off
-      only to compare with the old behaviour. Never sent when two-way audio is
-      on.
+      Ask the monitor to keep its speaker closed while Home Assistant watches,
+      so a playing lullaby is not paused (issue #72, experimental).
   webrtc_audio:
-    name: Audio requested from the monitor (issue #72 test)
+    name: Audio requested from the monitor
     description: >-
-      "recvonly" (default) asks the monitor for its audio. "none" streams video
-      only, to test whether the monitor opens its speaker only when audio is
-      requested. Home Assistant and other RTSP clients see the same stream
-      description either way; with "none" its audio track stays silent.
+      Audio requested from the monitor on cloud sessions: recvonly (default) or
+      none (video only, for testing issue #72).
