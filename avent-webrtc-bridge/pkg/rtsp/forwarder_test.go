@@ -134,3 +134,54 @@ func TestForwardVideoInjectsParameterSetsInOrder(t *testing.T) {
 		}
 	}
 }
+
+// UDP media goes where the client's RTSP connection comes from. It used to go
+// to localhost, so any client on another host received nothing (fork c30da50).
+func TestUDPMediaGoesToTheClientAddress(t *testing.T) {
+	ip := firstNonLoopbackIPv4()
+	if ip == nil {
+		t.Skip("no non-loopback IPv4 address to stand in for a remote client")
+	}
+	sink, err := net.ListenUDP("udp4", &net.UDPAddr{IP: ip})
+	if err != nil {
+		t.Skipf("cannot listen on %v: %v", ip, err)
+	}
+	defer sink.Close()
+
+	rf := NewRTPForwarder()
+	if err := rf.AddUDPClient("s1", ip, sink.LocalAddr().(*net.UDPAddr).Port, 0); err != nil {
+		t.Fatalf("add client: %v", err)
+	}
+	defer rf.RemoveClient("s1")
+	rf.ForwardVideoPacket(&rtp.Packet{Header: rtp.Header{SequenceNumber: 1, Marker: true}, Payload: []byte{0x65, 0x88}})
+
+	_ = sink.SetReadDeadline(time.Now().Add(time.Second))
+	if _, _, err := sink.ReadFromUDP(make([]byte, 1500)); err != nil {
+		t.Fatalf("the client at %v received nothing: %v", ip, err)
+	}
+}
+
+func TestUDPClientNeedsAnAddress(t *testing.T) {
+	if err := NewRTPForwarder().AddUDPClient("s1", nil, 5000, 5002); err == nil {
+		t.Fatal("a UDP client with no address must be refused, not sent to localhost")
+	}
+}
+
+func TestRemoteIP(t *testing.T) {
+	ln, _ := listenOnEphemeral(t)
+	defer ln.Close()
+	c, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+	if ip := remoteIP(c); ip == nil || !ip.IsLoopback() {
+		t.Errorf("remoteIP = %v, want loopback", ip)
+	}
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	if ip := remoteIP(a); ip != nil {
+		t.Errorf("remoteIP(pipe) = %v, want nil", ip)
+	}
+}

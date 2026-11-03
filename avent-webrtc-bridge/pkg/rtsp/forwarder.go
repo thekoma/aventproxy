@@ -92,85 +92,69 @@ func NewRTPForwarder() *RTPForwarder {
 	}
 }
 
-func (rf *RTPForwarder) AddUDPClient(sessionID string, videoRTPPort, audioRTPPort int) error {
+// dialClientUDP opens a connected socket to a client's media port. The host is
+// the source address of the client's RTSP connection, as RFC 2326 places it; a
+// client-supplied destination= is not honoured, since that would let anyone
+// aim the stream at a third party.
+func dialClientUDP(ip net.IP, port int) (*net.UDPConn, error) {
+	return net.DialUDP("udp", nil, &net.UDPAddr{IP: ip, Port: port})
+}
+
+// remoteIP returns the peer IP of a TCP connection, or nil when it is not one.
+func remoteIP(conn net.Conn) net.IP {
+	if conn == nil {
+		return nil
+	}
+	if addr, ok := conn.RemoteAddr().(*net.TCPAddr); ok {
+		return addr.IP
+	}
+	return nil
+}
+
+// AddUDPClient sends a client's media to ip, the address its RTSP connection
+// comes from, or updates the ports of a client already added.
+func (rf *RTPForwarder) AddUDPClient(sessionID string, ip net.IP, videoRTPPort, audioRTPPort int) error {
+	if ip == nil {
+		return fmt.Errorf("no address to send UDP client %s its media", sessionID)
+	}
+
 	rf.mutex.Lock()
 	defer rf.mutex.Unlock()
 
-	// Check if client already exists
-	if client, exists := rf.clients[sessionID]; exists {
-		// Update existing client with new ports
-		client.videoRTPPort = videoRTPPort
-		client.audioRTPPort = audioRTPPort
-		client.lastActivity = time.Now()
-
-		// Create new connections if needed
-		if videoRTPPort > 0 && client.videoConn == nil {
-			videoAddr, _ := net.ResolveUDPAddr("udp", fmt.Sprintf("localhost:%d", videoRTPPort))
-			videoConn, _ := net.DialUDP("udp", nil, videoAddr)
-			client.videoAddr = videoAddr
-			client.videoConn = videoConn
-		}
-
-		if audioRTPPort > 0 && client.audioConn == nil {
-			audioAddr, _ := net.ResolveUDPAddr("udp", fmt.Sprintf("localhost:%d", audioRTPPort))
-			audioConn, _ := net.DialUDP("udp", nil, audioAddr)
-			client.audioAddr = audioAddr
-			client.audioConn = audioConn
-		}
-
-		return nil
+	client, exists := rf.clients[sessionID]
+	if !exists {
+		client = &RTPClient{sessionID: sessionID, transportMode: TransportUDP}
 	}
+	client.videoRTPPort = videoRTPPort
+	client.audioRTPPort = audioRTPPort
+	client.lastActivity = time.Now()
 
-	client := &RTPClient{
-		sessionID:     sessionID,
-		transportMode: TransportUDP,
-		videoRTPPort:  videoRTPPort,
-		audioRTPPort:  audioRTPPort,
-		lastActivity:  time.Now(),
-	}
-
-	// Create video connection if port provided
-	if videoRTPPort > 0 {
-		videoAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("localhost:%d", videoRTPPort))
+	if videoRTPPort > 0 && client.videoConn == nil {
+		conn, err := dialClientUDP(ip, videoRTPPort)
 		if err != nil {
-			return fmt.Errorf("failed to resolve video UDP address: %v", err)
-		}
-
-		videoConn, err := net.DialUDP("udp", nil, videoAddr)
-		if err != nil {
-			return fmt.Errorf("failed to create video UDP connection: %v", err)
-		}
-
-		client.videoAddr = videoAddr
-		client.videoConn = videoConn
-	}
-
-	// Create audio connection if port provided
-	if audioRTPPort > 0 {
-		audioAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("localhost:%d", audioRTPPort))
-		if err != nil {
-			if client.videoConn != nil {
-				client.videoConn.Close()
+			if !exists {
+				client.close()
 			}
-			return fmt.Errorf("failed to resolve audio UDP address: %v", err)
+			return fmt.Errorf("failed to create video UDP connection: %w", err)
 		}
-
-		audioConn, err := net.DialUDP("udp", nil, audioAddr)
+		client.videoAddr = conn.RemoteAddr().(*net.UDPAddr)
+		client.videoConn = conn
+	}
+	if audioRTPPort > 0 && client.audioConn == nil {
+		conn, err := dialClientUDP(ip, audioRTPPort)
 		if err != nil {
-			if client.videoConn != nil {
-				client.videoConn.Close()
+			if !exists {
+				client.close()
 			}
-			return fmt.Errorf("failed to create audio UDP connection: %v", err)
+			return fmt.Errorf("failed to create audio UDP connection: %w", err)
 		}
-
-		client.audioAddr = audioAddr
-		client.audioConn = audioConn
+		client.audioAddr = conn.RemoteAddr().(*net.UDPAddr)
+		client.audioConn = conn
 	}
 
 	rf.clients[sessionID] = client
-
-	core.Logger.Trace().Msgf("Added UDP RTP client %s (video port:%d, audio port:%d)",
-		sessionID, videoRTPPort, audioRTPPort)
+	core.Logger.Trace().Msgf("Added UDP RTP client %s at %v (video port:%d, audio port:%d)",
+		sessionID, ip, videoRTPPort, audioRTPPort)
 	return nil
 }
 
@@ -254,26 +238,22 @@ func (rf *RTPForwarder) AddTCPClient(sessionID string, conn net.Conn, videoRTPCh
 	return nil
 }
 
+// close releases the sockets the forwarder opened for a client. The RTSP
+// connection of a TCP client belongs to the server and is left alone.
+func (c *RTPClient) close() {
+	for _, conn := range []*net.UDPConn{c.videoConn, c.audioConn, c.backchannelListener, c.backchannelRTCPListener} {
+		if conn != nil {
+			_ = conn.Close()
+		}
+	}
+}
+
 func (rf *RTPForwarder) RemoveClient(sessionID string) {
 	rf.mutex.Lock()
 	defer rf.mutex.Unlock()
 
 	if client, exists := rf.clients[sessionID]; exists {
-		if client.transportMode == TransportUDP {
-			if client.videoConn != nil {
-				client.videoConn.Close()
-			}
-			if client.audioConn != nil {
-				client.audioConn.Close()
-			}
-			if client.backchannelListener != nil {
-				client.backchannelListener.Close()
-			}
-			if client.backchannelRTCPListener != nil {
-				client.backchannelRTCPListener.Close()
-			}
-		}
-
+		client.close()
 		delete(rf.clients, sessionID)
 		core.Logger.Trace().Msgf("Removed RTP client %s", sessionID)
 	}
@@ -514,20 +494,7 @@ func (rf *RTPForwarder) CleanupInactiveClients(timeout time.Duration) {
 
 	for _, sessionID := range toRemove {
 		if client, exists := rf.clients[sessionID]; exists {
-			if client.transportMode == TransportUDP {
-				if client.videoConn != nil {
-					client.videoConn.Close()
-				}
-				if client.audioConn != nil {
-					client.audioConn.Close()
-				}
-				if client.backchannelListener != nil {
-					client.backchannelListener.Close()
-				}
-				if client.backchannelRTCPListener != nil {
-					client.backchannelRTCPListener.Close()
-				}
-			}
+			client.close()
 			delete(rf.clients, sessionID)
 			core.Logger.Trace().Msgf("Cleaned up inactive RTP client %s", sessionID)
 		}
