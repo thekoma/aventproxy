@@ -56,6 +56,24 @@ def heartbeat_due(now: float, last_heartbeat: float, interval: float = HEARTBEAT
     return now - last_heartbeat >= interval
 
 
+def heartbeat_outcome(result: object) -> tuple[bool, dict | None]:
+    """What a keep-alive got back: whether the socket lives, and any state pushed in its place.
+
+    tinytuya's `heartbeat(nowait=False)` skips the empty ack and returns the next
+    frame that has a payload, from the same socket the pushes arrive on. A push
+    landing in that window comes back here rather than in the receive loop, and
+    dropping it lost about half of a run of alarms on an SCD973/26 (fork
+    8c4fc03), so the caller publishes it. Only a connection error counts as
+    failure: an ack we cannot parse still proves the socket is alive.
+    """
+    if not isinstance(result, dict):
+        return True, None
+    if is_connection_error(result.get("Err")):
+        return False, None
+    dps = result.get("dps")
+    return True, (dps if isinstance(dps, dict) and dps else None)
+
+
 def data_stale(now: float, last_data: float, timeout: float = DATA_TIMEOUT) -> bool:
     """True when nothing has been received for `timeout` seconds."""
     return now - last_data > timeout

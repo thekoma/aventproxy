@@ -11,6 +11,7 @@ from lan_policy import (
     RECONNECT_DELAY,
     data_stale,
     heartbeat_due,
+    heartbeat_outcome,
     is_connection_error,
     parse_protocol_version,
     reconnect_delay,
@@ -139,3 +140,26 @@ class TestProtocolVersion:
         # session-key negotiation.
         for announced in (3.1, 3.4, 3.5, None):
             assert PROTOCOL_VERSION_DEFAULT in version_candidates(announced)
+
+
+class TestHeartbeatOutcome:
+    """The keep-alive reads the next frame with a payload, which can be a push (fork 8c4fc03)."""
+
+    def test_an_alert_read_in_place_of_the_ack_is_handed_back(self):
+        record = {"dps": {"212": "eyJjbWQiOiJpcGNfbW90aW9uIn0="}, "t": 1}
+        assert heartbeat_outcome(record) == (True, {"212": "eyJjbWQiOiJpcGNfbW90aW9uIn0="})
+
+    def test_a_plain_ack_carries_nothing(self):
+        assert heartbeat_outcome(None) == (True, None)
+        assert heartbeat_outcome({}) == (True, None)
+        assert heartbeat_outcome({"dps": {}}) == (True, None)
+
+    def test_a_connection_error_means_the_socket_is_gone(self):
+        assert heartbeat_outcome({"Error": "Network Error", "Err": LAN_ERR_CONNECT}) == (False, None)
+        assert heartbeat_outcome({"Error": "Offline", "Err": LAN_ERR_OFFLINE}) == (False, None)
+
+    def test_an_unreadable_ack_still_proves_the_socket_is_alive(self):
+        assert heartbeat_outcome({"Error": "Unexpected Payload", "Err": LAN_ERR_PAYLOAD}) == (True, None)
+
+    def test_junk_dps_is_not_published(self):
+        assert heartbeat_outcome({"dps": "not a dict"}) == (True, None)

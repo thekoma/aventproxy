@@ -17,7 +17,7 @@ from .lan_policy import (
     confirmed_protocol,
     data_stale,
     heartbeat_due,
-    is_connection_error,
+    heartbeat_outcome,
     parse_protocol_version,
     reconnect_delay,
     should_reconnect,
@@ -177,8 +177,19 @@ class TuyaLANClient:
         self._ip = None
         return False
 
-    def _send_heartbeat(self) -> bool:
-        """Ping the device on the persistent socket. Returns False if it is gone.
+    def _publish(self, dps: dict[str, Any]) -> None:
+        """Hand pushed state to the coordinator, on the event loop."""
+        try:
+            self._on_dps_update(dps)
+        except Exception:
+            _LOGGER.exception("Error in DPS update callback")
+
+    def _send_heartbeat(self) -> tuple[bool, dict[str, Any] | None]:
+        """Ping the device on the persistent socket.
+
+        Returns whether the socket is still usable, and any state that came back
+        in place of the ack (see `heartbeat_outcome`), for the caller to publish
+        on the event loop.
 
         tinytuya does not keep persistent sockets alive by itself, so without
         this the monitor closes the connection after 30-45 seconds of silence
@@ -186,20 +197,18 @@ class TuyaLANClient:
         ignores or crashes on, a heartbeat is the plain keep-alive command.
 
         The response is consumed here (`nowait=False`) so a stray ack cannot turn
-        up in the next receive() and look like a device error. Only a connection
-        error counts as failure: an ack we cannot parse still proves the socket
-        is alive.
+        up in the next receive() and look like a device error.
         """
         try:
             result = self._device.heartbeat(nowait=False)
         except Exception as ex:  # noqa: BLE001 - any failure here means the socket is unusable
             _LOGGER.debug("LAN heartbeat failed (%s)", ex)
-            return False
+            return False, None
 
-        if isinstance(result, dict) and is_connection_error(result.get("Err")):
+        alive, pushed = heartbeat_outcome(result)
+        if not alive:
             _LOGGER.debug("LAN heartbeat unreachable: %s", result.get("Error"))
-            return False
-        return True
+        return alive, pushed
 
     async def _run(self) -> None:
         last_data = time.monotonic()
@@ -256,20 +265,20 @@ class TuyaLANClient:
                     payload_errors = 0
 
                     if data.get("dps"):
-                        try:
-                            self._on_dps_update(data["dps"])
-                        except Exception:
-                            _LOGGER.exception("Error in DPS update callback")
+                        self._publish(data["dps"])
 
             # Keep-alive. Runs after the receive so the two never share the
             # socket at the same time.
             now = time.monotonic()
             if heartbeat_due(now, last_heartbeat):
-                if not await self._hass.async_add_executor_job(self._send_heartbeat):
+                alive, pushed = await self._hass.async_add_executor_job(self._send_heartbeat)
+                if not alive:
                     self._disconnect()
                     failures += 1
                     await self._interruptible_sleep(reconnect_delay(failures))
                     continue
+                if pushed:
+                    self._publish(pushed)
                 last_heartbeat = now
                 last_data = now
                 failures = 0
