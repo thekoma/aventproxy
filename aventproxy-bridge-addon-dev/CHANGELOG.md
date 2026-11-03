@@ -3,6 +3,40 @@
 This is the dev card: it follows builds off main, made for testing before an rc.
 Stay on the stable card unless you are testing, and use the beta card if you only want release candidates.
 
+## Unreleased (dev3)
+
+Part of this is in the integration and part in this card, so update both to dev3.
+
+**If your monitor speaks Tuya LAN protocol 3.4 or newer.** On 3.3 the bridge log says `Not using LAN signalling for <camera>: protocol 3.3`.
+- The integration reads the monitor's state over its own LAN session and gets motion and sound alarms pushed, within seconds.
+- Once the monitor has ever reported an alarm in DPS 212, the cloud poll pauses while the session is up, and commands stay on the LAN. The poll is back within 30 s if the session drops.
+- Turning Motion Alert on turns Sound Alert off, and the other way round, because the monitor runs one detector at a time.
+- This follows Leonard Pitzu's measurements on his 3.5 monitor. None of it has been tested here on a 3.4 or 3.5 monitor.
+
+**Fixes for everyone**
+- On 3.3, LAN pushes no longer hold off the cloud poll. Frequent pushes (SenseIQ) could delay it, and with it every motion and sound alert, which arrive only through that poll.
+- A pushed update that landed during the LAN keep-alive was thrown away. It is now kept.
+- A command that never left over the LAN now goes through the cloud. A lullaby next or previous is no longer sent twice after an unclear error.
+- While the integration's LAN session is up, a cloud outage leaves the entities available. On 3.3 the motion and sound sensors still need the cloud to fire.
+- A re-paired monitor (new local key) is picked up without restarting Home Assistant.
+- New Baby Moving sensor. Sleep stage now knows Out of bed and Settling.
+- Bridge, for Frigate, go2rtc and other RTSP viewers:
+  - viewers keep the picture when a cloud retry replaces the session;
+  - a viewer that stops reading for 5 s is dropped instead of freezing the others;
+  - viewers on another machine get UDP media, which used to go to localhost;
+  - audio is timed by its samples, which may stop crackle.
+- With LAN streaming off, the bridge config no longer holds the local key and P2P password.
+
+**Issue #72 test: a stream pauses a playing lullaby.** Two options on this card only:
+- `speaker_off`, on by default here. Once a cloud session connects, the bridge asks the monitor to keep its speaker off. Two-way audio overrides it, and LAN-signalled streams never send it. The stable and beta cards do not send it.
+- `webrtc_audio`. `recvonly` (the default) asks the monitor for audio as before. `none` asks for video only, to see whether the monitor needs audio to open its speaker. RTSP viewers then get a silent audio track.
+
+After updating, check that `speaker_off` shows as on in this card's Configuration tab. To tell whether it works, pause Frigate and any other viewer, start a lullaby, open the camera for a minute, then close it. The lullaby should keep playing. When the session ends, about 30 s after the last viewer leaves, the bridge log shows `Cloud session for <camera> carried … video and N audio packets`. N should be above zero. If N is 0, turn `speaker_off` off to get the audio back. Either way, please report what you saw on #72.
+
+**Log wording.** The bridge names each stream by its signalling: `Streaming <camera> with cloud signalling` or `… with LAN signalling`. The old wording was "over the cloud" and "over the LAN". The video of a cloud-signalled stream already travels over your LAN when the monitor is reachable; only the signalling goes through Tuya. New bridge lines: `Offer to …`, `Answer from …`, `Asked <camera> to keep its speaker off (issue #72)`, `Cloud session for … carried …`, and `Cloud sessions: audio …, speaker off …` at start. New integration lines: `Cloud poll for <camera> paused` and `resumed`, `Cloud for <camera> failed …` and `Cloud for <camera> answers again`.
+
+If something broke after this update, open an issue with your monitor model, firmware, the integration diagnostics and the bridge log.
+
 ## Unreleased (dev2)
 
 The bridge now uses the LAN only for monitors that speak Tuya LAN protocol 3.5. Monitors on protocol 3.3, such as an SCD973 on firmware 1.4.0, keep streaming over the cloud without a 4-second detour and without probing the LAN every 5 minutes. Update the integration and this card to dev2 together: a dev2 bridge with a dev1 integration never uses the LAN and logs "protocol unknown".
