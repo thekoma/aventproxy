@@ -3,10 +3,14 @@ package rtsp
 import (
 	"avent-webrtc-bridge/pkg/core"
 	"avent-webrtc-bridge/pkg/utils"
+	"errors"
 	"fmt"
+	"io"
 	"net"
+	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/pion/rtp"
@@ -259,11 +263,85 @@ func (rf *RTPForwarder) RemoveClient(sessionID string) {
 	}
 }
 
+// tcpWriteTimeout bounds one interleaved write. Packets go to every client in
+// turn, so a client that stops reading would otherwise stall all of them.
+var tcpWriteTimeout = 2 * time.Second
+
+// isDeadClientError reports whether a client is gone for good rather than hit
+// by a transient failure worth logging. A UDP client that closed its socket
+// answers with ICMP port unreachable, which a connected socket reports as
+// ECONNREFUSED on every later packet; a TCP client that stopped reading runs
+// into the write deadline.
 func isDeadClientError(err error) bool {
-	msg := err.Error()
-	return strings.Contains(msg, "broken pipe") ||
-		strings.Contains(msg, "connection reset by peer") ||
-		strings.Contains(msg, "use of closed network connection")
+	return errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, io.ErrClosedPipe) ||
+		errors.Is(err, os.ErrDeadlineExceeded)
+}
+
+// send writes one marshalled packet to a client on the video or audio track.
+func (rf *RTPForwarder) send(client *RTPClient, video bool, data []byte) error {
+	if client.transportMode == TransportTCP {
+		if client.tcpConn == nil {
+			return nil
+		}
+		channel := client.audioRTPChannel
+		if video {
+			channel = client.videoRTPChannel
+		}
+		return rf.sendInterleavedRTP(client.tcpConn, channel, data)
+	}
+	conn := client.audioConn
+	if video {
+		conn = client.videoConn
+	}
+	if conn == nil {
+		return nil
+	}
+	_, err := conn.Write(data)
+	return err
+}
+
+// forward sends one marshalled packet to every client and drops the ones that
+// are gone. Callers hold rf.mutex for writing.
+func (rf *RTPForwarder) forward(data []byte, video bool) {
+	track := "audio"
+	if video {
+		track = "video"
+	}
+	var dead []string
+	for sessionID, client := range rf.clients {
+		client.lastActivity = time.Now()
+		if err := rf.send(client, video, data); err != nil {
+			if isDeadClientError(err) {
+				dead = append(dead, sessionID)
+			} else {
+				core.Logger.Error().Err(err).Msgf("Error forwarding %s packet to client %s", track, sessionID)
+			}
+			continue
+		}
+		if video && rf.firstVideoPacket {
+			rf.firstVideoPacket = false
+			core.Logger.Trace().Msgf("Sent the first video packet to client %s", sessionID)
+		} else if !video && rf.firstAudioPacket {
+			rf.firstAudioPacket = false
+			core.Logger.Trace().Msgf("Sent the first audio packet to client %s", sessionID)
+		}
+	}
+
+	for _, sessionID := range dead {
+		client := rf.clients[sessionID]
+		core.Logger.Info().Msgf("Removing dead %s client %s", track, sessionID)
+		client.close()
+		// A stalled or broken interleaved stream cannot be resumed: the
+		// client has to reconnect, so its RTSP connection goes too.
+		if client.tcpConn != nil {
+			_ = client.tcpConn.Close()
+		}
+		delete(rf.clients, sessionID)
+	}
 }
 
 func (rf *RTPForwarder) getNALType(packet *rtp.Packet) byte {
@@ -359,49 +437,7 @@ func (rf *RTPForwarder) forwardVideoData(packet *rtp.Packet) {
 		core.Logger.Error().Err(err).Msg("Error marshaling video RTP packet")
 		return
 	}
-
-	var deadClients []string
-
-	for sessionID, client := range rf.clients {
-		client.lastActivity = time.Now()
-
-		if client.transportMode == TransportUDP {
-			if client.videoConn != nil {
-				if _, err := client.videoConn.Write(data); err != nil {
-					if isDeadClientError(err) {
-						deadClients = append(deadClients, sessionID)
-					} else {
-						core.Logger.Error().Err(err).Msgf("Error forwarding video packet to UDP client %s", sessionID)
-					}
-				} else if rf.firstVideoPacket {
-					rf.firstVideoPacket = false
-					core.Logger.Trace().Msgf("Successfully sent first video packet to UDP client %s on port %d",
-						sessionID, client.videoRTPPort)
-				}
-			}
-		} else if client.transportMode == TransportTCP {
-			if client.tcpConn != nil {
-				if err := rf.sendInterleavedRTP(client.tcpConn, client.videoRTPChannel, data); err != nil {
-					if isDeadClientError(err) {
-						deadClients = append(deadClients, sessionID)
-					} else {
-						core.Logger.Error().Err(err).Msgf("Error forwarding video packet to TCP client %s", sessionID)
-					}
-				} else if rf.firstVideoPacket {
-					rf.firstVideoPacket = false
-					core.Logger.Trace().Msgf("Successfully sent first video packet to TCP client %s on channel %d",
-						sessionID, client.videoRTPChannel)
-				}
-			}
-		}
-	}
-
-	if len(deadClients) > 0 {
-		for _, id := range deadClients {
-			core.Logger.Info().Msgf("Removing dead video client %s", id)
-			delete(rf.clients, id)
-		}
-	}
+	rf.forward(data, true)
 }
 
 // ForwardAudioPacket restamps a PCMU RTP packet from the wall clock and sends
@@ -421,39 +457,12 @@ func (rf *RTPForwarder) ForwardAudioPacket(packet *rtp.Packet) {
 	}
 	packet.Timestamp = rtpTicks(time.Since(rf.audioTimeStart), 8000)
 
-	// Serialize packet
 	data, err := packet.Marshal()
 	if err != nil {
 		core.Logger.Error().Err(err).Msg("Error marshaling audio RTP packet")
 		return
 	}
-
-	// Forward to all clients
-	for sessionID, client := range rf.clients {
-		client.lastActivity = time.Now()
-
-		if client.transportMode == TransportUDP {
-			if client.audioConn != nil {
-				if _, err := client.audioConn.Write(data); err != nil {
-					core.Logger.Error().Err(err).Msgf("Error forwarding audio packet to UDP client %s", sessionID)
-				} else if rf.firstAudioPacket {
-					rf.firstAudioPacket = false
-					core.Logger.Trace().Msgf("Successfully sent first audio packet to UDP client %s on port %d",
-						sessionID, client.audioRTPPort)
-				}
-			}
-		} else if client.transportMode == TransportTCP {
-			if client.tcpConn != nil {
-				if err := rf.sendInterleavedRTP(client.tcpConn, client.audioRTPChannel, data); err != nil {
-					core.Logger.Error().Err(err).Msgf("Error forwarding audio packet to TCP client %s", sessionID)
-				} else if rf.firstAudioPacket {
-					rf.firstAudioPacket = false
-					core.Logger.Trace().Msgf("Successfully sent first audio packet to TCP client %s on channel %d",
-						sessionID, client.audioRTPChannel)
-				}
-			}
-		}
-	}
+	rf.forward(data, false)
 }
 
 func (rf *RTPForwarder) Stop() {
@@ -555,11 +564,16 @@ func (rf *RTPForwarder) sendInterleavedRTP(conn net.Conn, channel byte, rtpData 
 	// Send header + data in one write to avoid fragmentation
 	fullPacket := append(header, rtpData...)
 
-	if _, err := conn.Write(fullPacket); err != nil {
+	// The deadline is lifted afterwards: the RTSP responses written on this
+	// connection must not inherit an expired one once media stops.
+	if err := conn.SetWriteDeadline(time.Now().Add(tcpWriteTimeout)); err != nil {
 		return err
 	}
-
-	return nil
+	_, err := conn.Write(fullPacket)
+	if err == nil {
+		err = conn.SetWriteDeadline(time.Time{})
+	}
+	return err
 }
 
 // frameClock stamps video packets with the wall clock, once per frame. A frame

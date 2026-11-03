@@ -2,6 +2,7 @@ package rtsp
 
 import (
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"testing"
@@ -183,5 +184,85 @@ func TestRemoteIP(t *testing.T) {
 	defer b.Close()
 	if ip := remoteIP(a); ip != nil {
 		t.Errorf("remoteIP(pipe) = %v, want nil", ip)
+	}
+}
+
+// refusedUDPPort is a loopback port nobody listens on any more.
+func refusedUDPPort(t *testing.T) int {
+	t.Helper()
+	c, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := c.LocalAddr().(*net.UDPAddr).Port
+	c.Close()
+	return port
+}
+
+func waitClientCount(t *testing.T, rf *RTPForwarder, want int, send func()) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for rf.GetClientCount() != want {
+		if time.Now().After(deadline) {
+			t.Fatalf("forwarder still has %d client(s), want %d", rf.GetClientCount(), want)
+		}
+		send()
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// A UDP client that closed its socket answers every packet with ICMP port
+// unreachable, which a connected socket reports as ECONNREFUSED: the client
+// is gone, on the audio track as much as on the video one (fork 7314de5).
+func TestRefusedUDPClientIsDropped(t *testing.T) {
+	loopback := net.IPv4(127, 0, 0, 1)
+	for _, track := range []string{"video", "audio"} {
+		t.Run(track, func(t *testing.T) {
+			rf := NewRTPForwarder()
+			video, audio := refusedUDPPort(t), 0
+			send := func() {
+				rf.ForwardVideoPacket(&rtp.Packet{Header: rtp.Header{Marker: true}, Payload: []byte{0x41, 0x9a}})
+			}
+			if track == "audio" {
+				video, audio = 0, refusedUDPPort(t)
+				send = func() { rf.ForwardAudioPacket(&rtp.Packet{Payload: make([]byte, 160)}) }
+			}
+			if err := rf.AddUDPClient("s1", loopback, video, audio); err != nil {
+				t.Fatal(err)
+			}
+			waitClientCount(t, rf, 0, send)
+		})
+	}
+}
+
+// A TCP client that stops reading must not stall every other viewer: the
+// write gives up, the client is dropped and its connection closed.
+func TestStalledTCPClientIsDropped(t *testing.T) {
+	old := tcpWriteTimeout
+	tcpWriteTimeout = 50 * time.Millisecond
+	defer func() { tcpWriteTimeout = old }()
+
+	server, client := net.Pipe() // nobody reads client: every write blocks
+	defer client.Close()
+	rf := NewRTPForwarder()
+	if err := rf.AddTCPClient("s1", server, 0, 2, 4); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		rf.ForwardVideoPacket(&rtp.Packet{Header: rtp.Header{Marker: true}, Payload: []byte{0x41, 0x9a}})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("forwarding still blocked on a client that does not read")
+	}
+	if n := rf.GetClientCount(); n != 0 {
+		t.Fatalf("stalled client still attached (%d clients)", n)
+	}
+	if _, err := server.Write([]byte{0}); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("the stalled client's connection was left open: %v", err)
 	}
 }
