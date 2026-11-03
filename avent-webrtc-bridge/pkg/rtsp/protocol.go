@@ -106,11 +106,15 @@ func generateSessionID() string {
 	return hex.EncodeToString(bytes)
 }
 
+// requestReadTimeout bounds the wait for a client's next request, its first
+// one included.
+var requestReadTimeout = 60 * time.Second
+
 func (s *RTSPServer) handleRTSPProtocol(client *RTSPClient) {
 	defer s.removeClient(client.session)
 
 	for {
-		if err := client.conn.SetReadDeadline(time.Now().Add(60 * time.Second)); err != nil {
+		if err := client.conn.SetReadDeadline(time.Now().Add(requestReadTimeout)); err != nil {
 			break
 		}
 

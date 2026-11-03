@@ -1,6 +1,7 @@
 package rtsp
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -16,39 +17,68 @@ var mqttBackoffDelays = []time.Duration{2 * time.Second, 5 * time.Second, 15 * t
 // keep the stream waiting for good.
 const mqttHandshakeTimeout = 15 * time.Second
 
+// MQTTManager holds the one MQTT connection the cameras' cloud signalling
+// shares. One, not one per camera: every connection authenticates with the
+// same client id (derived from the phone's device id and the user's), and a
+// broker drops the older connection when another arrives with its id (MQTT
+// 3.1.1, 3.1.4-2). With two cameras, each camera's connect cut the other's
+// off, in the middle of its offer and answer if it was starting. The app
+// keeps one connection for all its devices too; sessions are told apart by
+// their session id (MQTTClient.AddCameraClient).
 type MQTTManager struct {
 	mobileClient *tuya.MobileSDKClient
-	clients      map[string]*tuya.MQTTClient // keyed by deviceId
+	client       *tuya.MQTTClient
 	mutex        sync.Mutex
+
+	// Seams for tests: connect, and (*tuya.MQTTClient).IsConnected.
+	connectFn func(ctx context.Context, deviceId string) (*tuya.MQTTClient, error)
+	connected func(*tuya.MQTTClient) bool
 }
 
 func NewMQTTManager(mobileClient *tuya.MobileSDKClient) *MQTTManager {
-	return &MQTTManager{
+	m := &MQTTManager{
 		mobileClient: mobileClient,
-		clients:      make(map[string]*tuya.MQTTClient),
+		connected:    (*tuya.MQTTClient).IsConnected,
 	}
+	m.connectFn = m.connect
+	return m
 }
 
+// GetClient returns the shared connection, connecting it first if it is down.
+// deviceId is the camera that needs it, for the log.
 func (m *MQTTManager) GetClient(deviceId string) (*tuya.MQTTClient, error) {
+	return m.GetClientContext(context.Background(), deviceId)
+}
+
+// GetClientContext is GetClient for a caller that may give up: once ctx ends
+// it starts no connect attempt and sleeps no backoff (an attempt in flight
+// runs to its end). An imm attempt uses it, so that when the broker is down a
+// webrtc fallback does not wait behind the abandoned attempt's whole backoff.
+func (m *MQTTManager) GetClientContext(ctx context.Context, deviceId string) (*tuya.MQTTClient, error) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	if client, exists := m.clients[deviceId]; exists && client.IsConnected() {
+	if m.client != nil && m.connected(m.client) {
 		core.Logger.Trace().Msgf("Reusing existing MQTT client for device %s", deviceId)
-		return client, nil
+		return m.client, nil
 	}
 
+	// The lock may have taken a while: a caller that gave up meanwhile leaves
+	// the connect to one that still wants it.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	core.Logger.Info().Msgf("Creating new MQTT client for device %s", deviceId)
-	client, err := m.connect(deviceId)
+	client, err := m.connectFn(ctx, deviceId)
 	if err != nil {
 		return nil, err
 	}
 
-	m.clients[deviceId] = client
+	m.client = client
 	return client, nil
 }
 
-func (m *MQTTManager) connect(deviceId string) (*tuya.MQTTClient, error) {
+func (m *MQTTManager) connect(ctx context.Context, deviceId string) (*tuya.MQTTClient, error) {
 	if m.mobileClient == nil {
 		return nil, fmt.Errorf("mobile client not configured")
 	}
@@ -74,7 +104,9 @@ func (m *MQTTManager) connect(deviceId string) (*tuya.MQTTClient, error) {
 	for attempt, delay := range mqttBackoffDelays {
 		if attempt > 0 {
 			core.Logger.Info().Msgf("MQTT connect retry %d/%d for device %s in %v", attempt+1, len(mqttBackoffDelays), deviceId, delay)
-			time.Sleep(delay)
+			if err := sleepCtx(ctx, delay); err != nil {
+				return nil, fmt.Errorf("MQTT connect abandoned after %d attempts: %w (%v)", attempt, err, lastErr)
+			}
 		}
 
 		client, err := tuya.NewMobileMqttClient(&tuya.MobileMQTTConfig{
@@ -105,14 +137,15 @@ func (m *MQTTManager) connect(deviceId string) (*tuya.MQTTClient, error) {
 	return nil, fmt.Errorf("MQTT connect failed after %d attempts: %v", len(mqttBackoffDelays), lastErr)
 }
 
-func (m *MQTTManager) InvalidateClient(deviceId string) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	if client, exists := m.clients[deviceId]; exists {
-		core.Logger.Info().Msgf("Invalidating MQTT client for device %s (will reconnect on next use)", deviceId)
-		client.Stop()
-		delete(m.clients, deviceId)
+// sleepCtx sleeps for d, or until ctx ends, which it reports.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
 	}
 }
 
@@ -120,9 +153,9 @@ func (m *MQTTManager) Stop() {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	for deviceId, client := range m.clients {
-		core.Logger.Info().Msgf("Closing MQTT client for device %s", deviceId)
-		client.Stop()
+	if m.client != nil {
+		core.Logger.Info().Msg("Closing the MQTT client")
+		m.client.Stop()
+		m.client = nil
 	}
-	m.clients = make(map[string]*tuya.MQTTClient)
 }

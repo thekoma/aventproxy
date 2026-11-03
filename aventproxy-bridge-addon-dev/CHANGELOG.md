@@ -3,6 +3,18 @@
 This is the dev card: it follows builds off main, made for testing before an rc.
 Stay on the stable card unless you are testing, and use the beta card if you only want release candidates.
 
+## Unreleased (dev4)
+
+**Bridge: viewers no longer stall at DESCRIBE ([#89](https://github.com/thekoma/aventproxy/issues/89), [#97](https://github.com/thekoma/aventproxy/issues/97)).**
+- Every RTSP viewer gets its answers at once while its camera's stream starts. Only the first one used to: the others waited for the whole cloud attempt, 20 s or more when the camera did not answer, and go2rtc gives up after 5 s and retries, so it never got past DESCRIBE.
+- A start that fails closes every viewer that came for it, and the next viewer starts afresh.
+- A cloud session that connects but sends nothing, neither video nor audio, for 20 s counts as failed, with the warning `Cloud session for <camera> is up but carried no media in 20s`. Its viewers reconnect to a new session instead of waiting on a dead one. A session that carries only audio, as in privacy mode, is kept.
+- With two or more cameras, the bridge keeps one connection to Tuya's MQTT broker for all of them. It used to open one per camera under the same client id, and the broker drops the older connection when a newer one arrives, so each camera's start could cut the other's off.
+- A start that times out says what it waited for, on the `Failed to start WebRTC bridge` line: `the camera never answered the offer`, `the camera answered, but the connection to it never came up`, or, on HEVC, `connected, but the camera never confirmed the video codec`.
+- A connection that never sends a request is closed after 60 s, and the bridge backs off when accepting connections keeps failing instead of filling the log.
+
+**New option `cloud_transport`, for issues #72 and #59 (experimental, untested on a monitor).** `webrtc`, the default, changes nothing. With `imm`, a stream that does not take the LAN (every stream from a 3.3 monitor, for instance) first tries the Philips app's own transport with cloud signalling, and falls back to the webrtc session when that fails. The video comes over your local network, and the session sends what the app's live view sends, with no talk or speaker request, so a playing lullaby should keep playing. The log says `Streaming <camera> with imm over cloud signalling` when it works. When it does not, one warning names the step that failed (`no answer`, `ICE timeout`, `no SPS/IDR`…), and that camera skips imm for 5 minutes. A stream already running stays on webrtc until its viewer reconnects, so an always-on viewer such as Frigate keeps it there. The offer goes to Tuya's media relay first, then, after 3 seconds without an answer, also on the monitor's own MQTT channel, the way the app sends it; the log says `Answer from <camera> via moto` or `via device channel`. A start can take up to 16 seconds before the fallback, 20 when a LAN attempt runs first. If you try it, please post those lines on #72.
+
 ## Unreleased (dev3)
 
 Part of this is in the integration and part in this card, so update both to dev3.

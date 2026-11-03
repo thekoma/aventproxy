@@ -20,6 +20,14 @@ const (
 	TypeDisconnect = "disconnect"
 )
 
+// Values of the header's path: the route a frame took. libThingP2PSDK adds it
+// after building the frame, "lan" for the 6668 session and "mqtt" for the
+// cloud broker; a frame without one is read as mqtt.
+const (
+	PathLAN  = "lan"
+	PathMQTT = "mqtt"
+)
+
 // SignalHeader is the "header" object of a 302 frame.
 type SignalHeader struct {
 	From          string `json:"from"`
@@ -62,8 +70,12 @@ type SignalFrame struct {
 
 // Offer describes the session we want from the monitor.
 type Offer struct {
-	UID       string
-	DeviceID  string
+	UID      string
+	DeviceID string
+	// Path is the route the frames take: PathLAN unless the cloud carries
+	// them. MotoID names the cloud relay and stays empty on the LAN.
+	Path      string
+	MotoID    string
 	SessionID string
 	TraceID   string
 	IV        []byte
@@ -94,6 +106,7 @@ func NewOffer(uid, deviceID, iceUfrag, icePwd string) (*Offer, error) {
 		DeviceID:   deviceID,
 		SessionID:  fmt.Sprintf("%s%d%s", deviceID, now, suffix),
 		TraceID:    fmt.Sprintf("%s_%s_%d", trace, deviceID, now*1000),
+		Path:       PathLAN,
 		IV:         IVFromTraceID(trace),
 		AESKey:     key,
 		ICEUfrag:   iceUfrag,
@@ -144,8 +157,8 @@ func (o *Offer) header(msgType string) SignalHeader {
 	return SignalHeader{
 		From:          o.UID,
 		To:            o.DeviceID,
-		MotoID:        "",
-		Path:          "lan",
+		MotoID:        o.MotoID,
+		Path:          o.Path,
 		Type:          msgType,
 		IsPre:         0,
 		P2PSkill:      1635,
@@ -167,9 +180,9 @@ func placeholderICEServers() []ICEServer {
 	return []ICEServer{{URLs: "stun:192.0.2.1:3478"}}
 }
 
-// SendOffer writes the offer to the monitor.
-func (o *Offer) SendOffer(s *Session) error {
-	return sendSignal(s, o.IV, SignalFrame{
+// OfferFrame is the offer as a 302 frame.
+func (o *Offer) OfferFrame() SignalFrame {
+	return SignalFrame{
 		Header: o.header(TypeOffer),
 		Msg: SignalMessage{
 			SDP:        o.SDP(),
@@ -178,21 +191,56 @@ func (o *Offer) SendOffer(s *Session) error {
 			Log:        o.Log,
 			TCPToken:   o.TCPToken,
 		},
-	})
+	}
 }
 
-// SendCandidate trickles one local ICE candidate.
-func (o *Offer) SendCandidate(s *Session, candidate string) error {
+// CandidateFrame trickles one local ICE candidate as a 302 frame.
+func (o *Offer) CandidateFrame(candidate string) SignalFrame {
 	if !strings.HasPrefix(candidate, "a=") {
 		candidate = "a=" + candidate
 	}
 	if !strings.HasSuffix(candidate, "\r\n") {
 		candidate += "\r\n"
 	}
-	return sendSignal(s, o.IV, SignalFrame{
+	return SignalFrame{
 		Header: o.header(TypeCandidate),
 		Msg:    SignalMessage{Candidate: candidate, Token: []ICEServer{}},
-	})
+	}
+}
+
+// DisconnectMessage is the msg of a disconnect frame. It carries no token.
+type DisconnectMessage struct {
+	CloseReasonLocal int `json:"close_reason_local"`
+	CloseReason      int `json:"close_reason"`
+}
+
+// DisconnectFrame is a complete 302 disconnect body.
+type DisconnectFrame struct {
+	Header SignalHeader      `json:"header"`
+	Msg    DisconnectMessage `json:"msg"`
+}
+
+// closeReasonLocalClose is what libThingP2PSDK puts in close_reason when it
+// ends a session itself, with close_reason_local reset to 0.
+const closeReasonLocalClose = 4
+
+// DisconnectFrame ends the session at the monitor. The LAN path never sends
+// it: closing the 6668 session is enough there.
+func (o *Offer) DisconnectFrame() DisconnectFrame {
+	return DisconnectFrame{
+		Header: o.header(TypeDisconnect),
+		Msg:    DisconnectMessage{CloseReason: closeReasonLocalClose},
+	}
+}
+
+// SendOffer writes the offer to the monitor.
+func (o *Offer) SendOffer(s *Session) error {
+	return sendSignal(s, o.IV, o.OfferFrame())
+}
+
+// SendCandidate trickles one local ICE candidate.
+func (o *Offer) SendCandidate(s *Session, candidate string) error {
+	return sendSignal(s, o.IV, o.CandidateFrame(candidate))
 }
 
 func sendSignal(s *Session, iv []byte, frame SignalFrame) error {
@@ -235,6 +283,32 @@ func ReadSignal(s *Session, sessionID string, timeout time.Duration) (*SignalFra
 		return &frame, nil
 	}
 	return nil, fmt.Errorf("lan: no signalling frame within %s", timeout)
+}
+
+// ParseSignalFrame reads the parts of a 302 frame a session acts on: the
+// type, the session id and the sdp or candidate. Everything else is left out,
+// so a field in a form the bridge does not expect (a ttl as a string, say)
+// cannot cost the whole frame.
+func ParseSignalFrame(data []byte) (SignalFrame, error) {
+	var raw struct {
+		Header struct {
+			From      string `json:"from"`
+			To        string `json:"to"`
+			Type      string `json:"type"`
+			SessionID string `json:"sessionid"`
+		} `json:"header"`
+		Msg struct {
+			SDP       string `json:"sdp"`
+			Candidate string `json:"candidate"`
+		} `json:"msg"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return SignalFrame{}, err
+	}
+	return SignalFrame{
+		Header: SignalHeader{From: raw.Header.From, To: raw.Header.To, Type: raw.Header.Type, SessionID: raw.Header.SessionID},
+		Msg:    SignalMessage{SDP: raw.Msg.SDP, Candidate: raw.Msg.Candidate},
+	}, nil
 }
 
 func randomASCII(n int) (string, error) {
