@@ -1,6 +1,6 @@
 name: "Philips Avent WebRTC Bridge Beta (Addon)"
 description: "WebRTC to RTSP bridge for Philips Avent baby monitors. Beta channel: required when the integration is a beta or rc build, because the two sides must match."
-version: "2026.10.1-rc3"
+version: "2026.11.0-rc1"
 slug: "aventproxy_bridge_beta"
 image: "ghcr.io/thekoma/aventproxy-bridge"
 url: "https://github.com/thekoma/aventproxy"
