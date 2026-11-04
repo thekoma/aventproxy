@@ -88,6 +88,12 @@ GitHub Actions (`.github/workflows/ci.yml`):
 
 Release workflow (`release.yml`): version pattern `YEAR.MONTH.INCREMENT`, multi-arch (amd64+arm64), pushes to `ghcr.io/thekoma/aventproxy-bridge`. Types: `release`, `rc`, `beta`, `dev`. Only `dev` skips the GitHub release step, via the `publish_release` output. Pushes touching `.github/workflows/` need the SSH remote, since the HTTPS token has no `workflow` scope.
 
+Collaborators (Leonard Pitzu since 2026-11) have write access and manage their own branches, but the owner has
+the last word: a ruleset on `main` requires a pull request approved after its last push, a second ruleset
+restricts `20*` version tags, and both let only the repository admin and GitHub Actions bypass. `release.yml`
+runs only for the owner (`if: github.actor == github.repository_owner` on its first job), since a dispatch or
+a version tag would otherwise publish an image and a release.
+
 ## Secrets
 
 Nothing under `tools/` may hold a working credential. A real account's `sid`,

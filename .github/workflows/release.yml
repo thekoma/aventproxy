@@ -27,6 +27,9 @@ env:
 
 jobs:
   version:
+    # Collaborators may push branches, but only the owner cuts a release: a
+    # dispatch or a version tag from anyone else skips every job.
+    if: github.actor == github.repository_owner
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.resolve.outputs.version }}
