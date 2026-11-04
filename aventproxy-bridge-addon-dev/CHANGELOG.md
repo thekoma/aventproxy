@@ -3,6 +3,15 @@
 This is the dev card: it follows builds off main, made for testing before an rc.
 Stay on the stable card unless you are testing, and use the beta card if you only want release candidates.
 
+## Unreleased (dev5)
+
+**Talk from Home Assistant 2026.11 without stopping the lullaby (experimental, untested on a monitor).** Update the integration to dev5 as well.
+- With **Two-way audio (talkback)** on in the integration, the camera tells Home Assistant 2026.11 that it takes audio. The camera dialog then shows a microphone button, once the two-way audio preview is on under Settings → System → Labs. It needs HTTPS and a WebRTC stream, and an older Home Assistant ignores it.
+- New option `talkback_mode`, `on_demand` by default on this card. The stream's camera session stays one-way, so imm and the LAN stay in use and a playing lullaby keeps playing. When audio arrives on the RTSP backchannel (Home Assistant sends it only while its microphone is on), the bridge opens a second, two-way webrtc session just for that, and closes it 3 seconds after the audio stops. The lullaby pauses while that session is open.
+- The first second or two of a talk are lost while that session opens. The log says `Talking to <camera>: the two-way session took …` when it is up and `Stopped talking to <camera> (…) after …: N packets sent, M dropped before the session could carry them` at the end. A session that fails makes the next try wait 10 seconds.
+- `session` keeps the old behaviour, where every stream asks the monitor for two-way audio. The stable and beta cards still work that way.
+- If you try it, please post those lines on #72, and say whether your voice came through and whether the lullaby carried on afterwards.
+
 ## Unreleased (dev4)
 
 **Bridge: viewers no longer stall at DESCRIBE ([#89](https://github.com/thekoma/aventproxy/issues/89), [#97](https://github.com/thekoma/aventproxy/issues/97)).**

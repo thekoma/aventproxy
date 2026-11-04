@@ -73,8 +73,8 @@ func (cs *CameraStream) lanEligible() (bool, string) {
 	target := s.LANTargets[id]
 	protocol, err := strconv.ParseFloat(target.Protocol, 64)
 	switch {
-	case s.Talkback:
-		return false, "talkback on" // the LAN path carries no return audio
+	case s.sessionTalkback():
+		return false, "talkback on" // the LAN path carries no return audio; on demand it talks in a session of its own
 	case cs.resolution == "sd":
 		return false, "sd stream"
 	case target.LocalKey == "" || target.Password == "":

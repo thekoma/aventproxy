@@ -66,7 +66,7 @@
         "data_description": {
           "bridge_host": "Emplacement où Home Assistant peut joindre le pont WebRTC. Laissez localhost si vous utilisez l'add-on ; indiquez le nom du conteneur ou l'adresse IP si vous exécutez le pont ailleurs vous-même.",
           "bridge_port": "Port sur lequel le pont WebRTC écoute (par défaut : 38554)",
-          "talkback": "Laissez désactivé sauf si un de vos clients parle réellement via le flux. Demander l'audio bidirectionnel à la caméra fait que le moniteur arrête une berceuse en cours et la redémarre depuis le début à la fermeture du flux.",
+          "talkback": "Activez pour parler dans la pièce, depuis Home Assistant 2026.11 (aperçu Labs, HTTPS et WebRTC) ou un autre client qui envoie de l'audio sur le flux. Avec la carte Dev du pont, l'audio bidirectionnel n'est demandé au moniteur que pendant qu'on parle ; ailleurs chaque flux le demande, ce qui fait que le moniteur arrête une berceuse en cours et la redémarre depuis le début quand vous fermez le flux.",
           "lan_streaming": "Diffuser via le réseau local lorsque le moniteur le permet. Désactivez-le si votre flux a cessé de fonctionner après une mise à jour."
         }
       }

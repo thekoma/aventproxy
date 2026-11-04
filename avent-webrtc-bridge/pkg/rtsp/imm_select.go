@@ -55,8 +55,8 @@ func (cs *CameraStream) immEligible() (bool, string) {
 		return false, ""
 	}
 	switch {
-	case s.Talkback:
-		return false, "talkback on" // the imm path carries no return audio
+	case s.sessionTalkback():
+		return false, "talkback on" // the imm path carries no return audio; on demand it talks in a session of its own
 	case cs.resolution == "sd":
 		return false, "sd stream" // the start sequence asks for the main stream
 	case s.immCoolingDown(cs.camera.DeviceID):
