@@ -24,4 +24,4 @@ configuration:
       How streams that do not take the LAN connect through the cloud. webrtc
       (default) is the session every card has used. imm first tries the
       Philips app's own transport over cloud signalling, then falls back to
-      webrtc. Experimental and untested on hardware (issues #72 and #59).
+      webrtc. Experimental, tested on one SCD973 so far (issues #72 and #59).

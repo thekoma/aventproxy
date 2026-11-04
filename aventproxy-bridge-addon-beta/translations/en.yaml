@@ -8,3 +8,10 @@ configuration:
       rtsp://localhost:38554. Use 0.0.0.0 (every interface), one address or a
       comma-separated list only when another machine (VLC, Frigate, a separate
       go2rtc) must open the stream, and then restrict the port on your network.
+  cloud_transport:
+    name: Cloud transport
+    description: >-
+      How streams that do not take the LAN connect through the cloud. webrtc
+      (default) is the session every card has used. imm first tries the
+      Philips app's own transport over cloud signalling, then falls back to
+      webrtc. Experimental, tested on one SCD973 so far (issues #72 and #59).

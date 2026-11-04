@@ -14,8 +14,10 @@ apparmor: true
 options:
   cameras: []
   rtsp_bind_address: "localhost"
+  cloud_transport: "webrtc"
 schema:
   rtsp_bind_address: str?
+  cloud_transport: list(webrtc|imm)?
   signing_key: str?
   sid: str?
   ecode: str?

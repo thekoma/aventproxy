@@ -25,5 +25,5 @@ configuration:
       Jak łączą się przez chmurę strumienie, które nie idą przez sieć lokalną.
       webrtc (domyślnie) to sesja, której używają wszystkie karty. imm najpierw
       próbuje własnego transportu aplikacji Philips z sygnalizacją przez chmurę,
-      a gdy się nie uda, wraca do webrtc. Eksperymentalne, nietestowane na
-      sprzęcie (zgłoszenia #72 i #59).
+      a gdy się nie uda, wraca do webrtc. Eksperymentalne, dotąd sprawdzone
+      na jednym SCD973 (zgłoszenia #72 i #59).
