@@ -111,6 +111,12 @@ CLOUD_TRANSPORT=$(addon_option cloud_transport)
 if [ -n "$CLOUD_TRANSPORT" ]; then
     BRIDGE_ARGS+=(--cloud-transport "$CLOUD_TRANSPORT")
 fi
+# Dev card only too: on_demand opens a two-way session only while a client
+# talks. Absent elsewhere, so talkback keeps the session-wide mode.
+TALKBACK_MODE=$(addon_option talkback_mode)
+if [ -n "$TALKBACK_MODE" ]; then
+    BRIDGE_ARGS+=(--talkback-mode "$TALKBACK_MODE")
+fi
 
 # Supervise the bridge here rather than exiting the container when the config
 # changes. The old version killed this script and relied on the supervisor to

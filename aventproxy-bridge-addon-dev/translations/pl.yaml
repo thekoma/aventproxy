@@ -27,3 +27,13 @@ configuration:
       próbuje własnego transportu aplikacji Philips z sygnalizacją przez chmurę,
       a gdy się nie uda, wraca do webrtc. Eksperymentalne, dotąd sprawdzone
       na jednym SCD973 (zgłoszenia #72 i #59).
+  talkback_mode:
+    name: Tryb mówienia do dziecka
+    description: >-
+      Działa tylko wtedy, gdy w integracji włączony jest dźwięk dwukierunkowy
+      (talkback). on_demand (tu domyślnie) zostawia sesję z kamerą
+      jednokierunkową i otwiera sesję dwukierunkową tylko wtedy, gdy klient
+      wysyła dźwięk, na przykład Home Assistant 2026.11 z włączonym
+      mikrofonem. session prosi kamerę o dźwięk dwukierunkowy przy każdym
+      strumieniu, co wstrzymuje grającą kołysankę (zgłoszenie #72).
+      Eksperymentalne.

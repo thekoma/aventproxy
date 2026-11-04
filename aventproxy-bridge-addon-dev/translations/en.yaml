@@ -25,3 +25,12 @@ configuration:
       (default) is the session every card has used. imm first tries the
       Philips app's own transport over cloud signalling, then falls back to
       webrtc. Experimental, tested on one SCD973 so far (issues #72 and #59).
+  talkback_mode:
+    name: Talkback mode
+    description: >-
+      Only used when two-way audio (talkback) is on in the integration.
+      on_demand (default here) keeps the camera session one-way and opens a
+      two-way session only while a client sends audio, such as Home Assistant
+      2026.11 while its microphone is on. session asks the camera for two-way
+      audio on every stream, which pauses a playing lullaby (issue #72).
+      Experimental.

@@ -280,6 +280,9 @@ Example:
 	cmd.Flags().String("cloud-transport", rtsp.CloudTransportWebRTC, "Cloud session for streams that do not take "+
 		"the LAN: webrtc, or imm to try the app's own transport over cloud signalling first and fall back to "+
 		"webrtc (experimental)")
+	cmd.Flags().String("talkback-mode", rtsp.TalkbackSession, "How talkback reaches the camera: session makes "+
+		"every camera session two-way, on_demand opens a two-way session only while a client sends audio "+
+		"(experimental)")
 	cmd.MarkFlagRequired("config")
 	return cmd
 }
@@ -322,6 +325,11 @@ func runAddon(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	cloudTransport, err := cloudTransportFlag(cmd)
+	if err != nil {
+		return err
+	}
+	talkbackFlag, _ := cmd.Flags().GetString("talkback-mode")
+	talkbackMode, err := rtsp.ParseTalkbackMode(talkbackFlag)
 	if err != nil {
 		return err
 	}
@@ -415,6 +423,7 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	server.BindAddress = bind
 	server.MobileClient = client
 	server.Talkback = cfg.Talkback
+	server.TalkbackMode = talkbackMode
 	server.SpeakerOff = speakerOff
 	server.WebRTCAudio = webrtcAudio
 	server.CloudTransport = cloudTransport
@@ -426,7 +435,11 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	server.UID = uid
 	server.LANTargets = targets
 	core.Logger.Info().Msgf("LAN streaming %t, %d cameras with LAN targets", server.LanStreaming, len(targets))
-	if cfg.Talkback {
+	if cfg.Talkback && talkbackMode == rtsp.TalkbackOnDemand {
+		core.Logger.Info().Msg("Two-way audio on demand (experimental): camera sessions stay one-way, and a " +
+			"two-way session opens only while a client sends audio on the backchannel")
+		core.Logger.Info().Msgf("Cloud sessions: audio %s, speaker off %t", webrtcAudio, speakerOff)
+	} else if cfg.Talkback {
 		core.Logger.Info().Msg("Two-way audio enabled: streams will ask the camera for talkback")
 		if webrtcAudio == rtsp.WebRTCAudioNone {
 			core.Logger.Warn().Msg("webrtc_audio none is ignored: two-way audio needs the audio section")

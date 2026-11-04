@@ -46,9 +46,14 @@ type RTSPServer struct {
 	MobileClient   *tuya.MobileSDKClient
 	mqttManager    *MQTTManager
 
-	// Talkback asks the camera for two-way audio on every stream. Off by
-	// default; see WebRTCBridge.Talkback and issue #72.
+	// Talkback lets RTSP clients talk to the camera. Off by default; see
+	// WebRTCBridge.Talkback and issue #72.
 	Talkback bool
+
+	// TalkbackMode is how Talkback reaches the camera: TalkbackSession (the
+	// default, "" too) makes every camera session two-way, TalkbackOnDemand
+	// opens a two-way session only while a client talks (see talker).
+	TalkbackMode string
 
 	// SpeakerOff asks the monitor to keep its speaker closed on every cloud
 	// session without talkback; see WebRTCBridge.SpeakerOff. Off by default
@@ -229,6 +234,17 @@ type CameraStream struct {
 	promoteTimer  *time.Timer                     // moves a cloud stream back to the LAN; see armPromotion
 	mediaTimer    *time.Timer                     // fails a cloud session that carries no media; see armMediaCheck
 	immFactory    func(*RTPForwarder) lanStreamer // builds an imm source; nil means newIMMSource
+	talk          *talker                         // the clients' backchannel audio with TalkbackOnDemand; nil otherwise
+}
+
+// sessionTalkback says whether every camera session is asked for two-way audio.
+func (s *RTSPServer) sessionTalkback() bool {
+	return s != nil && s.Talkback && s.TalkbackMode != TalkbackOnDemand
+}
+
+// talkOnDemand says whether a client's backchannel audio opens a session of its own.
+func (s *RTSPServer) talkOnDemand() bool {
+	return s != nil && s.Talkback && s.TalkbackMode == TalkbackOnDemand
 }
 
 // cloudRetryDelay separates the two cloud attempts of a stream start.
@@ -742,6 +758,9 @@ func NewCameraStream(camera *storage.CameraInfo, resolution string, user *storag
 	}
 
 	stream.forwarder = NewRTPForwarder()
+	if server.talkOnDemand() {
+		stream.talk = newTalker(camera.DeviceName, stream.openTalkSession)
+	}
 	stream.webrtcBridge = NewWebRTCBridge(camera, resolution, user, storageManager, stream.forwarder)
 	stream.configureBridge()
 	stream.lanFactory = stream.newLANSource
@@ -988,9 +1007,13 @@ func (cs *CameraStream) configureBridge() {
 	if cs.server == nil {
 		return
 	}
-	cs.webrtcBridge.Talkback = cs.server.Talkback
+	cs.webrtcBridge.Talkback = cs.server.sessionTalkback()
 	cs.webrtcBridge.SpeakerOff = cs.server.SpeakerOff
 	cs.webrtcBridge.WebRTCAudio = cs.server.WebRTCAudio
+	if cs.talk != nil {
+		// A new bridge takes the backchannel; on demand it goes to the talker.
+		cs.forwarder.SetBackchannelSink(cs.talk.packet)
+	}
 }
 
 // startCloud is the default cloudStart. It fetches the MQTT client only now,
@@ -1136,6 +1159,13 @@ func (cs *CameraStream) stopStreamInternal() {
 	if cs.lan != nil {
 		cs.lan.Stop()
 		cs.lan = nil
+	}
+	if cs.talk != nil {
+		// Clients keep reading until they are closed, after the lock is
+		// released: their audio must not open a talk on a stopped stream. A
+		// restart replaces the bridge, and configureBridge sets the sink again.
+		cs.forwarder.SetBackchannelSink(nil)
+		cs.talk.end("the stream stopped")
 	}
 
 	// Stop WebRTC bridge (sends SendDisconnect to clean device-side session)

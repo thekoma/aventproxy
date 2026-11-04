@@ -12,13 +12,20 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import (
     CONF_BRIDGE_HOST,
     CONF_BRIDGE_PORT,
+    CONF_TALKBACK,
     DEFAULT_BRIDGE_HOST,
     DEFAULT_BRIDGE_PORT,
+    DEFAULT_TALKBACK,
     DOMAIN,
     build_rtsp_url,
 )
 from .coordinator import PhilipsAventCoordinator
 from .entity import build_device_info
+
+try:  # Home Assistant 2026.11 and later
+    from homeassistant.components.camera import CameraEntityCapabilities
+except ImportError:  # an older core has no two-way audio to declare
+    CameraEntityCapabilities = None
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,9 +36,10 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     bridge_port = entry.options.get(CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT)
     bridge_host = entry.options.get(CONF_BRIDGE_HOST, DEFAULT_BRIDGE_HOST)
+    talkback = entry.options.get(CONF_TALKBACK, DEFAULT_TALKBACK)
     entities = []
     for cam_id, coordinator in data["coordinators"].items():
-        entities.append(AventCamera(coordinator, cam_id, bridge_port, bridge_host))
+        entities.append(AventCamera(coordinator, cam_id, bridge_port, bridge_host, talkback))
     async_add_entities(entities)
 
 
@@ -48,6 +56,7 @@ class AventCamera(Camera):
         cam_id: str,
         bridge_port: int = DEFAULT_BRIDGE_PORT,
         bridge_host: str = DEFAULT_BRIDGE_HOST,
+        talkback: bool = DEFAULT_TALKBACK,
     ):
         super().__init__()
         self.coordinator = coordinator
@@ -57,6 +66,12 @@ class AventCamera(Camera):
             bridge_host, bridge_port, coordinator.camera_name, cam_id
         )
         self._attr_device_info = build_device_info(coordinator, cam_id)
+        if talkback and CameraEntityCapabilities is not None:
+            # Home Assistant offers its microphone (a Labs preview, over WebRTC
+            # only) to a camera that declares two-way audio. go2rtc sends it on
+            # the bridge's RTSP backchannel, which the bridge advertises while
+            # talkback is on.
+            self._attr_camera_entity_capabilities = CameraEntityCapabilities(two_way_audio=True)
 
     async def stream_source(self) -> str:
         return self._stream_url

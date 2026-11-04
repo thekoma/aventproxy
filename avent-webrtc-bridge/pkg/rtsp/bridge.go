@@ -78,8 +78,10 @@ type WebRTCBridge struct {
 	// talkback packet, on other goroutines.
 	backchannel atomic.Pointer[pion.TrackLocalStaticRTP]
 
-	// Talkback offers the camera two-way audio. Off by default, because
-	// nothing in Home Assistant talks. It is not what stops a playing lullaby
+	// Talkback offers the camera two-way audio. Off by default: the camera
+	// session of a stream sets it only with TalkbackSession, while with
+	// TalkbackOnDemand only a talk's own session does (see talker). It is not
+	// what stops a playing lullaby
 	// (issue #72): DPS 253 (app_talking) flips with a recvonly offer and no
 	// backchannel too, which points at the webrtc session mode itself; see
 	// SpeakerOff.
