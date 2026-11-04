@@ -15,6 +15,7 @@ import (
 // fakeTalk is a talk session the test drives.
 type fakeTalk struct {
 	startErr  error
+	lateErr   error         // reported through onError before Start returns nil
 	release   chan struct{} // Start waits on it when set
 	ready     atomic.Bool
 	forwarded atomic.Int32
@@ -25,6 +26,9 @@ type fakeTalk struct {
 func (f *fakeTalk) Start() error {
 	if f.release != nil {
 		<-f.release
+	}
+	if f.lateErr != nil {
+		f.onError(f.lateErr)
 	}
 	return f.startErr
 }
@@ -115,11 +119,12 @@ func TestTalkerEndsTheSessionWhenTheAudioStops(t *testing.T) {
 	tk := newTestTalker(o)
 	defer tk.end("test over")
 
+	tk.idleAfter = 300 * time.Millisecond // wide of a scheduler stall under -race
 	tk.packet(&rtp.Packet{})
 	eventually(t, "the talk session", func() bool { return sessionUp(tk) })
-	// Packets keep it open past the idle time.
-	for range 6 {
-		time.Sleep(30 * time.Millisecond)
+	// Packets every 20 ms keep it open past the idle time.
+	for range 25 {
+		time.Sleep(20 * time.Millisecond)
 		tk.packet(&rtp.Packet{})
 	}
 	if o.session(0).stopped.Load() {
@@ -207,6 +212,30 @@ func TestTalkerEndsTheTalkWhenItsSessionFails(t *testing.T) {
 	}
 }
 
+// A session can fail between Start returning and the talker keeping it: that
+// error must end the talk too, not leave packets going to a dead session.
+func TestTalkerFailsASessionWhoseErrorCameAsItStarted(t *testing.T) {
+	o := &talkOpener{next: func() *fakeTalk {
+		f := &fakeTalk{lateErr: errors.New("peer connection failed")}
+		f.ready.Store(true)
+		return f
+	}}
+	tk := newTestTalker(o)
+	tk.idleAfter = time.Second
+	defer tk.end("test over")
+
+	tk.packet(&rtp.Packet{})
+	eventually(t, "the failed session to be stopped", func() bool { return o.count() == 1 && o.session(0).stopped.Load() })
+	if sessionUp(tk) {
+		t.Fatal("a session that failed as it started was kept")
+	}
+	tk.packet(&rtp.Packet{})
+	time.Sleep(20 * time.Millisecond)
+	if o.count() != 1 {
+		t.Fatalf("opened %d sessions right after a failure, want 1", o.count())
+	}
+}
+
 func TestParseTalkbackMode(t *testing.T) {
 	for in, want := range map[string]string{"": TalkbackSession, "session": TalkbackSession, "on_demand": TalkbackOnDemand} {
 		if got, err := ParseTalkbackMode(in); err != nil || got != want {
@@ -242,6 +271,22 @@ func TestTalkOnDemandKeepsTheCameraSessionOneWay(t *testing.T) {
 	stream.mutex.Unlock()
 	stream.forwarder.ForwardBackchannel(&rtp.Packet{})
 	eventually(t, "the talker to open a session", func() bool { return o.count() == 1 })
+
+	// Once the stream stops, a client still reading must not open a talk.
+	stream.talk.end("next")
+	stream.active.Store(true)
+	stream.stopStream()
+	stream.forwarder.ForwardBackchannel(&rtp.Packet{})
+	time.Sleep(20 * time.Millisecond)
+	if o.count() != 1 {
+		t.Fatalf("audio after the stream stopped opened a session (%d in all, want 1)", o.count())
+	}
+	// A restart replaces the bridge, which hands the backchannel back to the talker.
+	stream.mutex.Lock()
+	stream.replaceBridge()
+	stream.mutex.Unlock()
+	stream.forwarder.ForwardBackchannel(&rtp.Packet{})
+	eventually(t, "a talk after the restart", func() bool { return o.count() == 2 })
 
 	server.TalkbackMode = TalkbackSession
 	session := NewCameraStream(camera, "hd", nil, nil, server)

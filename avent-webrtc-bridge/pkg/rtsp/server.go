@@ -1161,6 +1161,10 @@ func (cs *CameraStream) stopStreamInternal() {
 		cs.lan = nil
 	}
 	if cs.talk != nil {
+		// Clients keep reading until they are closed, after the lock is
+		// released: their audio must not open a talk on a stopped stream. A
+		// restart replaces the bridge, and configureBridge sets the sink again.
+		cs.forwarder.SetBackchannelSink(nil)
 		cs.talk.end("the stream stopped")
 	}
 

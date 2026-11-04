@@ -68,6 +68,7 @@ type talker struct {
 	session  talkSession // up and owned by the current talk
 	starting bool
 	gen      uint64 // bumped by end, so a start that outlived its talk knows
+	early    error  // an error the starting session reported before it was kept
 	idle     *time.Timer
 	last     time.Time // the last packet
 	retryAt  time.Time
@@ -108,13 +109,16 @@ func (t *talker) packet(p *rtp.Packet) {
 func (t *talker) start(gen uint64) {
 	core.Logger.Info().Msgf("Audio arrived on the backchannel for %s: opening a two-way session to talk", t.name)
 	var s talkSession
-	s, err := t.open(func(err error) { t.failed(s, err) })
+	s, err := t.open(func(err error) { t.failed(s, gen, err) })
 	if err == nil {
 		err = s.Start()
 	}
 
 	t.mu.Lock()
 	if gen != t.gen { // the talk ended while the session started
+		if err != nil {
+			t.retryAt = time.Now().Add(t.retryWait)
+		}
 		t.mu.Unlock()
 		if s != nil {
 			s.Stop()
@@ -122,6 +126,10 @@ func (t *talker) start(gen uint64) {
 		return
 	}
 	t.starting = false
+	if err == nil && t.early != nil { // it failed between Start returning and here
+		err = t.early
+	}
+	t.early = nil
 	if err != nil {
 		t.retryAt = time.Now().Add(t.retryWait)
 		t.mu.Unlock()
@@ -138,10 +146,14 @@ func (t *talker) start(gen uint64) {
 	core.Logger.Info().Msgf("Talking to %s: the two-way session took %v", t.name, waited.Round(time.Millisecond))
 }
 
-// failed ends the talk whose session reported an error.
-func (t *talker) failed(s talkSession, err error) {
+// failed ends the talk whose session reported an error. An error from a
+// session still starting for the current talk is kept for start to act on.
+func (t *talker) failed(s talkSession, gen uint64, err error) {
 	t.mu.Lock()
 	if s == nil || t.session != s {
+		if s != nil && gen == t.gen && t.starting && t.early == nil {
+			t.early = err
+		}
 		t.mu.Unlock()
 		return
 	}
@@ -175,6 +187,7 @@ func (t *talker) end(why string) {
 	since, sent, dropped := time.Since(t.began), t.sent, t.dropped
 	t.session = nil
 	t.starting = false
+	t.early = nil
 	t.gen++
 	if t.idle != nil {
 		t.idle.Stop()
@@ -216,6 +229,7 @@ func (cs *CameraStream) openTalkSession(onError func(error)) (talkSession, error
 		mqttClient, err := cs.server.mqttManager.GetClient(cs.camera.DeviceID)
 		if err != nil {
 			wb.Stop()
+			wb.cancel() // Stop returns early on a bridge that never started
 			return nil, fmt.Errorf("failed to get MQTT client: %v", err)
 		}
 		wb.SetMQTTClient(mqttClient)
