@@ -43,6 +43,7 @@ from .payload import (
     write_bridge_config_file,
 )
 from .region import DEFAULT_DATA_CENTER, api_host, api_url_for_host
+from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -310,6 +311,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    await async_setup_services(hass)
 
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
 

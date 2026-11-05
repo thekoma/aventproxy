@@ -263,12 +263,19 @@ class PhilipsAventAPI:
         The app sends this encrypted (et=3); we send it plaintext like every
         other call, which the server accepts.
         """
+        return await self.get_sleep_days(dev_id, date, date)
+
+    async def get_sleep_days(self, dev_id: str, begin: str, end: str) -> Any:
+        """The daily sleep summary for every day from `begin` to `end` (YYYYMMDD, both included).
+
+        Same endpoint as `get_sleep_day`; the app's week view asks for seven days at once.
+        """
         return await self._call(
             "m.solution.sleep.session.day",
             "1.0",
             post_data={
-                "beginDate": date,
-                "endDate": date,
+                "beginDate": begin,
+                "endDate": end,
                 "devId": dev_id,
                 "gwId": dev_id,
             },
