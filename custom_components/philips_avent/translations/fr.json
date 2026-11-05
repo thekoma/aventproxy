@@ -211,5 +211,25 @@
         "name": "Caméra"
       }
     }
+  },
+  "services": {
+    "get_sleep_history": {
+      "name": "Obtenir l'historique de sommeil",
+      "description": "Le résumé SenseIQ de chaque jour d'une période, avec chaque session et ses phases.",
+      "fields": {
+        "device_id": {
+          "name": "Moniteur",
+          "description": "Le moniteur Philips Avent avec SenseIQ."
+        },
+        "start_date": {
+          "name": "Date de début",
+          "description": "Premier jour, inclus."
+        },
+        "end_date": {
+          "name": "Date de fin",
+          "description": "Dernier jour, inclus. Aujourd'hui par défaut."
+        }
+      }
+    }
   }
 }
