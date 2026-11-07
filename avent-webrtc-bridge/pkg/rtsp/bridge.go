@@ -77,6 +77,8 @@ type WebRTCBridge struct {
 	// backchannel is set by pion's track callback and read for every
 	// talkback packet, on other goroutines.
 	backchannel atomic.Pointer[pion.TrackLocalStaticRTP]
+	// talkPCM turns the talk audio into the cameras' PCM on its way to backchannel.
+	talkPCM talkPCM
 
 	// Talkback offers the camera two-way audio. Off by default: the camera
 	// session of a stream sets it only with TalkbackSession, while with
@@ -394,9 +396,13 @@ func (wb *WebRTCBridge) IsConnected() bool {
 	return wb.connected
 }
 
+// ForwardBackchannelAudioPacket sends a client's talk audio to the camera, as
+// the 16 kHz PCM the cameras play (talk_pcm.go).
 func (wb *WebRTCBridge) ForwardBackchannelAudioPacket(packet *rtp.Packet) {
 	if track := wb.backchannel.Load(); track != nil {
-		_ = track.WriteRTP(packet)
+		for _, p := range wb.talkPCM.convert(packet) {
+			_ = track.WriteRTP(p)
+		}
 	}
 }
 
