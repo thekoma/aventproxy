@@ -283,6 +283,8 @@ Example:
 	cmd.Flags().String("talkback-mode", rtsp.TalkbackSession, "How talkback reaches the camera: session makes "+
 		"every camera session two-way, on_demand opens a two-way session only while a client sends audio "+
 		"(experimental)")
+	cmd.Flags().String("video-quality", string(rtsp.VideoQualityHD), "Stream for RTSP paths without /hd or /sd: "+
+		"hd, sd, or auto to start in HD and step down to SD while the cloud session loses video packets")
 	cmd.MarkFlagRequired("config")
 	return cmd
 }
@@ -330,6 +332,11 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	}
 	talkbackFlag, _ := cmd.Flags().GetString("talkback-mode")
 	talkbackMode, err := rtsp.ParseTalkbackMode(talkbackFlag)
+	if err != nil {
+		return err
+	}
+	qualityFlag, _ := cmd.Flags().GetString("video-quality")
+	videoQuality, err := rtsp.ParseVideoQuality(qualityFlag)
 	if err != nil {
 		return err
 	}
@@ -426,6 +433,10 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	server.TalkbackMode = talkbackMode
 	server.SpeakerOff = speakerOff
 	server.WebRTCAudio = webrtcAudio
+	server.VideoQuality = videoQuality
+	if videoQuality != rtsp.VideoQualityHD {
+		core.Logger.Info().Msgf("Video quality for unsuffixed paths: %s", videoQuality)
+	}
 	server.CloudTransport = cloudTransport
 	server.LanStreaming = lanStreamingEnabled(cfg)
 	uid, differ := lanUID(cfg.UID, client.UID)

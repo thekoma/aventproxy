@@ -80,6 +80,16 @@ type RTSPServer struct {
 	// Set it before Start.
 	BindAddress string
 
+	// VideoQuality is the stream for paths without an /hd or /sd suffix:
+	// VideoQualityHD (the default, "" too), VideoQualitySD or
+	// VideoQualityAuto. Set it before Start.
+	VideoQuality VideoQuality
+
+	// qualities holds one adaptive controller per camera, so its state
+	// survives session restarts and RTSP reconnects.
+	qualityMutex sync.Mutex
+	qualities    map[string]*qualityController
+
 	// LAN streaming: tried first for eligible streams (see lanEligible). Set
 	// before Start, read-only after. LANTargets is keyed by device id.
 	LanStreaming bool
@@ -180,6 +190,7 @@ type RTSPClient struct {
 type CameraStream struct {
 	camera       *storage.CameraInfo
 	resolution   string
+	quality      *qualityController // auto mode only
 	user         *storage.UserSession
 	webrtcBridge *WebRTCBridge
 	// forwarder is where RTSP clients attach. It is the stream's, not the
@@ -485,6 +496,9 @@ func (s *RTSPServer) handleConnection(conn net.Conn) {
 
 	// Extract camera path from URL
 	cameraPath, streamResolution := extractCameraPath(request.URL)
+	if streamResolution == "" {
+		streamResolution = string(s.defaultVideoQuality())
+	}
 	if cameraPath == "" {
 		core.Logger.Error().Msg("Invalid RTSP URL")
 		sendRTSPResponse(conn, 400, "Bad Request", nil, "")
@@ -758,6 +772,9 @@ func NewCameraStream(camera *storage.CameraInfo, resolution string, user *storag
 	}
 
 	stream.forwarder = NewRTPForwarder()
+	if server != nil && VideoQuality(resolution) == VideoQualityAuto {
+		stream.quality = server.qualityController(camera.DeviceID)
+	}
 	if server.talkOnDemand() {
 		stream.talk = newTalker(camera.DeviceName, stream.openTalkSession)
 	}
@@ -1004,6 +1021,7 @@ func (cs *CameraStream) replaceBridge() {
 // configureBridge copies the server's session settings onto the current
 // bridge, the first one and every replacement alike.
 func (cs *CameraStream) configureBridge() {
+	cs.webrtcBridge.quality = cs.quality
 	if cs.server == nil {
 		return
 	}
@@ -1221,4 +1239,27 @@ func (cs *CameraStream) scheduleShutdown() {
 
 		cs.shutdownTimer = nil
 	})
+}
+
+// defaultVideoQuality returns the configured stream for unsuffixed paths.
+func (s *RTSPServer) defaultVideoQuality() VideoQuality {
+	if s.VideoQuality == "" {
+		return VideoQualityHD
+	}
+	return s.VideoQuality
+}
+
+// qualityController returns the camera's adaptive controller, creating it once.
+func (s *RTSPServer) qualityController(deviceID string) *qualityController {
+	s.qualityMutex.Lock()
+	defer s.qualityMutex.Unlock()
+	if s.qualities == nil {
+		s.qualities = make(map[string]*qualityController)
+	}
+	q, ok := s.qualities[deviceID]
+	if !ok {
+		q = newQualityController(defaultQualityPolicy)
+		s.qualities[deviceID] = q
+	}
+	return q
 }
