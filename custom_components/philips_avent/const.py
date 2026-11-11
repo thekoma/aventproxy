@@ -112,7 +112,7 @@ LULLABY_CATALOGUE = (
 # 3542154-3542168, a unit on firmware 1.1.12 uses 12072916-12072930 (issue #91),
 # an SCD923 on firmware 1.4.0 uses 3219038-3219052 (issue #93).
 # A camera ignores DPS 202 with an id outside its own block and keeps playing.
-LULLABY_BLOCK_STARTS = (3542154, 12072916, 3219038)
+LULLABY_BLOCK_STARTS = (3542154, 12072916, 3219038, 12552458)
 LULLABY_TRACK_MAP = {
     start + index: track
     for start in LULLABY_BLOCK_STARTS

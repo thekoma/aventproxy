@@ -67,19 +67,49 @@ class AventLullabySelect(CoordinatorEntity, SelectEntity):
         self._attr_device_info = build_device_info(coordinator, cam_id)
 
     def _current_track_id(self) -> int | None:
-        """The track id the camera last reported in DPS 248, if any."""
-        dps = self.coordinator.data
-        if not dps or "248" not in dps:
+        """Read the track ID from DPS 248, including quote-escaped reports."""
+        raw = (self.coordinator.data or {}).get("248")
+        if not isinstance(raw, (str, bytes, bytearray)):
             return None
+
         try:
-            track_id = json.loads(dps["248"]).get("id")
-        except (json.JSONDecodeError, TypeError, AttributeError):
+            if isinstance(raw, str) and raw.lstrip().startswith(r'{\"'):
+                raw = json.loads(f'"{raw.strip()}"')
+            report = json.loads(raw)
+        except (ValueError, TypeError):
             return None
-        return track_id if isinstance(track_id, int) else None
+
+        track_id = report.get("id") if isinstance(report, dict) else None
+        return track_id if type(track_id) is int else None
 
     @property
     def current_option(self) -> str | None:
-        track = LULLABY_TRACK_MAP.get(self._current_track_id())
+        import json
+        from .const import LULLABY_TRACK_MAP
+
+        raw = (self.coordinator.data or {}).get("248")
+        if isinstance(raw, dict):
+            report = raw
+        elif isinstance(raw, str):
+            try:
+                report = json.loads(raw)
+                if isinstance(report, str):
+                    report = json.loads(report)
+            except ValueError:
+                try:
+                    report = json.loads(raw.replace(r'\"', '"'))
+                except ValueError:
+                    return None
+        else:
+            return None
+
+        if not isinstance(report, dict):
+            return None
+        try:
+            track_id = int(report["id"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        track = LULLABY_TRACK_MAP.get(track_id)
         return track[0] if track else None
 
     async def async_select_option(self, option: str) -> None:
