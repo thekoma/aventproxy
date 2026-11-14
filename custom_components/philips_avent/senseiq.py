@@ -6,7 +6,7 @@ import binascii
 import json
 import logging
 import time
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -341,6 +341,7 @@ def decode_sleep_day(result: object, date: object = None) -> dict | None:
             end = et if end is None else max(end, et)
 
         per = {name: 0 for name in NIGHT_STAGES}
+        stages: list[dict] = []
         for seg in session.get("ssd") or []:
             segment = _stage_segment(seg, NIGHT_STAGE_NAMES)
             if segment is None:
@@ -348,12 +349,14 @@ def decode_sleep_day(result: object, date: object = None) -> dict | None:
             name, secs = segment
             totals[name] += secs
             per[name] += secs
+            stages.append({"stage": name, "seconds": secs})
 
         sessions_out.append({
             "start": _epoch(session.get("st")),
             "end": _epoch(session.get("et")),
             "in_bed_seconds": sd,
             "totals_seconds": per,
+            "stages": stages,
         })
 
     if not sessions_out:
@@ -372,3 +375,53 @@ def decode_sleep_day(result: object, date: object = None) -> dict | None:
         "session_count": len(sessions_out),
         "sessions": sessions_out,
     }
+
+
+# How far back the cloud answers: an older beginDate is refused with PARAM_ILLEGAL
+# "The start time cannot be more than 30 days from the current time". The limit is
+# counted from now, and a beginDate means midnight, so the oldest safe day is 29 back.
+SLEEP_HISTORY_MAX_AGE_DAYS = 29
+
+
+def sleep_history_start(start: date, today: date) -> date:
+    """The first day the cloud still answers for: ``start``, or 29 days ago if older."""
+    return max(start, today - timedelta(days=SLEEP_HISTORY_MAX_AGE_DAYS))
+
+
+# Days per `m.solution.sleep.session.day` call, like the app's week view.
+SLEEP_HISTORY_DAYS_PER_CALL = 7
+
+
+def sleep_history_windows(
+    start: date, end: date, days_per_call: int = SLEEP_HISTORY_DAYS_PER_CALL
+) -> list[tuple[str, str]]:
+    """Split ``start``..``end`` (both included) into ``(beginDate, endDate)`` pairs.
+
+    Dates come out as the YYYYMMDD strings the endpoint takes, oldest window first.
+    """
+    windows: list[tuple[str, str]] = []
+    begin = start
+    while begin <= end:
+        finish = min(end, begin + timedelta(days=days_per_call - 1))
+        windows.append((begin.strftime("%Y%m%d"), finish.strftime("%Y%m%d")))
+        begin = finish + timedelta(days=1)
+    return windows
+
+
+def decode_sleep_days(result: object) -> list[dict]:
+    """Decode every day record of the daily summary, oldest first.
+
+    Each day is what `decode_sleep_day` returns for that record, its sessions with
+    their stage timeline. Days without a session are left out, and a date that
+    comes back twice (overlapping windows) is kept once.
+    """
+    if not isinstance(result, list):
+        return []
+    days: dict[int, dict] = {}
+    for record in result:
+        if not isinstance(record, dict):
+            continue
+        day = decode_sleep_day([record])
+        if day is not None and day.get("date") is not None:
+            days[day["date"]] = day
+    return [days[key] for key in sorted(days)]

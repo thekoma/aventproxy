@@ -6,6 +6,8 @@ directory on sys.path, so ``senseiq`` imports without pulling in Home Assistant.
 The fixtures are the exact DPS 3 / DPS 4 values captured from an SCD9xx (SenseIQ
 product 7d9t0rygsm7ztnww).
 """
+from datetime import date
+
 import senseiq
 
 # DPS 4 as it comes over the wire: base64 of an ASCII-hex string of the JSON.
@@ -244,3 +246,44 @@ def test_every_stage_has_a_translated_state():
     for path in (root / "strings.json", *sorted((root / "translations").glob("*.json"))):
         states = json.loads(path.read_text())["entity"]["sensor"]["sleep_stage"]["state"]
         assert set(states) == set(senseiq.SLEEP_STAGES), path.name
+
+
+def test_sleep_history_windows():
+    assert senseiq.sleep_history_windows(date(2026, 11, 1), date(2026, 11, 16)) == [
+        ("20261101", "20261107"),
+        ("20261108", "20261114"),
+        ("20261115", "20261116"),
+    ]
+    assert senseiq.sleep_history_windows(date(2026, 11, 5), date(2026, 11, 5)) == [
+        ("20261105", "20261105"),
+    ]
+    assert senseiq.sleep_history_windows(date(2026, 11, 6), date(2026, 11, 5)) == []
+
+
+def test_decode_sleep_days_keeps_every_day_and_session_timeline():
+    nap = {"st": 1793880000, "et": 1793885400, "sd": 5400,
+           "ssd": [{"l": 600, "abr": 30, "brsd": "5.1"}, {"d": 4800, "abr": 29, "brsd": "5.0"}]}
+    days = senseiq.decode_sleep_days([
+        {"dt": 20261106, "sessions": [nap]},
+        SLEEP_DAY_WITH_BREATHING[0],
+        {"dt": 20261104, "sessions": []},
+        "not a day",
+    ])
+    assert [d["date"] for d in days] == [20261105, 20261106]
+    assert days[1]["sessions"][0]["stages"] == [
+        {"stage": "light", "seconds": 600},
+        {"stage": "deep", "seconds": 4800},
+    ]
+    assert days[0]["sessions"][0]["stages"][0] == {"stage": "awake", "seconds": 600}
+    assert senseiq.decode_sleep_days(None) == []
+
+
+def test_decode_sleep_days_keeps_a_repeated_date_once():
+    record = SLEEP_DAY_WITH_BREATHING[0]
+    assert len(senseiq.decode_sleep_days([record, record])) == 1
+
+
+def test_sleep_history_start_stays_within_the_cloud_window():
+    today = date(2026, 11, 5)
+    assert senseiq.sleep_history_start(date(2026, 1, 1), today) == date(2026, 10, 7)
+    assert senseiq.sleep_history_start(date(2026, 11, 1), today) == date(2026, 11, 1)

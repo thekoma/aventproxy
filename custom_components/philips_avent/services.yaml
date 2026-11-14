@@ -1,0 +1,16 @@
+get_sleep_history:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: philips_avent
+    start_date:
+      required: true
+      example: "2026-11-01"
+      selector:
+        date:
+    end_date:
+      example: "2026-11-07"
+      selector:
+        date:
