@@ -73,6 +73,52 @@ func TestReorderBufferWrapsAndResyncs(t *testing.T) {
 	}
 }
 
+// TestReorderBufferResyncsOnNewSSRC takes a new sender as a new stream, even
+// one whose sequence starts just behind the old position, which the sequence
+// alone would take for late packets and drop until it passed the old one.
+func TestReorderBufferResyncsOnNewSSRC(t *testing.T) {
+	b := newRTPReorderBuffer()
+	now := time.Now()
+	for seq := uint16(5000); seq < 5010; seq++ {
+		b.Push(pkt(seq, 0), now)
+	}
+	p := pkt(4000, 0)
+	p.SSRC = 2
+	if g := seqs(b.Push(p, now)); len(g) != 1 || g[0] != 4000 {
+		t.Fatalf("new sender %v, want [4000]", g)
+	}
+	if g := seqs(b.Push(&rtp.Packet{Header: rtp.Header{SequenceNumber: 4001, SSRC: 2}}, now)); len(g) != 1 || g[0] != 4001 {
+		t.Fatalf("new sender's next packet %v, want [4001]", g)
+	}
+}
+
+// TestReorderBufferWaitCountsFromFirstHeld bounds a gap's wait by the first
+// packet held behind it, not by one that arrived later, and exposes the
+// deadline so the forwarder can release the gap with no further packet.
+func TestReorderBufferWaitCountsFromFirstHeld(t *testing.T) {
+	b := newRTPReorderBuffer()
+	now := time.Now()
+	if _, waiting := b.Deadline(); waiting {
+		t.Fatal("waiting with nothing held")
+	}
+	b.Push(pkt(1, 0), now)
+	b.Push(pkt(4, 0), now)                          // 2 and 3 missing: 4 held from now
+	b.Push(pkt(3, 0), now.Add(30*time.Millisecond)) // 3 arrives, 2 still missing
+	deadline, waiting := b.Deadline()
+	if !waiting || !deadline.Equal(now.Add(reorderMaxWait)) {
+		t.Fatalf("deadline %v (waiting %v), want %v", deadline, waiting, now.Add(reorderMaxWait))
+	}
+	if g := seqs(b.Release(now.Add(reorderMaxWait - time.Millisecond))); len(g) != 0 {
+		t.Fatalf("released %v before the deadline", g)
+	}
+	if g := seqs(b.Release(now.Add(reorderMaxWait))); len(g) != 2 || g[0] != 3 || g[1] != 4 {
+		t.Fatalf("released %v at the deadline, want [3 4]", g)
+	}
+	if _, waiting := b.Deadline(); waiting {
+		t.Fatal("still waiting with nothing held")
+	}
+}
+
 // TestReorderBufferBoundsMemory releases held packets when the window is full.
 func TestReorderBufferBoundsMemory(t *testing.T) {
 	b := newRTPReorderBuffer()
@@ -87,6 +133,28 @@ func TestReorderBufferBoundsMemory(t *testing.T) {
 	}
 	if released == 0 {
 		t.Fatal("a full window must release packets past the gap")
+	}
+}
+
+// TestForwardVideoReleasesAGapWithoutAnotherPacket: when the lost packet is
+// the last one before a pause (say, the one that ended a frame), what is held
+// behind it still goes out after reorderMaxWait, not with the next frame.
+func TestForwardVideoReleasesAGapWithoutAnotherPacket(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	rf := NewRTPForwarder()
+	defer rf.Stop()
+	if err := rf.AddTCPClient("s1", server, 0, 2, 4); err != nil {
+		t.Fatalf("add client: %v", err)
+	}
+	wait := collect(t, client, 2)
+	rf.ForwardVideoPacket(&rtp.Packet{Header: rtp.Header{SequenceNumber: 30, Marker: true}, Payload: []byte{0x41, 0x9a}})
+	rf.ForwardVideoPacket(&rtp.Packet{Header: rtp.Header{SequenceNumber: 32, Marker: true}, Payload: []byte{0x41, 0x9a}}) // 31 lost
+	got := wait()
+	if got[0].SequenceNumber != 30 || got[1].SequenceNumber != 32 {
+		t.Fatalf("got seq %d %d, want 30 32", got[0].SequenceNumber, got[1].SequenceNumber)
 	}
 }
 

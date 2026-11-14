@@ -26,6 +26,7 @@ type bufferedPacket struct {
 // H.264 in sequence order and drop late fragments, which corrupts the frame.
 type rtpReorderBuffer struct {
 	started bool
+	ssrc    uint32
 	next    uint16
 	pending map[uint16]bufferedPacket
 }
@@ -40,19 +41,21 @@ func newRTPReorderBuffer() *rtpReorderBuffer {
 func (b *rtpReorderBuffer) Push(packet *rtp.Packet, now time.Time) []*rtp.Packet {
 	seq := packet.SequenceNumber
 	if !b.started {
-		b.started = true
-		b.next = seq
+		b.started, b.ssrc, b.next = true, packet.SSRC, seq
 	}
 
-	distance := int16(seq - b.next)
+	// A new SSRC is a new sender, wherever its sequence starts: a cloud
+	// session that replaced the last one, or a camera that restarted.
+	newSender := packet.SSRC != b.ssrc
+	distance := int(int16(seq - b.next))
 	switch {
-	case distance < 0 && int(-distance) < reorderResetDistance:
+	case !newSender && distance < 0 && -distance < reorderResetDistance:
 		// Duplicate or too late: the consumer already passed this position.
 		return nil
-	case distance < 0 || int(distance) >= reorderResetDistance:
+	case newSender || distance < 0 || distance >= reorderResetDistance:
 		// The sender restarted its sequence; release what is held and resync.
 		ready := b.drain()
-		b.next = seq
+		b.ssrc, b.next = packet.SSRC, seq
 		b.pending[seq] = bufferedPacket{packet: packet, arrived: now}
 		return append(ready, b.release(now)...)
 	}
@@ -61,6 +64,20 @@ func (b *rtpReorderBuffer) Push(packet *rtp.Packet, now time.Time) []*rtp.Packet
 		b.pending[seq] = bufferedPacket{packet: packet, arrived: now}
 	}
 	return b.release(now)
+}
+
+// Release returns the packets a gap held once its wait has passed at now. The
+// forwarder calls it when the deadline passes with no packet arriving.
+func (b *rtpReorderBuffer) Release(now time.Time) []*rtp.Packet {
+	return b.release(now)
+}
+
+// Deadline is when the gap now waited on is given up, and whether there is one.
+func (b *rtpReorderBuffer) Deadline() (time.Time, bool) {
+	if len(b.pending) == 0 {
+		return time.Time{}, false
+	}
+	return b.waitingSince().Add(reorderMaxWait), true
 }
 
 // release returns contiguous packets and skips a gap that waited too long.
@@ -73,13 +90,24 @@ func (b *rtpReorderBuffer) release(now time.Time) []*rtp.Packet {
 			b.next++
 			continue
 		}
-		oldest, oldestSeq := b.oldest()
-		if len(b.pending) < reorderMaxPackets && now.Sub(oldest.arrived) < reorderMaxWait {
+		if len(b.pending) < reorderMaxPackets && now.Sub(b.waitingSince()) < reorderMaxWait {
 			break
 		}
-		b.next = oldestSeq
+		_, b.next = b.oldest()
 	}
 	return ready
+}
+
+// waitingSince is when the first packet still held arrived: the wait for the
+// gap in front of it began then, whatever arrived behind it later.
+func (b *rtpReorderBuffer) waitingSince() time.Time {
+	var first time.Time
+	for _, item := range b.pending {
+		if first.IsZero() || item.arrived.Before(first) {
+			first = item.arrived
+		}
+	}
+	return first
 }
 
 // oldest returns the held packet with the lowest sequence distance from next.

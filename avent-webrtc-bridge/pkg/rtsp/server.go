@@ -993,6 +993,11 @@ func (cs *CameraStream) replaceBridge() {
 	}
 	cs.webrtcBridge = NewWebRTCBridge(cs.camera, cs.resolution, cs.user, storageManager, cs.forwarder)
 	cs.bridgeStarted = false
+	// The new session is a new sender: what the old one left held for
+	// reordering must not wait for, or block, its packets.
+	if cs.forwarder != nil {
+		cs.forwarder.ResetVideoOrder()
+	}
 	cs.configureBridge()
 	if cs.server != nil && cs.server.MobileClient != nil {
 		cs.webrtcBridge.SetMobileClient(cs.server.MobileClient)

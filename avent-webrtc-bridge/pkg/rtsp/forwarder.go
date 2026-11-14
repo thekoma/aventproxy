@@ -49,6 +49,9 @@ type RTPForwarder struct {
 	// The camera's Wi-Fi link swaps adjacent packets; restore order before
 	// frames are stamped and forwarded.
 	videoOrder *rtpReorderBuffer
+	// videoOrderTimer gives up a gap at its deadline when no packet arrives
+	// to do it, as when the lost packet ended a frame; nil until the first gap.
+	videoOrderTimer *time.Timer
 
 	// backchannelSink takes talkback audio from the clients; see
 	// SetBackchannelSink.
@@ -448,9 +451,39 @@ func (rf *RTPForwarder) ForwardVideoPacket(packet *rtp.Packet) {
 	rf.mutex.Lock()
 	defer rf.mutex.Unlock()
 
-	for _, ready := range rf.videoOrder.Push(packet, time.Now()) {
+	now := time.Now()
+	for _, ready := range rf.videoOrder.Push(packet, now) {
 		rf.forwardOrderedVideo(ready)
 	}
+	rf.armVideoOrderLocked(now)
+}
+
+// armVideoOrderLocked sets the timer for the gap the buffer waits on, or stops
+// it when nothing is held; the caller holds mutex.
+func (rf *RTPForwarder) armVideoOrderLocked(now time.Time) {
+	deadline, waiting := rf.videoOrder.Deadline()
+	switch {
+	case !waiting:
+		if rf.videoOrderTimer != nil {
+			rf.videoOrderTimer.Stop()
+		}
+	case rf.videoOrderTimer == nil:
+		rf.videoOrderTimer = time.AfterFunc(deadline.Sub(now), rf.releaseVideoGap)
+	default:
+		rf.videoOrderTimer.Reset(deadline.Sub(now))
+	}
+}
+
+// releaseVideoGap forwards what a gap held once its wait has passed. It may
+// run after a reset, when the buffer holds nothing and it does nothing.
+func (rf *RTPForwarder) releaseVideoGap() {
+	rf.mutex.Lock()
+	defer rf.mutex.Unlock()
+	now := time.Now()
+	for _, ready := range rf.videoOrder.Release(now) {
+		rf.forwardOrderedVideo(ready)
+	}
+	rf.armVideoOrderLocked(now)
 }
 
 // forwardOrderedVideo stamps and forwards one in-order packet; the caller holds mutex.
@@ -563,7 +596,22 @@ func (rf *RTPForwarder) resetSourceLocked() {
 	rf.firstAudioPacket = true
 	rf.spsPacket, rf.ppsPacket = nil, nil
 	rf.videoSeqOffset = 0
+	rf.resetVideoOrderLocked()
+}
+
+// ResetVideoOrder forgets the packets held for reordering, for a new session
+// that feeds the same clients; the caller must not hold mutex.
+func (rf *RTPForwarder) ResetVideoOrder() {
+	rf.mutex.Lock()
+	defer rf.mutex.Unlock()
+	rf.resetVideoOrderLocked()
+}
+
+func (rf *RTPForwarder) resetVideoOrderLocked() {
 	rf.videoOrder.Reset()
+	if rf.videoOrderTimer != nil {
+		rf.videoOrderTimer.Stop()
+	}
 }
 
 // SetBackchannelSink sets where talkback audio from the clients goes: the
