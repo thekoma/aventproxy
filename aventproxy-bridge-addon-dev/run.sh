@@ -118,6 +118,14 @@ if [ -n "$TALKBACK_MODE" ]; then
     BRIDGE_ARGS+=(--talkback-mode "$TALKBACK_MODE")
 fi
 
+# Adaptive video quality: hd (the default), sd, or auto to step down to SD
+# while the camera's Wi-Fi loses video packets. No card defines the option
+# yet; VIDEO_QUALITY sets it for a plain Docker container.
+VIDEO_QUALITY=${VIDEO_QUALITY:-$(addon_option video_quality)}
+if [ -n "$VIDEO_QUALITY" ]; then
+    BRIDGE_ARGS+=(--video-quality "$VIDEO_QUALITY")
+fi
+
 # Supervise the bridge here rather than exiting the container when the config
 # changes. The old version killed this script and relied on the supervisor to
 # bring the add-on back; after two Home Assistant restarts in quick succession it

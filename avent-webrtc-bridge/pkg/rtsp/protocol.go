@@ -86,7 +86,8 @@ func extractCameraPath(rtspURL string) (string, string) {
 		return "", ""
 	}
 
-	streamResolution := "hd" // Default to HD
+	// No suffix: the server's VideoQuality decides.
+	streamResolution := ""
 
 	// check if ends with "/hd" or "/sd"
 	if strings.HasSuffix(path, "/hd") {

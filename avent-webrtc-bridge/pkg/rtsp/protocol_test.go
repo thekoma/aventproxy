@@ -120,8 +120,10 @@ func TestUDPMediaWaitsForPlay(t *testing.T) {
 	}
 	defer sink.Close()
 	port := sink.LocalAddr().(*net.UDPAddr).Port
+	var seq uint16 // a repeated sequence number would be dropped as a duplicate
 	received := func() bool {
-		stream.forwarder.ForwardVideoPacket(&rtp.Packet{Header: rtp.Header{Marker: true}, Payload: []byte{0x41, 0x9a}})
+		seq++
+		stream.forwarder.ForwardVideoPacket(&rtp.Packet{Header: rtp.Header{SequenceNumber: seq, Marker: true}, Payload: []byte{0x41, 0x9a}})
 		_ = sink.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 		_, _, err := sink.ReadFromUDP(make([]byte, 1500))
 		return err == nil

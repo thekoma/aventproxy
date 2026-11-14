@@ -96,6 +96,14 @@ type WebRTCBridge struct {
 	// overrides it.
 	WebRTCAudio string
 
+	// quality adapts between HD and SD by packet loss when the stream runs
+	// in auto mode; nil for a fixed stream. The server owns it, so its state
+	// outlives this session.
+	quality       *qualityController
+	qualityMutex  sync.Mutex
+	lastSPS       []byte
+	pendingSwitch *pendingQualitySwitch
+
 	// Callbacks
 	OnVideoPacket func(packet *rtp.Packet)
 	OnAudioPacket func(packet *rtp.Packet)
@@ -278,6 +286,10 @@ func (wb *WebRTCBridge) Start() error {
 	}
 
 	// Determine stream settings
+	if wb.quality != nil {
+		wb.resolution = string(wb.quality.Current())
+		wb.quality.StartSession(time.Now())
+	}
 	wb.streamType = tuya.GetStreamType(&skill, wb.resolution)
 	wb.isHEVC = tuya.IsHEVC(&skill, wb.streamType)
 
@@ -316,6 +328,14 @@ func (wb *WebRTCBridge) Start() error {
 
 	wb.connected = true
 	core.Logger.Info().Msgf("WebRTC bridge started successfully for camera: %s", wb.camera.DeviceName)
+
+	if wb.quality != nil {
+		if wb.isHEVC {
+			core.Logger.Warn().Msgf("Adaptive video quality is not supported for HEVC; camera %s stays %s", wb.camera.DeviceName, wb.resolution)
+		} else {
+			go wb.runQualityLoop()
+		}
+	}
 
 	return nil
 }
@@ -793,6 +813,9 @@ func (wb *WebRTCBridge) handleVideoTrack(track *pion.TrackRemote) {
 				continue
 			}
 
+			if wb.quality != nil {
+				wb.observeQuality(packet, time.Now())
+			}
 			wb.forwardVideo(packet)
 		}
 	}
