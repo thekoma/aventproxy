@@ -1,6 +1,8 @@
 """Constants for the Philips Avent Baby Monitor integration."""
 from __future__ import annotations
 
+import json
+
 DOMAIN = "philips_avent"
 
 # Tuya Mobile SDK credentials (static per APK version)
@@ -110,9 +112,10 @@ LULLABY_CATALOGUE = (
 # First id of each block the catalogue is published under. Units of the same
 # product (kzm54lhabeeucq5a) report different blocks: the original SCD973 uses
 # 3542154-3542168, a unit on firmware 1.1.12 uses 12072916-12072930 (issue #91),
-# an SCD923 on firmware 1.4.0 uses 3219038-3219052 (issue #93).
+# an SCD923 on firmware 1.4.0 uses 3219038-3219052 (issue #93), an SCD953P on
+# firmware 2.4.1 uses 12552458-12552472 (PR #116).
 # A camera ignores DPS 202 with an id outside its own block and keeps playing.
-LULLABY_BLOCK_STARTS = (3542154, 12072916, 3219038)
+LULLABY_BLOCK_STARTS = (3542154, 12072916, 3219038, 12552458)
 LULLABY_TRACK_MAP = {
     start + index: track
     for start in LULLABY_BLOCK_STARTS
@@ -157,6 +160,34 @@ CONF_TALKBACK = "talkback"
 DEFAULT_TALKBACK = False
 CONF_LAN_STREAMING = "lan_streaming"
 DEFAULT_LAN_STREAMING = True
+
+
+def lullaby_report_id(raw: object) -> int | None:
+    """The track id in a DPS 248 report, or None when there is none.
+
+    Most units report the record as JSON. The SCD953P on firmware 2.4.1 escapes
+    its quotes (`{\\"id\\":12552458}`), which is not valid JSON until they are
+    unescaped, and a record encoded twice decodes to a string first (PR #116).
+    """
+    report = raw
+    if isinstance(report, str):
+        try:
+            report = json.loads(report)
+        except ValueError:
+            try:
+                report = json.loads(report.replace('\\"', '"'))
+            except ValueError:
+                return None
+    if isinstance(report, str):
+        try:
+            report = json.loads(report)
+        except ValueError:
+            return None
+    if not isinstance(report, dict):
+        return None
+    track_id = report.get("id")
+    # bool is an int subclass, and a float id never matches a block.
+    return track_id if type(track_id) is int else None
 
 
 def lullaby_track_id(name: str, current_id: int | None) -> int | None:

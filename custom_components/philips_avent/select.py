@@ -22,6 +22,7 @@ from .const import (
     LULLABY_TRACKS,
     TIMER_OPTIONS,
     TIMER_SECONDS_TO_LABEL,
+    lullaby_report_id,
     lullaby_track_id,
 )
 from .coordinator import PhilipsAventCoordinator
@@ -68,14 +69,7 @@ class AventLullabySelect(CoordinatorEntity, SelectEntity):
 
     def _current_track_id(self) -> int | None:
         """The track id the camera last reported in DPS 248, if any."""
-        dps = self.coordinator.data
-        if not dps or "248" not in dps:
-            return None
-        try:
-            track_id = json.loads(dps["248"]).get("id")
-        except (json.JSONDecodeError, TypeError, AttributeError):
-            return None
-        return track_id if isinstance(track_id, int) else None
+        return lullaby_report_id((self.coordinator.data or {}).get("248"))
 
     @property
     def current_option(self) -> str | None:
