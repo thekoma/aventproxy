@@ -1,12 +1,57 @@
 package rtsp
 
 import (
+	"bytes"
 	"encoding/binary"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/pion/rtp"
 )
+
+func TestTalkPCMStartsAfreshAfterAPause(t *testing.T) {
+	now := time.Unix(1000, 0)
+	c := talkPCM{now: func() time.Time { return now }}
+	// 50 bytes are 200 bytes of PCM: one packet out, 40 bytes waiting.
+	if out := c.convert(g711Packet(0, 10, 0, make([]byte, 50))); len(out) != 1 {
+		t.Fatalf("first talk: %d packets, want 1", len(out))
+	}
+	// A second talk on the same bridge (talkback mode session) after a pause:
+	// the 40 bytes left from the first must not lead it, so 35 bytes (140 of
+	// PCM) are not yet a packet.
+	now = now.Add(2 * time.Second)
+	if out := c.convert(g711Packet(0, 11, 400, make([]byte, 35))); len(out) != 0 {
+		t.Fatalf("after the pause: %d packets, want 0", len(out))
+	}
+	// The sequence runs on, and the clock moves on by the pause (8 kHz ticks).
+	out := c.convert(g711Packet(0, 12, 435, make([]byte, 5)))
+	if len(out) != 1 || out[0].SequenceNumber != 11 || out[0].Timestamp != 40+16000 {
+		t.Fatalf("after the pause: %d packets, seq %d, ts %d; want 1, 11, 16040",
+			len(out), out[0].SequenceNumber, out[0].Timestamp)
+	}
+}
+
+func TestTalkPCMStartsAfreshForANewSource(t *testing.T) {
+	now := time.Unix(1000, 0)
+	c := talkPCM{now: func() time.Time { return now }}
+	loud := make([]int16, 50)
+	for i := range loud {
+		loud[i] = 30000
+	}
+	c.convert(g711Packet(0, 1, 0, encodeMuLaw(loud))) // one packet out, 40 loud bytes waiting
+	// Another client starts talking at once: neither the waiting bytes nor the
+	// last loud sample may reach its first packet, which is all silence.
+	p := g711Packet(0, 900, 0, bytes.Repeat([]byte{0xFF}, 40))
+	p.SSRC = 8
+	out := c.convert(p)
+	if len(out) != 1 || out[0].SequenceNumber != 2 {
+		t.Fatalf("new source: %d packets, want 1 with seq 2", len(out))
+	}
+	if !bytes.Equal(out[0].Payload, make([]byte, talkPCMPacketBytes)) {
+		t.Errorf("new source: the packet carries the old talk: % x", out[0].Payload[:8])
+	}
+}
 
 func g711Packet(pt uint8, seq uint16, ts uint32, payload []byte) *rtp.Packet {
 	return &rtp.Packet{Header: rtp.Header{Version: 2, PayloadType: pt, SequenceNumber: seq, Timestamp: ts, SSRC: 7}, Payload: payload}

@@ -3,6 +3,7 @@ package rtsp
 import (
 	"encoding/binary"
 	"sync"
+	"time"
 
 	"github.com/pion/rtp"
 )
@@ -21,15 +22,29 @@ const (
 	talkPCMPacketBytes = 160
 	// talkPCMPacketTicks is that packet's length on the session's 8 kHz RTP clock.
 	talkPCMPacketTicks = 40
+	// talkPCMClockRate is the session's RTP clock, in ticks per second.
+	talkPCMClockRate = 8000
+	// talkPCMIdleReset is the pause after which the next packet starts a new
+	// talk. Clients send a packet every 20 or 30 ms while they talk.
+	talkPCMIdleReset = 500 * time.Millisecond
 )
 
 // talkPCM converts backchannel packets (G.711 at 8 kHz) to the cameras' PCM.
 // It keeps the last sample, so the upsampling runs on across packets, and
 // its own sequence numbers and timestamps for the packets it makes; bytes
 // short of a whole packet wait for the next one. Safe for concurrent use.
+//
+// With talkback mode session one bridge serves every talk of a camera
+// session, so a talk that starts after a pause, or from another client,
+// starts afresh: the bytes still waiting and the last sample belong to the
+// one before. The sequence numbers run on, so the camera never sees them
+// step back, and the timestamps move on by the pause.
 type talkPCM struct {
 	mu      sync.Mutex
+	now     func() time.Time // nil means time.Now; set by tests
 	started bool
+	ssrc    uint32
+	last    time.Time
 	prev    int16
 	seq     uint16
 	ts      uint32
@@ -50,13 +65,21 @@ func (c *talkPCM) convert(p *rtp.Packet) []*rtp.Packet {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.started {
-		c.started, c.seq, c.ts = true, p.SequenceNumber, p.Timestamp
-		c.prev = 0
-		if len(p.Payload) > 0 {
-			c.prev = decode(p.Payload[0])
-		}
+	now := time.Now
+	if c.now != nil {
+		now = c.now
 	}
+	at := now()
+	switch {
+	case !c.started:
+		c.started, c.seq, c.ts = true, p.SequenceNumber, p.Timestamp
+		c.prev = firstSample(p.Payload, decode)
+	case p.SSRC != c.ssrc || at.Sub(c.last) > talkPCMIdleReset:
+		c.pending = c.pending[:0]
+		c.ts += uint32(at.Sub(c.last) * talkPCMClockRate / time.Second)
+		c.prev = firstSample(p.Payload, decode)
+	}
+	c.ssrc, c.last = p.SSRC, at
 	// 8 to 16 kHz: a sample half way between each pair, then the sample.
 	buf := c.pending
 	for _, b := range p.Payload {
@@ -83,6 +106,15 @@ func (c *talkPCM) convert(p *rtp.Packet) []*rtp.Packet {
 	}
 	c.pending = append(c.pending[:0], buf...)
 	return out
+}
+
+// firstSample is the first sample of a payload, or silence for an empty one.
+// It seeds the upsampling, so a talk does not start half way from the last.
+func firstSample(payload []byte, decode func(byte) int16) int16 {
+	if len(payload) == 0 {
+		return 0
+	}
+	return decode(payload[0])
 }
 
 // decodeMuLaw is G.711 μ-law to a linear 16-bit sample.
