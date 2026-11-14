@@ -3,6 +3,26 @@
 This is the beta card: it follows release candidates of the integration.
 Stay on the stable card unless you are testing an rc.
 
+## 2026.11.0-rc2
+
+Update the integration and this card together, as with rc1.
+
+**Talk from Home Assistant 2026.11 (experimental).** With **Two-way audio (talkback)** on in the integration, the camera tells Home Assistant 2026.11 that it takes audio, and the camera dialog shows a microphone once the two-way audio preview is on under Settings → System → Labs. It needs HTTPS and a WebRTC stream; an older Home Assistant ignores it.
+- New option `talkback_mode`, `on_demand` by default. The stream stays one-way, so imm and the LAN stay in use and a playing lullaby keeps playing. While audio arrives on the RTSP backchannel (Home Assistant sends it only while its microphone is on), the bridge opens a second, two-way session and closes it 3 seconds after the audio stops. The lullaby pauses while that session is open, and the first second or two of a talk are lost while it opens.
+- `session` is the rc1 behaviour, where every stream asks the monitor for two-way audio.
+- The talk audio now reaches the monitor as 16 kHz PCM, the format it plays. G.711 came out as hissing on an SCD923/26 and an SCD951/26 (Luuk Visser, [#111](https://github.com/thekoma/aventproxy/pull/111)). Not yet tried on an SCD973.
+- The log says `Talking to <camera>: the two-way session took …` and `Stopped talking to <camera> …`. Please post those lines on [#72](https://github.com/thekoma/aventproxy/issues/72), and say whether your voice came through and whether the lullaby carried on afterwards.
+
+**Fixes**
+- Video packets that Wi-Fi delivers out of order are put back in order before they reach the viewers, which removes a smeared, green lower half of the picture until the next keyframe (Wessel Blokzijl, [#112](https://github.com/thekoma/aventproxy/pull/112)).
+- SCD953P on firmware 2.4.1: picking a lullaby plays it, and the track select shows the track that plays (czaja, [#116](https://github.com/thekoma/aventproxy/pull/116)).
+- SCD971/26: the SenseIQ nightly summary shows light, deep and awake time instead of zeros (Kenny, [#108](https://github.com/thekoma/aventproxy/pull/108)).
+- On a monitor on protocol 3.4, Motion Alert and Sound Alert are independent again. rc1 paired them from 3.4 up, but only a 3.5 monitor runs one detector at a time ([#110](https://github.com/thekoma/aventproxy/issues/110)).
+
+**New action `philips_avent.get_sleep_history`** (Kenny, [#109](https://github.com/thekoma/aventproxy/pull/109)). It returns the SenseIQ daily summary for a range of days, each session with its stage timeline. The cloud keeps about 30 days, so an older start date is moved up to 29 days ago.
+
+`cloud_transport: imm` has now kept the lullaby playing on an SCD953P too ([#72](https://github.com/thekoma/aventproxy/issues/72)). It stays opt-in for this rc.
+
 ## 2026.11.0-rc1
 
 Update the integration and this card together. Part of what follows is in each, and the bridge streams over the LAN only with the protocol version that this integration writes into its config.
