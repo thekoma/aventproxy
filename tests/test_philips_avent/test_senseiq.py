@@ -154,6 +154,53 @@ def test_decode_sleep_day_rejects_empty():
     assert senseiq.decode_sleep_day([{"dt": 20260916, "sessions": []}]) is None
 
 
+# Daily summary from an SCD971/26: breathing stats (`abr`, `brsd`) in every segment.
+# Shape from a real capture, values made up.
+SLEEP_DAY_WITH_BREATHING = [{"dt": 20261105, "sessions": [{
+    "css": "o", "cssd": 0, "st": 1793828925, "et": 1793863694, "sd": 4200,
+    "id": "0123456789abcdef01234567", "type": 0,
+    "ssd": [
+        {"a": 600, "abr": 27, "brsd": "5.227298"},
+        {"abr": 27, "brsd": "5.226603", "l": 900},
+        {"abr": 26, "brsd": "5.217472", "d": 1800},
+        {"abr": 27, "brsd": "5.217563", "l": 600},
+        {"a": 300, "abr": 28, "brsd": "5.213442"},
+    ],
+}]}]
+
+
+def test_decode_sleep_day_segments_with_breathing_stats():
+    s = senseiq.decode_sleep_day(SLEEP_DAY_WITH_BREATHING, 20261105)
+    assert s is not None
+    assert s["awake_seconds"] == 900
+    assert s["light_seconds"] == 1500
+    assert s["deep_seconds"] == 1800
+    assert s["asleep_seconds"] == 3300
+    tot = sum(s[k] for k in ("light_seconds", "deep_seconds", "awake_seconds", "no_signal_seconds"))
+    assert tot == s["in_bed_seconds"]
+
+
+def test_sleep_session_segments_with_breathing_stats():
+    raw = {"st": 1793828925, "sd": 700, "css": "l", "cssd": 100,
+           "ssd": [{"i": 200, "abr": 27, "brsd": "5.2"}, {"abr": 27, "brsd": "5.2", "d": 400}]}
+    s = senseiq.decode_sleep_session(raw)
+    assert s is not None
+    assert s["stages"] == [{"stage": "settling", "seconds": 200}, {"stage": "deep", "seconds": 400}]
+    assert s["totals_seconds"]["deep"] == 400
+
+
+def test_segment_without_or_with_two_stage_codes_is_skipped():
+    day = [{"dt": 20261105, "sessions": [{"st": 1, "et": 2, "sd": 100, "ssd": [
+        {"abr": 27, "brsd": "5.2"},
+        {"l": 50, "d": 50},
+        {"d": -5, "abr": 27},
+        {"l": 100, "abr": 27},
+    ]}]}]
+    s = senseiq.decode_sleep_day(day, 20261105)
+    assert s is not None
+    assert (s["light_seconds"], s["deep_seconds"]) == (100, 0)
+
+
 class TestStatusStaleness:
     """When the LAN pushes of DPS 3 stop, the last status must not linger (#74)."""
 

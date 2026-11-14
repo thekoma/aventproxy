@@ -93,6 +93,25 @@ def _to_nonneg_int(value: object) -> int | None:
     return secs if (secs is not None and secs >= 0) else None
 
 
+def _stage_segment(seg: object, names: dict[str, str]) -> tuple[str, int] | None:
+    """Return ``(stage, seconds)`` from one ``ssd`` segment, or None.
+
+    Next to the stage code an SCD971/26 sends breathing statistics (average rate
+    and its standard deviation): ``{"d": 1567, "abr": 27, "brsd": "5.217472"}``.
+    A segment with no known stage code, or with two, is skipped.
+    """
+    if not isinstance(seg, dict):
+        return None
+    found = [(code, value) for code, value in seg.items() if code in names]
+    if len(found) != 1:
+        return None
+    [(code, value)] = found
+    secs = _to_nonneg_int(value)
+    if secs is None:
+        return None
+    return names[code], secs
+
+
 def _epoch(value: object) -> int | None:
     """Epoch seconds from a SenseIQ timestamp; tolerates milliseconds."""
     stamp = _to_int(value)
@@ -199,13 +218,10 @@ def decode_sleep_session(raw: object) -> dict | None:
     totals = {name: 0 for name in SLEEP_STAGES}
 
     for item in data.get("ssd") or []:
-        if not isinstance(item, dict) or len(item) != 1:
+        segment = _stage_segment(item, STAGE_NAMES)
+        if segment is None:
             continue
-        (code, seconds), = item.items()
-        name = STAGE_NAMES.get(code)
-        secs = _to_nonneg_int(seconds)
-        if name is None or secs is None:
-            continue
+        name, secs = segment
         stages.append({"stage": name, "seconds": secs})
         totals[name] += secs
 
@@ -326,13 +342,10 @@ def decode_sleep_day(result: object, date: object = None) -> dict | None:
 
         per = {name: 0 for name in NIGHT_STAGES}
         for seg in session.get("ssd") or []:
-            if not isinstance(seg, dict) or len(seg) != 1:
+            segment = _stage_segment(seg, NIGHT_STAGE_NAMES)
+            if segment is None:
                 continue
-            (code, seconds), = seg.items()
-            name = NIGHT_STAGE_NAMES.get(code)
-            secs = _to_nonneg_int(seconds)
-            if name is None or secs is None:
-                continue
+            name, secs = segment
             totals[name] += secs
             per[name] += secs
 
