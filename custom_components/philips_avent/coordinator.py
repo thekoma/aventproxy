@@ -27,7 +27,7 @@ from .const import (
 )
 from .events import LULLABY_SETTLE_SECONDS, lullaby_state_settled, poll_should_stay_fast
 from .lan import TuyaLANClient
-from .lan_policy import keyed_protocol, parse_protocol_version
+from .lan_policy import exclusive_alert_detectors, keyed_protocol, parse_protocol_version
 from .payload import dps_delta, truncated_dps
 
 LULLABY_STATE_MAP = {"play": "playing", "pause": "stopping", "stop": "stopping"}
@@ -175,13 +175,14 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
     def alert_detectors_exclusive(self) -> bool:
         """Whether turning one alert detector on has to turn the other off.
 
-        Measured only on a monitor speaking 3.5 (fork 04d6d28), so it applies to
-        a monitor whose LAN session confirmed 3.4 or up. That protocol is the one
+        Measured on a monitor speaking 3.5 (fork 04d6d28), while a 3.4 and a
+        3.3 monitor run both detectors at once (issue #110), so it applies to a
+        monitor whose LAN session confirmed 3.5 or up. That protocol is the one
         published to the bridge, which survives restarts and blips, so the
-        switches behave the same whether or not the session is up right now. A
-        3.3 monitor or a cloud-only setup keeps them independent, as before.
+        switches behave the same whether or not the session is up right now. An
+        older monitor or a cloud-only setup keeps them independent, as before.
         """
-        return keyed_protocol(parse_protocol_version(self.lan_protocol))
+        return exclusive_alert_detectors(parse_protocol_version(self.lan_protocol))
 
     @property
     def senseiq_status_stale(self) -> bool:

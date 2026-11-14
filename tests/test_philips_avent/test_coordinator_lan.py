@@ -248,6 +248,12 @@ class TestAlertDetectors:
         coordinator._lan_client = FakeLan(None, protocol="3.5")
         assert coordinator.alert_detectors_exclusive
 
+    def test_a_3_4_monitor_keeps_its_switches_independent(self, make):
+        # Issue #110: an SCD951 on 3.4 ran both detectors at once for days.
+        coordinator = make(None)
+        coordinator._lan_client = FakeLan(None, protocol="3.4")
+        assert not coordinator.alert_detectors_exclusive
+
     def test_a_3_3_monitor_keeps_its_switches_independent(self, make):
         coordinator = make(3.3)
         coordinator._lan_client.protocol = "3.3"

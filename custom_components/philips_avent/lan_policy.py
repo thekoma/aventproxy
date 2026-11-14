@@ -150,6 +150,18 @@ def keyed_protocol(version: float | None) -> bool:
     return version is not None and version >= KEYED_PROTOCOL_MIN_VERSION
 
 
+# Turning one alert detector on turns the other off on a monitor speaking 3.5
+# (fork 04d6d28). An SCD951 on 3.4 and an SCD923 on 3.3 run both at once: with
+# both switches on they sent 157 motion and 344 sound records, and 212 and 149,
+# over 2-4 November 2026 (issue #110).
+EXCLUSIVE_DETECTORS_MIN_VERSION = 3.5
+
+
+def exclusive_alert_detectors(version: float | None) -> bool:
+    """Whether a monitor at `version` runs only one alert detector at a time."""
+    return version is not None and version >= EXCLUSIVE_DETECTORS_MIN_VERSION
+
+
 def seeded_session(last_ip: str | None, last_protocol: str) -> tuple[str | None, float | None]:
     """The address and protocol a new client may dial before its first scan, or (None, None).
 

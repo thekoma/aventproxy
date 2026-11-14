@@ -12,6 +12,7 @@ from lan_policy import (
     RECONNECT_DELAY,
     baseline_dps,
     data_stale,
+    exclusive_alert_detectors,
     heartbeat_due,
     heartbeat_outcome,
     is_connection_error,
@@ -218,6 +219,18 @@ class TestKeyedProtocol:
 
     def test_no_session_is_not_keyed(self):
         assert not keyed_protocol(None)
+
+
+class TestExclusiveAlertDetectors:
+    """One detector at a time was measured at 3.5 only; 3.4 and 3.3 run both (issue #110)."""
+
+    def test_3_5_and_up_run_one_detector(self):
+        assert exclusive_alert_detectors(3.5)
+
+    def test_3_4_and_older_run_both(self):
+        assert not exclusive_alert_detectors(3.4)
+        assert not exclusive_alert_detectors(3.3)
+        assert not exclusive_alert_detectors(None)
 
 
 class TestBaselineDps:
