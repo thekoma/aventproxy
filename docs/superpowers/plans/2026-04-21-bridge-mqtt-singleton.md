@@ -456,7 +456,7 @@ docker compose up -d aventproxy-bridge
 - [ ] **Step 3: Test with ffplay (single client)**
 
 ```bash
-ffplay -rtsp_transport tcp -loglevel warning rtsp://localhost:8556/Erik
+ffplay -rtsp_transport tcp -loglevel warning rtsp://localhost:8556/Monitor
 ```
 
 Check logs:

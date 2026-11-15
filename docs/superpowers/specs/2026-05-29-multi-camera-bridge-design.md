@@ -61,7 +61,7 @@ The shape written by `_write_bridge_config` in `__init__.py` is already the sour
   "package_name": "...",
   "bridge_port": 38554,
   "cameras": [
-    {"camera_id": "abc123", "camera_name": "Erik"},
+    {"camera_id": "abc123", "camera_name": "Monitor"},
     {"camera_id": "def456", "camera_name": "Anna"}
   ]
 }
@@ -106,8 +106,8 @@ If two cameras sanitize to the same path (unusual — the Avent app encourages d
 ### Logging
 
 ```
-INFO Serving 2 cameras on port 38554: /Erik /Anna
-INFO Camera registered: id=abc123 name=Erik path=/Erik
+INFO Serving 2 cameras on port 38554: /Monitor /Anna
+INFO Camera registered: id=abc123 name=Monitor path=/Monitor
 INFO Camera registered: id=def456 name=Anna path=/Anna
 WARN Path collision on /Baby, falling back to /Baby_def456
 WARN Camera config invalid: missing camera_id, skipping entry index=2

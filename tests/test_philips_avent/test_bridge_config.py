@@ -112,7 +112,7 @@ class TestBuildBridgeConfig:
         "package_name": "com.philips.ph.babymonitorplus",
         "api_host": "a1.tuyaus.com",
         "bridge_port": 38554,
-        "cameras": [{"deviceId": "abc123", "deviceName": "Erik", "productId": "p1"}],
+        "cameras": [{"deviceId": "abc123", "deviceName": "Monitor", "productId": "p1"}],
     }
 
     def test_api_host_is_written_for_the_bridge(self):
@@ -133,7 +133,7 @@ class TestBuildBridgeConfig:
         config = build_bridge_config(**self.BASE)
         assert config["cameras"] == [
             {
-                "camera_id": "abc123", "camera_name": "Erik", "product_id": "p1",
+                "camera_id": "abc123", "camera_name": "Monitor", "product_id": "p1",
                 "local_key": "", "p2p_password": "", "lan_ip": "", "lan_protocol": "",
             },
         ]
@@ -274,7 +274,7 @@ class TestTalkbackOption:
         "signing_key": "sk", "sid": "eu166", "ecode": "E", "partner": "P",
         "app_key": "AK", "device_id": "D", "package_name": "pkg",
         "api_host": "a1.tuyaeu.com", "bridge_port": 38554,
-        "cameras": [{"deviceId": "abc", "deviceName": "Erik"}],
+        "cameras": [{"deviceId": "abc", "deviceName": "Monitor"}],
     }
 
     def test_default_is_off(self):

@@ -171,7 +171,7 @@ All tests must pass before deploy. This is a baby monitor.
 
 ## Non-goals
 
-- Multiple camera support (only Erik today, can be added later — MQTTManager already keys by deviceId)
+- Multiple camera support (one camera today, more can be added later — MQTTManager already keys by deviceId)
 - MQTT connection pooling or load balancing
 - Changing the clientId derivation formula
 - Fixing the go2rtc retry behavior (that's go2rtc's concern)
