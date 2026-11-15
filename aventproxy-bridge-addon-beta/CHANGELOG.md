@@ -3,6 +3,12 @@
 This is the beta card: it follows release candidates of the integration.
 Stay on the stable card unless you are testing an rc.
 
+## 2026.11.0-rc3
+
+Only the bridge changed since rc2.
+
+**Fix:** with **Two-way audio (talkback)** on, each still image of the camera opened a two-way session for 3 seconds, and a playing lullaby paused. Home Assistant takes a still image with ffmpeg, which sends an empty packet to every track of the stream, the return audio included, and the bridge took it for a voice. Empty packets are now ignored. rc2 and 2026.11.0-dev5 have the same problem. The bridge log showed it as a talk that sent nothing: `Stopped talking to <camera> (the audio stopped) after 3s: 0 packets sent, 1 dropped`.
+
 ## 2026.11.0-rc2
 
 Update the integration and this card together, as with rc1.
