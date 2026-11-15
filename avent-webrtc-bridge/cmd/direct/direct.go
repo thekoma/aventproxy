@@ -37,7 +37,7 @@ Example:
     --app-key "wx..." \
     --device-id "4ea..." \
     --camera-id "bf3..." \
-    --camera-name "Erik"`,
+    --camera-name "Monitor"`,
 		RunE: runDirect,
 	}
 

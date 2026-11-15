@@ -53,10 +53,10 @@ func TestSanitizeRTSPPath(t *testing.T) {
 		in   struct{ name, id string }
 		want string
 	}{
-		{"simple name", struct{ name, id string }{"Erik", "abc123"}, "/Erik"},
+		{"simple name", struct{ name, id string }{"Monitor", "abc123"}, "/Monitor"},
 		{"name with spaces", struct{ name, id string }{"Baby Room", "abc123"}, "/Baby_Room"},
 		{"empty name falls back to id", struct{ name, id string }{"", "abc123"}, "/abc123"},
-		{"multiple spaces", struct{ name, id string }{"Erik  Two", "abc123"}, "/Erik__Two"},
+		{"multiple spaces", struct{ name, id string }{"Monitor  Two", "abc123"}, "/Monitor__Two"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -199,7 +199,7 @@ func TestLoadConfig_ValidTwoCameras(t *testing.T) {
 	  "package_name": "pkg",
 	  "bridge_port": 38554,
 	  "cameras": [
-	    {"camera_id": "abc123", "camera_name": "Erik"},
+	    {"camera_id": "abc123", "camera_name": "Monitor"},
 	    {"camera_id": "def456", "camera_name": "Anna"}
 	  ]
 	}`
@@ -220,7 +220,7 @@ func TestLoadConfig_ValidTwoCameras(t *testing.T) {
 	if len(cfg.Cameras) != 2 {
 		t.Fatalf("cameras = %d, want 2", len(cfg.Cameras))
 	}
-	if cfg.Cameras[0].ID != "abc123" || cfg.Cameras[0].Name != "Erik" {
+	if cfg.Cameras[0].ID != "abc123" || cfg.Cameras[0].Name != "Monitor" {
 		t.Errorf("camera[0] = %+v", cfg.Cameras[0])
 	}
 	if cfg.Cameras[1].ID != "def456" || cfg.Cameras[1].Name != "Anna" {
@@ -331,7 +331,7 @@ func TestLoadConfig_MissingFile(t *testing.T) {
 }
 
 func TestValidateConfig_RejectsMissingCreds(t *testing.T) {
-	cfg := BridgeConfig{Cameras: []Camera{{ID: "abc", Name: "Erik"}}}
+	cfg := BridgeConfig{Cameras: []Camera{{ID: "abc", Name: "Monitor"}}}
 	if err := validateConfig(cfg); err == nil {
 		t.Fatal("want error for missing signing_key")
 	}
@@ -350,7 +350,7 @@ func TestValidateConfig_RejectsEmptyCameras(t *testing.T) {
 func TestValidateConfig_AcceptsMinimal(t *testing.T) {
 	cfg := BridgeConfig{
 		SigningKey: "sk", SID: "S", AppKey: "AK", DeviceID: "D",
-		Cameras: []Camera{{ID: "abc", Name: "Erik"}},
+		Cameras: []Camera{{ID: "abc", Name: "Monitor"}},
 	}
 	if err := validateConfig(cfg); err != nil {
 		t.Fatalf("validateConfig: unexpected error %v", err)
@@ -423,15 +423,15 @@ Append to `avent-webrtc-bridge/cmd/addon/addon_test.go`:
 ```go
 func TestAssignPaths_NoCollision(t *testing.T) {
 	cams := []Camera{
-		{ID: "abc123", Name: "Erik"},
+		{ID: "abc123", Name: "Monitor"},
 		{ID: "def456", Name: "Anna"},
 	}
 	out := assignPaths(cams)
 	if len(out) != 2 {
 		t.Fatalf("got %d, want 2", len(out))
 	}
-	if out[0].Path != "/Erik" {
-		t.Errorf("out[0].Path = %q, want /Erik", out[0].Path)
+	if out[0].Path != "/Monitor" {
+		t.Errorf("out[0].Path = %q, want /Monitor", out[0].Path)
 	}
 	if out[1].Path != "/Anna" {
 		t.Errorf("out[1].Path = %q, want /Anna", out[1].Path)
@@ -819,7 +819,7 @@ from custom_components.philips_avent.const import sanitize_rtsp_path
 
 
 def test_simple_name():
-    assert sanitize_rtsp_path("Erik", "abc123") == "Erik"
+    assert sanitize_rtsp_path("Monitor", "abc123") == "Monitor"
 
 
 def test_name_with_spaces():
@@ -831,7 +831,7 @@ def test_empty_name_falls_back_to_id():
 
 
 def test_multiple_spaces():
-    assert sanitize_rtsp_path("Erik  Two", "abc123") == "Erik__Two"
+    assert sanitize_rtsp_path("Monitor  Two", "abc123") == "Monitor__Two"
 ```
 
 Note: the Python helper returns the path component **without** the leading `/`, because `camera.py` builds the URL as `rtsp://host:port/{safe_name}`.
@@ -1056,7 +1056,7 @@ cat > /tmp/fake-bridge.json <<'EOF'
   "package_name": "fake",
   "bridge_port": 38554,
   "cameras": [
-    {"camera_id": "fakeid1", "camera_name": "Erik"},
+    {"camera_id": "fakeid1", "camera_name": "Monitor"},
     {"camera_id": "fakeid2", "camera_name": "Anna"}
   ]
 }

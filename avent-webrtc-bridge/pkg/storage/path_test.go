@@ -8,10 +8,10 @@ func TestSanitizeRTSPPath(t *testing.T) {
 		in   struct{ name, id string }
 		want string
 	}{
-		{"simple name", struct{ name, id string }{"Erik", "abc123"}, "/Erik"},
+		{"simple name", struct{ name, id string }{"Monitor", "abc123"}, "/Monitor"},
 		{"name with spaces", struct{ name, id string }{"Baby Room", "abc123"}, "/Baby_Room"},
 		{"empty name falls back to id", struct{ name, id string }{"", "abc123"}, "/abc123"},
-		{"multiple spaces", struct{ name, id string }{"Erik  Two", "abc123"}, "/Erik__Two"},
+		{"multiple spaces", struct{ name, id string }{"Monitor  Two", "abc123"}, "/Monitor__Two"},
 		{"slash in name", struct{ name, id string }{"Room/Camera", "abc123"}, "/Room_Camera"},
 		{"backslash in name", struct{ name, id string }{"Room\\Camera", "abc123"}, "/Room_Camera"},
 		{"name sanitizes to underscore", struct{ name, id string }{"/", "abc123"}, "/abc123"},

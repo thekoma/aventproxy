@@ -28,7 +28,7 @@ func TestLoadConfig_ValidTwoCameras(t *testing.T) {
 	  "package_name": "pkg",
 	  "bridge_port": 38554,
 	  "cameras": [
-	    {"camera_id": "abc123", "camera_name": "Erik", "product_id": "selj2idknqhjnids"},
+	    {"camera_id": "abc123", "camera_name": "Monitor", "product_id": "selj2idknqhjnids"},
 	    {"camera_id": "def456", "camera_name": "Anna"}
 	  ]
 	}`
@@ -49,7 +49,7 @@ func TestLoadConfig_ValidTwoCameras(t *testing.T) {
 	if len(cfg.Cameras) != 2 {
 		t.Fatalf("cameras = %d, want 2", len(cfg.Cameras))
 	}
-	if cfg.Cameras[0].ID != "abc123" || cfg.Cameras[0].Name != "Erik" {
+	if cfg.Cameras[0].ID != "abc123" || cfg.Cameras[0].Name != "Monitor" {
 		t.Errorf("camera[0] = %+v", cfg.Cameras[0])
 	}
 	if cfg.Cameras[0].ProductID != "selj2idknqhjnids" {
@@ -82,7 +82,7 @@ func TestLoadConfig_MissingFile(t *testing.T) {
 }
 
 func TestValidateConfig_RejectsMissingCreds(t *testing.T) {
-	cfg := BridgeConfig{Cameras: []Camera{{ID: "abc", Name: "Erik"}}}
+	cfg := BridgeConfig{Cameras: []Camera{{ID: "abc", Name: "Monitor"}}}
 	if err := validateConfig(cfg); err == nil {
 		t.Fatal("want error for missing signing_key")
 	}
@@ -103,7 +103,7 @@ func TestValidateConfig_AcceptsMinimal(t *testing.T) {
 	cfg := BridgeConfig{
 		SigningKey: "sk", SID: "S", AppKey: "AK", DeviceID: "D",
 		Ecode: "E", Partner: "P",
-		Cameras: []Camera{{ID: "abc", Name: "Erik"}},
+		Cameras: []Camera{{ID: "abc", Name: "Monitor"}},
 	}
 	if err := validateConfig(cfg); err != nil {
 		t.Fatalf("validateConfig: unexpected error %v", err)
@@ -114,7 +114,7 @@ func TestValidateConfig_RejectsMissingEcode(t *testing.T) {
 	cfg := BridgeConfig{
 		SigningKey: "sk", SID: "S", AppKey: "AK", DeviceID: "D",
 		Partner: "P",
-		Cameras: []Camera{{ID: "abc", Name: "Erik"}},
+		Cameras: []Camera{{ID: "abc", Name: "Monitor"}},
 	}
 	if err := validateConfig(cfg); err == nil {
 		t.Fatal("want error for missing ecode")
@@ -125,7 +125,7 @@ func TestValidateConfig_RejectsMissingPartner(t *testing.T) {
 	cfg := BridgeConfig{
 		SigningKey: "sk", SID: "S", AppKey: "AK", DeviceID: "D",
 		Ecode:   "E",
-		Cameras: []Camera{{ID: "abc", Name: "Erik"}},
+		Cameras: []Camera{{ID: "abc", Name: "Monitor"}},
 	}
 	if err := validateConfig(cfg); err == nil {
 		t.Fatal("want error for missing partner")
@@ -134,15 +134,15 @@ func TestValidateConfig_RejectsMissingPartner(t *testing.T) {
 
 func TestAssignPaths_NoCollision(t *testing.T) {
 	cams := []Camera{
-		{ID: "abc123", Name: "Erik"},
+		{ID: "abc123", Name: "Monitor"},
 		{ID: "def456", Name: "Anna"},
 	}
 	out := assignPaths(cams)
 	if len(out) != 2 {
 		t.Fatalf("got %d, want 2", len(out))
 	}
-	if out[0].Path != "/Erik" {
-		t.Errorf("out[0].Path = %q, want /Erik", out[0].Path)
+	if out[0].Path != "/Monitor" {
+		t.Errorf("out[0].Path = %q, want /Monitor", out[0].Path)
 	}
 	if out[1].Path != "/Anna" {
 		t.Errorf("out[1].Path = %q, want /Anna", out[1].Path)
@@ -214,15 +214,15 @@ func TestAssignPaths_CascadingFallback(t *testing.T) {
 func TestAssignPaths_DuplicateCameraID(t *testing.T) {
 	// Different names per duplicate to make the "first entry wins" contract explicit.
 	cams := []Camera{
-		{ID: "abc123", Name: "Erik"},
-		{ID: "abc123", Name: "Renamed Erik"},
+		{ID: "abc123", Name: "Monitor"},
+		{ID: "abc123", Name: "Renamed Monitor"},
 		{ID: "def456", Name: "Anna"},
 	}
 	out := assignPaths(cams)
 	if len(out) != 2 {
 		t.Fatalf("got %d, want 2 (the second 'abc123' should be skipped)", len(out))
 	}
-	if out[0].ID != "abc123" || out[0].Name != "Erik" {
+	if out[0].ID != "abc123" || out[0].Name != "Monitor" {
 		t.Errorf("first occurrence should win, got %+v", out[0])
 	}
 	if out[1].ID != "def456" {
@@ -233,7 +233,7 @@ func TestAssignPaths_DuplicateCameraID(t *testing.T) {
 func TestAssignPaths_SkipsMissingID(t *testing.T) {
 	cams := []Camera{
 		{ID: "", Name: "Ghost"},
-		{ID: "abc123", Name: "Erik"},
+		{ID: "abc123", Name: "Monitor"},
 	}
 	out := assignPaths(cams)
 	if len(out) != 1 {
@@ -246,7 +246,7 @@ func TestAssignPaths_SkipsMissingID(t *testing.T) {
 
 func TestAssignPaths_PreservesProductID(t *testing.T) {
 	cams := []Camera{
-		{ID: "abc123", Name: "Erik", ProductID: "selj2idknqhjnids"},
+		{ID: "abc123", Name: "Monitor", ProductID: "selj2idknqhjnids"},
 		{ID: "def456", Name: "Anna", ProductID: ""},
 	}
 	out := assignPaths(cams)
@@ -274,7 +274,7 @@ func TestLoadConfig_APIHost(t *testing.T) {
 	  "package_name": "pkg",
 	  "api_host": "a1.tuyaus.com",
 	  "bridge_port": 38554,
-	  "cameras": [{"camera_id": "abc123", "camera_name": "Erik"}]
+	  "cameras": [{"camera_id": "abc123", "camera_name": "Monitor"}]
 	}`
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -306,7 +306,7 @@ func TestLoadConfig_APIHostMissingFallsBackToEU(t *testing.T) {
 	  "device_id": "D",
 	  "package_name": "pkg",
 	  "bridge_port": 38554,
-	  "cameras": [{"camera_id": "abc123", "camera_name": "Erik"}]
+	  "cameras": [{"camera_id": "abc123", "camera_name": "Monitor"}]
 	}`
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -336,7 +336,7 @@ func TestLoadConfig_TalkbackDefaultsToOff(t *testing.T) {
 	  "signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P",
 	  "app_key": "AK", "device_id": "D", "package_name": "pkg",
 	  "api_host": "a1.tuyaeu.com", "bridge_port": 38554,
-	  "cameras": [{"camera_id": "abc123", "camera_name": "Erik"}]
+	  "cameras": [{"camera_id": "abc123", "camera_name": "Monitor"}]
 	}`
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -357,7 +357,7 @@ func TestLoadConfig_TalkbackHonoured(t *testing.T) {
 	  "signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P",
 	  "app_key": "AK", "device_id": "D", "package_name": "pkg",
 	  "api_host": "a1.tuyaeu.com", "talkback": true, "bridge_port": 38554,
-	  "cameras": [{"camera_id": "abc123", "camera_name": "Erik"}]
+	  "cameras": [{"camera_id": "abc123", "camera_name": "Monitor"}]
 	}`
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -398,7 +398,7 @@ func TestLoadConfig_RTSPBind(t *testing.T) {
 	body := `{
 	  "signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P",
 	  "app_key": "AK", "device_id": "D", "rtsp_bind_address": "0.0.0.0",
-	  "cameras": [{"camera_id": "abc123", "camera_name": "Erik"}]
+	  "cameras": [{"camera_id": "abc123", "camera_name": "Monitor"}]
 	}`
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -429,7 +429,7 @@ func TestLoadConfigWithLANFields(t *testing.T) {
 	cfg := writeCfg(t, `{
 	  "signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P",
 	  "app_key": "AK", "device_id": "D", "uid": "u1", "lan_streaming": false,
-	  "cameras": [{"camera_id": "abc123", "camera_name": "Erik",
+	  "cameras": [{"camera_id": "abc123", "camera_name": "Monitor",
 	    "local_key": "lk", "p2p_password": "pw", "lan_ip": "192.0.2.7", "lan_protocol": "3.3"}]
 	}`)
 	if cfg.UID != "u1" {
@@ -449,7 +449,7 @@ func TestLoadConfigWithoutLANFields(t *testing.T) {
 	cfg := writeCfg(t, `{
 	  "signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P",
 	  "app_key": "AK", "device_id": "D",
-	  "cameras": [{"camera_id": "abc123", "camera_name": "Erik"}]
+	  "cameras": [{"camera_id": "abc123", "camera_name": "Monitor"}]
 	}`)
 	if !lanStreamingEnabled(cfg) {
 		t.Error("an absent lan_streaming must mean enabled")

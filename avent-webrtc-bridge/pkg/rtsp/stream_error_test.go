@@ -258,10 +258,10 @@ func TestSDPAdvertisesBackchannelOnlyWithTalkback(t *testing.T) {
 	// Clients set up whatever the description offers, and a client setting up the
 	// return channel is what coincides with the camera interrupting a lullaby
 	// (issue #72), so the section must be absent unless talkback is on.
-	camera := &storage.CameraInfo{DeviceID: "dev1", DeviceName: "Erik"}
+	camera := &storage.CameraInfo{DeviceID: "dev1", DeviceName: "Monitor"}
 
 	off := NewRTSPServer(0, nil)
-	sdp := off.generateSDP(camera, "rtsp://host:38554/Erik")
+	sdp := off.generateSDP(camera, "rtsp://host:38554/Monitor")
 	if strings.Contains(sdp, "/backchannel") {
 		t.Error("talkback off: the SDP must not advertise a return channel")
 	}
@@ -271,7 +271,7 @@ func TestSDPAdvertisesBackchannelOnlyWithTalkback(t *testing.T) {
 
 	on := NewRTSPServer(0, nil)
 	on.Talkback = true
-	sdp = on.generateSDP(camera, "rtsp://host:38554/Erik")
+	sdp = on.generateSDP(camera, "rtsp://host:38554/Monitor")
 	if !strings.Contains(sdp, "/backchannel") {
 		t.Error("talkback on: the SDP must advertise the return channel")
 	}

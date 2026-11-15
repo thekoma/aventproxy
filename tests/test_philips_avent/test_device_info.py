@@ -25,9 +25,9 @@ class TestBuildDeviceInfo:
         assert info.get("model_id") is None
 
     def test_identifiers_name_manufacturer(self):
-        info = build_device_info(_coordinator({}, name="Erik"), "bf3ca1e955a0361563hdwr")
+        info = build_device_info(_coordinator({}, name="Monitor"), "bf3ca1e955a0361563hdwr")
         assert info["identifiers"] == {(DOMAIN, "bf3ca1e955a0361563hdwr")}
-        assert info["name"] == "Erik"
+        assert info["name"] == "Monitor"
         assert info["manufacturer"] == "Philips"
 
     def test_mapped_product_id_wins_over_generic(self):
