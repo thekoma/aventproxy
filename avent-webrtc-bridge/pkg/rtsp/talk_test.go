@@ -2,6 +2,7 @@ package rtsp
 
 import (
 	"errors"
+	"net"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -269,14 +270,14 @@ func TestTalkOnDemandKeepsTheCameraSessionOneWay(t *testing.T) {
 	stream.mutex.Lock()
 	stream.replaceBridge() // a replacement must not take the backchannel back
 	stream.mutex.Unlock()
-	stream.forwarder.ForwardBackchannel(&rtp.Packet{})
+	stream.forwarder.ForwardBackchannel(&rtp.Packet{Payload: []byte{0xff}})
 	eventually(t, "the talker to open a session", func() bool { return o.count() == 1 })
 
 	// Once the stream stops, a client still reading must not open a talk.
 	stream.talk.end("next")
 	stream.active.Store(true)
 	stream.stopStream()
-	stream.forwarder.ForwardBackchannel(&rtp.Packet{})
+	stream.forwarder.ForwardBackchannel(&rtp.Packet{Payload: []byte{0xff}})
 	time.Sleep(20 * time.Millisecond)
 	if o.count() != 1 {
 		t.Fatalf("audio after the stream stopped opened a session (%d in all, want 1)", o.count())
@@ -285,13 +286,63 @@ func TestTalkOnDemandKeepsTheCameraSessionOneWay(t *testing.T) {
 	stream.mutex.Lock()
 	stream.replaceBridge()
 	stream.mutex.Unlock()
-	stream.forwarder.ForwardBackchannel(&rtp.Packet{})
+	stream.forwarder.ForwardBackchannel(&rtp.Packet{Payload: []byte{0xff}})
 	eventually(t, "a talk after the restart", func() bool { return o.count() == 2 })
 
 	server.TalkbackMode = TalkbackSession
 	session := NewCameraStream(camera, "hd", nil, nil, server)
 	if !session.webrtcBridge.Talkback || session.talk != nil {
 		t.Error("in session mode the camera session asks for talkback and no talker exists")
+	}
+}
+
+// Home Assistant takes a still image with ffmpeg over UDP. After SETUP, ffmpeg
+// sends each server RTP port, the backchannel's too, a 12-byte RTP header with
+// no payload to open the way through NAT. That is not a voice: taken for one,
+// it opened a two-way session, which pauses a playing lullaby (issue #72).
+func TestBackchannelIgnoresFFmpegsPunchPacket(t *testing.T) {
+	ip := net.IPv4(127, 0, 0, 1)
+	control, _ := controlConn(t, ip)
+	rf := NewRTPForwarder()
+	if err := rf.AddUDPClient("s1", control, 0, 0); err != nil {
+		t.Fatalf("add client: %v", err)
+	}
+	defer rf.RemoveClient("s1")
+	port, err := rf.SetupUDPBackchannel("s1", 0, ip)
+	if err != nil {
+		t.Fatalf("setup backchannel: %v", err)
+	}
+	var mu sync.Mutex
+	var got []int
+	rf.SetBackchannelSink(func(p *rtp.Packet) {
+		mu.Lock()
+		got = append(got, len(p.Payload))
+		mu.Unlock()
+	})
+
+	conn, err := net.DialUDP("udp", nil, &net.UDPAddr{IP: ip, Port: port})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	punch := []byte{0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0} // as ffmpeg 9.0.2 sends it
+	voice, err := (&rtp.Packet{Header: rtp.Header{Version: 2, SequenceNumber: 1}, Payload: make([]byte, 160)}).Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range [][]byte{punch, voice} {
+		if _, err := conn.Write(b); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	count := func() int { mu.Lock(); defer mu.Unlock(); return len(got) }
+	eventually(t, "the voice packet", func() bool { return count() >= 1 })
+	time.Sleep(20 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 || got[0] != 160 {
+		t.Fatalf("the backchannel passed on payloads of %v bytes, want only the voice's [160]", got)
 	}
 }
 

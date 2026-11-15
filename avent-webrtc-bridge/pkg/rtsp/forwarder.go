@@ -623,7 +623,14 @@ func (rf *RTPForwarder) SetBackchannelSink(sink func(*rtp.Packet)) {
 }
 
 // ForwardBackchannel hands one talkback packet from a client to the sink.
+// A packet with no payload carries no voice and is dropped: ffmpeg, which Home
+// Assistant runs for a still image, sends one to every server RTP port after
+// SETUP to open the way through NAT, and taken for audio it opened a two-way
+// session that pauses a playing lullaby (issue #72).
 func (rf *RTPForwarder) ForwardBackchannel(packet *rtp.Packet) {
+	if len(packet.Payload) == 0 {
+		return
+	}
 	rf.mutex.RLock()
 	sink := rf.backchannelSink
 	rf.mutex.RUnlock()
