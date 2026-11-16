@@ -4,7 +4,7 @@ WORKDIR /src
 COPY avent-webrtc-bridge/ .
 RUN go mod download && CGO_ENABLED=0 go build -o /avent-webrtc-bridge .
 
-FROM debian:bookworm-slim
+FROM debian:13.7-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends jq ca-certificates && rm -rf /var/lib/apt/lists/*
 
