@@ -3,6 +3,10 @@
 This is the beta card: it follows release candidates of the integration.
 Stay on the stable card unless you are testing an rc.
 
+## 2026.11.0-rc4
+
+The bridge image now runs on Debian 13 (trixie) instead of Debian 12 (bookworm), which security scanners flagged for packages the bridge never uses (Daniel Jansen, [#124](https://github.com/thekoma/aventproxy/pull/124)). Nothing else changed since rc3, in the bridge or in the integration.
+
 ## 2026.11.0-rc3
 
 Only the bridge changed since rc2.

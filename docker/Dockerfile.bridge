@@ -1,10 +1,11 @@
-FROM golang:1.27-bookworm AS builder
+FROM golang:1.27-trixie AS builder
 
 WORKDIR /src
 COPY avent-webrtc-bridge/ .
 RUN go mod download && CGO_ENABLED=0 go build -o /avent-webrtc-bridge .
 
-FROM debian:bookworm-slim
+# Keep the base in step with aventproxy-bridge-addon/Dockerfile, which builds the published image.
+FROM debian:13-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends jq ca-certificates && rm -rf /var/lib/apt/lists/*
 
