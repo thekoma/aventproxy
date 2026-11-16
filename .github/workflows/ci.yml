@@ -61,7 +61,7 @@ jobs:
           if [ -n "$unformatted" ]; then
             echo "gofmt would rewrite these files:"
             echo "$unformatted"
-            echo "Run: docker run --rm -v \$PWD:/src -w /src golang:1.27-bookworm gofmt -w ."
+            echo "Run: docker run --rm -v \$PWD:/src -w /src golang:1.27-trixie gofmt -w ."
             exit 1
           fi
 
@@ -89,7 +89,6 @@ jobs:
       - name: Build add-on Docker image
         run: |
           docker build \
-            --build-arg BUILD_FROM=debian:bookworm-slim \
             -t aventproxy-bridge:test \
             aventproxy-bridge-addon/
 
