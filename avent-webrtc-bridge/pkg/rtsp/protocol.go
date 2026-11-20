@@ -187,6 +187,10 @@ func (s *RTSPServer) handleInterleavedRTP(client *RTSPClient) error {
 	return nil
 }
 
+// maxRequestBody bounds the body a request may announce. The bridge uses none
+// of them, and a GET_PARAMETER body only names a few parameters.
+const maxRequestBody = 64 << 10
+
 func (s *RTSPServer) parseRTSPRequestFromReader(reader *bufio.Reader) (*RTSPRequest, error) {
 	// Read request line
 	line, _, err := reader.ReadLine()
@@ -236,9 +240,32 @@ func (s *RTSPServer) parseRTSPRequestFromReader(reader *bufio.Reader) (*RTSPRequ
 		}
 	}
 
+	if err := skipRequestBody(reader, request.Headers); err != nil {
+		return nil, err
+	}
+
 	core.Logger.Trace().Msgf("Received RTSP request: %s %s (CSeq %d)", request.Method, request.URL, request.CSeq)
 
 	return request, nil
+}
+
+// skipRequestBody discards the body a request announces in Content-Length, so
+// that it is not read as the next request.
+func skipRequestBody(reader *bufio.Reader, headers map[string]string) error {
+	for key, value := range headers {
+		if !strings.EqualFold(key, "Content-Length") {
+			continue
+		}
+		length, err := strconv.Atoi(value)
+		if err != nil || length < 0 || length > maxRequestBody {
+			return fmt.Errorf("unusable Content-Length: %q", value)
+		}
+		if _, err := reader.Discard(length); err != nil {
+			return fmt.Errorf("failed to read request body: %w", err)
+		}
+		return nil
+	}
+	return nil
 }
 
 func (s *RTSPServer) handleRTSPMethod(client *RTSPClient, request *RTSPRequest) bool {
@@ -256,6 +283,8 @@ func (s *RTSPServer) handleRTSPMethod(client *RTSPClient, request *RTSPRequest) 
 	case "TEARDOWN":
 		s.handleTeardown(client, request)
 		close = true
+	case "GET_PARAMETER":
+		s.handleGetParameter(client, request)
 	default:
 		s.handleUnsupportedMethod(client, request)
 	}
@@ -497,6 +526,19 @@ func (s *RTSPServer) handleTeardown(client *RTSPClient, request *RTSPRequest) {
 	sendRTSPResponse(client.conn, 200, "OK", headers, "")
 
 	core.Logger.Info().Msgf("Tearing down RTSP stream for client %s", client.session)
+}
+
+// handleGetParameter answers the empty GET_PARAMETER that NVRs such as Ajax
+// send as a keepalive (#129). The bridge has no parameters to report, so the
+// answer has no body. Public does not list the method, so clients that choose
+// their keepalive from that list (ffmpeg does) keep sending OPTIONS.
+func (s *RTSPServer) handleGetParameter(client *RTSPClient, request *RTSPRequest) {
+	headers := map[string]string{
+		"CSeq":    strconv.Itoa(request.CSeq),
+		"Session": client.session,
+	}
+
+	sendRTSPResponse(client.conn, 200, "OK", headers, "")
 }
 
 func (s *RTSPServer) handleUnsupportedMethod(client *RTSPClient, request *RTSPRequest) {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,18 +21,90 @@ type rtspPeer struct {
 // readResponse reads one RTSP response and returns its status line.
 func (p *rtspPeer) readResponse(t *testing.T) string {
 	t.Helper()
+	status, _ := p.readResponseHeaders(t)
+	return status
+}
+
+// readResponseHeaders reads one RTSP response and returns its status line and
+// headers.
+func (p *rtspPeer) readResponseHeaders(t *testing.T) (string, map[string]string) {
+	t.Helper()
 	_ = p.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	status, err := p.reader.ReadString('\n')
 	if err != nil {
 		t.Fatalf("read status line: %v", err)
 	}
+	headers := map[string]string{}
 	for {
 		line, err := p.reader.ReadString('\n')
 		if err != nil {
 			t.Fatalf("read header: %v", err)
 		}
 		if line == "\r\n" {
-			return strings.TrimSpace(status)
+			return strings.TrimSpace(status), headers
+		}
+		if key, value, ok := strings.Cut(line, ":"); ok {
+			headers[strings.TrimSpace(key)] = strings.TrimSpace(value)
+		}
+	}
+}
+
+// NVRs such as Ajax keep their session alive with an empty GET_PARAMETER,
+// which got 501 Not Implemented (#129).
+func TestGetParameterAnswersKeepalive(t *testing.T) {
+	server, client, peer := newProtocolClient(t)
+
+	closed := make(chan bool, 1)
+	go func() {
+		closed <- server.handleRTSPMethod(client, &RTSPRequest{
+			Method:  "GET_PARAMETER",
+			URL:     "rtsp://127.0.0.1:8554/cam",
+			CSeq:    7,
+			Headers: map[string]string{"Session": "s1"},
+		})
+	}()
+
+	status, headers := peer.readResponseHeaders(t)
+	if status != "RTSP/1.0 200 OK" {
+		t.Fatalf("GET_PARAMETER: %q", status)
+	}
+	if headers["CSeq"] != "7" || headers["Session"] != "s1" {
+		t.Fatalf("GET_PARAMETER answered CSeq %q, Session %q", headers["CSeq"], headers["Session"])
+	}
+	if <-closed {
+		t.Fatal("GET_PARAMETER closed the connection")
+	}
+}
+
+// A request can carry a body: a GET_PARAMETER may name the parameters it
+// wants. Left unread, the body would be parsed as the next request, and the
+// connection dropped.
+func TestRequestBodyIsSkipped(t *testing.T) {
+	raw := "GET_PARAMETER rtsp://127.0.0.1:8554/cam RTSP/1.0\r\nCSeq: 7\r\nContent-Type: text/parameters\r\ncontent-length: 10\r\n\r\nposition\r\n" +
+		"OPTIONS rtsp://127.0.0.1:8554/cam RTSP/1.0\r\nCSeq: 8\r\n\r\n"
+	reader := bufio.NewReader(strings.NewReader(raw))
+	server := &RTSPServer{}
+
+	for _, want := range []struct {
+		method string
+		cseq   int
+	}{{"GET_PARAMETER", 7}, {"OPTIONS", 8}} {
+		request, err := server.parseRTSPRequestFromReader(reader)
+		if err != nil {
+			t.Fatalf("parse %s: %v", want.method, err)
+		}
+		if request.Method != want.method || request.CSeq != want.cseq {
+			t.Fatalf("got %s CSeq %d, want %s CSeq %d", request.Method, request.CSeq, want.method, want.cseq)
+		}
+	}
+}
+
+// A Content-Length the bridge cannot skip safely ends the connection.
+func TestUnusableContentLengthIsRefused(t *testing.T) {
+	for _, length := range []string{"-1", "ten", strconv.Itoa(maxRequestBody + 1)} {
+		raw := "GET_PARAMETER rtsp://127.0.0.1:8554/cam RTSP/1.0\r\nCSeq: 7\r\nContent-Length: " + length + "\r\n\r\n"
+		if _, err := (&RTSPServer{}).parseRTSPRequestFromReader(bufio.NewReader(strings.NewReader(raw))); err == nil {
+			t.Errorf("Content-Length %s was accepted", length)
 		}
 	}
 }
