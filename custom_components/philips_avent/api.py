@@ -249,6 +249,45 @@ class PhilipsAventAPI:
             post_data={"devId": dev_id},
         )
 
+    # -- Lullaby audio (see audio.py) --------------------------------------
+
+    async def get_audio_catalogue(self, dev_id: str, code: str) -> dict:
+        """The camera's lullabies: presets and custom recordings, with ids."""
+        return await self._call(
+            "tuya.m.audio.by.code.get", post_data={"devId": dev_id, "code": code}
+        )
+
+    async def get_audio_upload_slot(self, dev_id: str, code: str) -> dict:
+        """A signed storage URL plus the key the file must be encrypted with."""
+        return await self._call(
+            "thing.m.audio.upload.url.get", post_data={"devId": dev_id, "code": code}
+        )
+
+    async def register_audio(
+        self, dev_id: str, code: str, *, name: str, duration_ms: int, size: int,
+        key: str, bucket: str, path: str,
+    ) -> int:
+        """Add an uploaded file to the camera's recordings; returns its id."""
+        return await self._call(
+            "thing.m.audio.by.code.info.upload",
+            post_data={
+                "devId": dev_id, "code": code, "name": name, "duration": duration_ms,
+                "size": size, "key": key, "bucket": bucket, "path": path,
+            },
+        )
+
+    async def delete_audio(self, dev_id: str, code: str, audio_id: int) -> Any:
+        return await self._call(
+            "tuya.m.audio.by.code.id.delete",
+            post_data={"devId": dev_id, "code": code, "id": audio_id},
+        )
+
+    async def put_file(self, url: str, data: bytes, headers: dict[str, str]) -> None:
+        """PUT a file to a signed storage URL, raising on anything but 2xx."""
+        async with self._session.put(url, data=data, headers=headers) as resp:
+            if resp.status >= 300:
+                raise TuyaAPIError(f"HTTP_{resp.status}", (await resp.text())[:200])
+
     async def get_rtc_config(self, dev_id: str) -> dict:
         return await self._call(
             "smartlife.m.rtc.config.get", post_data={"devId": dev_id}

@@ -10,16 +10,19 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import audio
 from .const import (
     DOMAIN,
     DPS_LIGHT_TIMER,
     DPS_LIGHT_TIMER_SWITCH,
     DPS_LULLABY_CONTROL,
+    DPS_LULLABY_CURRENT,
     DPS_LULLABY_MODE,
+    DPS_LULLABY_PLAY,
     DPS_LULLABY_TIMER,
     DPS_LULLABY_TIMER_SWITCH,
+    LULLABY_BIZ_CODE,
     LULLABY_TRACK_MAP,
-    LULLABY_TRACKS,
     TIMER_OPTIONS,
     TIMER_SECONDS_TO_LABEL,
     lullaby_report_id,
@@ -41,6 +44,7 @@ async def async_setup_entry(
     entities = []
     for cam_id, coordinator in data["coordinators"].items():
         entities.append(AventLullabySelect(coordinator, cam_id))
+        entities.append(AventRecordingSelect(coordinator, cam_id))
         entities.append(AventPlayModeSelect(coordinator, cam_id))
         entities.append(AventTimerSelect(
             coordinator, cam_id,
@@ -56,15 +60,22 @@ async def async_setup_entry(
 
 
 class AventLullabySelect(CoordinatorEntity, SelectEntity):
+    """Lullaby picker: the 15 presets.
+
+    Ids come from the camera's own catalogue when the cloud has handed it over,
+    so presets play on any id block. Until then the built-in blocks are guessed
+    from DPS 248, as before.
+    """
+
     _attr_has_entity_name = True
     _attr_translation_key = "lullaby_track"
     _attr_icon = "mdi:music-note"
-    _attr_options = LULLABY_TRACKS
+    _preset = True
 
     def __init__(self, coordinator: PhilipsAventCoordinator, cam_id: str):
         super().__init__(coordinator)
         self._cam_id = cam_id
-        self._attr_unique_id = f"{cam_id}_lullaby_track"
+        self._attr_unique_id = f"{cam_id}_{self._attr_translation_key}"
         self._attr_device_info = build_device_info(coordinator, cam_id)
 
     def _current_track_id(self) -> int | None:
@@ -73,11 +84,17 @@ class AventLullabySelect(CoordinatorEntity, SelectEntity):
 
     @property
     def current_option(self) -> str | None:
-        track = LULLABY_TRACK_MAP.get(self._current_track_id())
+        track_id = self._current_track_id()
+        label = audio.track_labels(self.coordinator.catalogue or []).get(track_id)
+        if label:
+            return label if label in self.options else None
+        track = LULLABY_TRACK_MAP.get(track_id) if self._preset else None
         return track[0] if track else None
 
     async def async_select_option(self, option: str) -> None:
-        track_id = lullaby_track_id(option, self._current_track_id())
+        track_id = audio.track_id_for(option, self.coordinator.catalogue)
+        if track_id is None:
+            track_id = lullaby_track_id(option, self._current_track_id())
         if track_id is None:
             return
         # The monitor echoes the chosen track in DPS 248, not in the 202 written.

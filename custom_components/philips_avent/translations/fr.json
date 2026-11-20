@@ -179,6 +179,9 @@
       "lullaby_track": {
         "name": "Berceuse"
       },
+      "lullaby_recording": {
+        "name": "Enregistrement"
+      },
       "play_mode": {
         "name": "Mode de lecture"
       },
