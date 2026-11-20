@@ -217,7 +217,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             except Exception:  # noqa: BLE001 - setup continues even if the backfill fails
                 _LOGGER.warning(
                     "Could not backfill productId from Tuya API; SCD951 cameras may fail "
-                    "to stream until HA restarts or the integration is reconfigured"
+                    "to stream until Home Assistant restarts or the integration is reloaded"
                 )
     else:
         # Fallback: re-discover via API
@@ -228,7 +228,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             cameras = []
 
     if not cameras:
-        _LOGGER.error("No cameras found. Reconfigure the integration to re-discover.")
+        # The integration has no reconfigure step: a reload runs the discovery
+        # above again, since the entry stores no cameras.
+        _LOGGER.error(
+            "No cameras found in this account. Reload the integration to search again; "
+            "with debug logging on, the log shows what each discovery step returned."
+        )
         await session.close()
         return False
 
