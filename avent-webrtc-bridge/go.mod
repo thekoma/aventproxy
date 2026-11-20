@@ -15,12 +15,13 @@ require (
 	github.com/pion/webrtc/v4 v4.2.27
 	github.com/rs/zerolog v1.35.1
 	github.com/spf13/cobra v1.10.2
-	github.com/xtaci/kcp-go/v5 v5.7.5
+	github.com/xtaci/kcp-go/v5 v5.7.7
 	golang.org/x/net v0.63.0
 	golang.org/x/term v0.48.0
 )
 
 require (
+	github.com/emmansun/gmsm v0.45.3 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/juju/ratelimit v1.0.2 // indirect
