@@ -16,7 +16,7 @@ require (
 	github.com/rs/zerolog v1.35.1
 	github.com/spf13/cobra v1.10.2
 	github.com/xtaci/kcp-go/v5 v5.7.5
-	golang.org/x/net v0.62.0
+	golang.org/x/net v0.63.0
 	golang.org/x/term v0.48.0
 )
 
@@ -41,7 +41,7 @@ require (
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/tjfoc/gmsm v1.4.1 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
-	golang.org/x/crypto v0.58.0 // indirect
+	golang.org/x/crypto v0.59.0 // indirect
 	golang.org/x/sync v0.17.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
