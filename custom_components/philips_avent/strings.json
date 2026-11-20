@@ -60,12 +60,14 @@
         "data": {
           "bridge_host": "Bridge host",
           "bridge_port": "Bridge RTSP port",
-          "talkback": "Two-way audio (talkback)"
+          "talkback": "Two-way audio (talkback)",
+          "lan_streaming": "LAN streaming"
         },
         "data_description": {
           "bridge_host": "Where Home Assistant can reach the WebRTC bridge. Leave it as localhost when you use the add-on; set the container name or IP address if you run the bridge yourself, elsewhere.",
           "bridge_port": "Port the WebRTC bridge listens on (default: 38554)",
-          "talkback": "Leave this off unless a client of yours actually talks back through the stream. Asking the camera for two-way audio makes the monitor stop a playing lullaby and restart it from the beginning when you close the stream."
+          "talkback": "Turn this on to talk to the room, from Home Assistant 2026.11 (Labs preview, HTTPS and WebRTC) or another client that sends audio on the stream. With the bridge's Dev card the monitor is asked for two-way audio only while someone talks; elsewhere every stream asks for it, which makes the monitor stop a playing lullaby and restart it from the beginning when you close the stream.",
+          "lan_streaming": "Stream over the local network when the monitor allows it. Turn it off if your stream stopped working after updating."
         }
       }
     }
@@ -95,7 +97,9 @@
         "state": {
           "awake": "Awake",
           "light": "Light sleep",
-          "deep": "Deep sleep"
+          "deep": "Deep sleep",
+          "out": "Out of bed",
+          "settling": "Settling"
         }
       },
       "device_errors": {
@@ -129,6 +133,9 @@
       },
       "baby_detected": {
         "name": "Baby Detected"
+      },
+      "baby_moving": {
+        "name": "Baby Moving"
       },
       "crying_detected": {
         "name": "Crying Detected"
@@ -209,39 +216,21 @@
     }
   },
   "services": {
-    "upload_lullaby": {
-      "name": "Upload lullaby",
-      "description": "Stores an audio file as one of the camera's two custom lullabies, the slots the Philips app fills by recording. It then appears in the lullaby select.",
+    "get_sleep_history": {
+      "name": "Get sleep history",
+      "description": "The SenseIQ daily summary for every day of a range, each session with its stage timeline.",
       "fields": {
         "device_id": {
-          "name": "Camera",
-          "description": "The baby monitor to upload to."
+          "name": "Monitor",
+          "description": "The Philips Avent monitor with SenseIQ."
         },
-        "file": {
-          "name": "File",
-          "description": "Absolute path of an audio file Home Assistant may read, such as one under /media. Any format ffmpeg reads."
+        "start_date": {
+          "name": "Start date",
+          "description": "First day, included."
         },
-        "name": {
-          "name": "Name",
-          "description": "Name shown in the lullaby select. Defaults to the file name."
-        },
-        "max_duration": {
-          "name": "Maximum duration",
-          "description": "Longer audio is cut at this point. The app records at most 90 seconds; longer recordings are untested."
-        }
-      }
-    },
-    "delete_lullaby": {
-      "name": "Delete lullaby",
-      "description": "Deletes one of the camera's custom lullabies to free its slot. Presets cannot be deleted.",
-      "fields": {
-        "device_id": {
-          "name": "Camera",
-          "description": "The baby monitor holding the recording."
-        },
-        "recording": {
-          "name": "Recording",
-          "description": "Name of the recording as the lullaby select shows it, or its id."
+        "end_date": {
+          "name": "End date",
+          "description": "Last day, included. Today when left out."
         }
       }
     }

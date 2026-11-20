@@ -151,7 +151,6 @@ jobs:
           context: aventproxy-bridge-addon
           push: true
           platforms: ${{ matrix.platform }}
-          build-args: BUILD_FROM=debian:bookworm-slim
           tags: ${{ env.IMAGE }}:${{ needs.version.outputs.version }}-${{ matrix.suffix }}
 
   manifest:

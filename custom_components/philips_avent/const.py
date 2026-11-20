@@ -1,6 +1,8 @@
 """Constants for the Philips Avent Baby Monitor integration."""
 from __future__ import annotations
 
+import json
+
 DOMAIN = "philips_avent"
 
 # Tuya Mobile SDK credentials (static per APK version)
@@ -69,18 +71,21 @@ DPS_PRIVACY_MODE = "237"
 DPS_POWER_STATUS = "205"
 DPS_FLIP = "102"
 DPS_APP_TALKING = "253"
-# Alert delivery differs by family and by negotiated LAN protocol version. A
+# Alert delivery differs by firmware and by negotiated LAN protocol version. A
 # decrypted capture (#51) found none of these three in the LAN DP_QUERY set, and
-# on a 3.3 session none of them ever arrived as a push. On 3.5, DPS 212 does
+# on a 3.3 session none of them ever arrived as a push. From 3.4 up DPS 212 does
 # arrive: an SCD951 owner measured a motion record pushed with the sensor firing
-# 1.3 seconds later, where the poll took 35 (#61). Sound on that same monitor
-# still came through the poll, so coordinator.py keeps the fast poll for monitors
-# reporting alarms in 212 rather than counting on the push.
+# 1.3 seconds later, where the poll took 35 (#61), and an SCD973/26 pushed motion
+# and sound records within 2.4 seconds (fork 619981b). coordinator.py therefore
+# pauses the cloud poll behind a 3.4+ session once the monitor has reported in
+# 212, and otherwise keeps the fast poll for monitors reporting alarms in 212.
 DPS_ALERT_EVENT = "250"
 DPS_DECIBEL_EVENT = "141"
-# Alarm record with the snapshot the camera uploaded. The SCD951 and SCD953
-# family reports motion here instead of on DPS 250 (issues #61, #42); see
-# events.py for the payload. One slot holding the newest alarm, not a queue.
+# Alarm record with the snapshot the camera uploaded. The SCD951 and SCD953 on
+# issues #61 and #42 report alerts here instead of on DPS 250, and so did an
+# SCD973/26 in the fork, with 250 and 141 empty throughout: the key follows the
+# firmware, not the model, so both are read on every monitor. See events.py for
+# the payload. One slot holding the newest alarm, not a queue.
 DPS_ALARM_RECORD = "212"
 DPS_SENSEIQ_STATUS = "3"
 DPS_SLEEP_SESSION = "4"
@@ -114,9 +119,11 @@ LULLABY_CATALOGUE = (
 )
 # First id of each block the catalogue is published under. Units of the same
 # product (kzm54lhabeeucq5a) report different blocks: the original SCD973 uses
-# 3542154-3542168, a unit on firmware 1.1.12 uses 12072916-12072930 (issue #91).
+# 3542154-3542168, a unit on firmware 1.1.12 uses 12072916-12072930 (issue #91),
+# an SCD923 on firmware 1.4.0 uses 3219038-3219052 (issue #93), an SCD953P on
+# firmware 2.4.1 uses 12552458-12552472 (PR #116).
 # A camera ignores DPS 202 with an id outside its own block and keeps playing.
-LULLABY_BLOCK_STARTS = (3542154, 12072916)
+LULLABY_BLOCK_STARTS = (3542154, 12072916, 3219038, 12552458)
 LULLABY_TRACK_MAP = {
     start + index: track
     for start in LULLABY_BLOCK_STARTS
@@ -159,6 +166,36 @@ DEFAULT_BRIDGE_HOST = "localhost"
 # (issue #72), so listening must not imply talking.
 CONF_TALKBACK = "talkback"
 DEFAULT_TALKBACK = False
+CONF_LAN_STREAMING = "lan_streaming"
+DEFAULT_LAN_STREAMING = True
+
+
+def lullaby_report_id(raw: object) -> int | None:
+    """The track id in a DPS 248 report, or None when there is none.
+
+    Most units report the record as JSON. The SCD953P on firmware 2.4.1 escapes
+    its quotes (`{\\"id\\":12552458}`), which is not valid JSON until they are
+    unescaped, and a record encoded twice decodes to a string first (PR #116).
+    """
+    report = raw
+    if isinstance(report, str):
+        try:
+            report = json.loads(report)
+        except ValueError:
+            try:
+                report = json.loads(report.replace('\\"', '"'))
+            except ValueError:
+                return None
+    if isinstance(report, str):
+        try:
+            report = json.loads(report)
+        except ValueError:
+            return None
+    if not isinstance(report, dict):
+        return None
+    track_id = report.get("id")
+    # bool is an int subclass, and a float id never matches a block.
+    return track_id if type(track_id) is int else None
 
 
 def lullaby_track_id(name: str, current_id: int | None) -> int | None:

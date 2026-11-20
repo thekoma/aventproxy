@@ -3,6 +3,60 @@
 This is the beta card: it follows release candidates of the integration.
 Stay on the stable card unless you are testing an rc.
 
+## 2026.11.0-rc4
+
+The bridge image now runs on Debian 13 (trixie) instead of Debian 12 (bookworm), which security scanners flagged for packages the bridge never uses (Daniel Jansen, [#124](https://github.com/thekoma/aventproxy/pull/124)). Nothing else changed since rc3, in the bridge or in the integration.
+
+## 2026.11.0-rc3
+
+Only the bridge changed since rc2.
+
+**Fix:** with **Two-way audio (talkback)** on, each still image of the camera opened a two-way session for 3 seconds, and a playing lullaby paused. Home Assistant takes a still image with ffmpeg, which sends an empty packet to every track of the stream, the return audio included, and the bridge took it for a voice. Empty packets are now ignored. rc2 and 2026.11.0-dev5 have the same problem. The bridge log showed it as a talk that sent nothing: `Stopped talking to <camera> (the audio stopped) after 3s: 0 packets sent, 1 dropped`.
+
+## 2026.11.0-rc2
+
+Update the integration and this card together, as with rc1.
+
+**Talk from Home Assistant 2026.11 (experimental).** With **Two-way audio (talkback)** on in the integration, the camera tells Home Assistant 2026.11 that it takes audio, and the camera dialog shows a microphone once the two-way audio preview is on under Settings → System → Labs. It needs HTTPS and a WebRTC stream; an older Home Assistant ignores it.
+- New option `talkback_mode`, `on_demand` by default. The stream stays one-way, so imm and the LAN stay in use and a playing lullaby keeps playing. While audio arrives on the RTSP backchannel (Home Assistant sends it only while its microphone is on), the bridge opens a second, two-way session and closes it 3 seconds after the audio stops. The lullaby pauses while that session is open, and the first second or two of a talk are lost while it opens.
+- `session` is the rc1 behaviour, where every stream asks the monitor for two-way audio.
+- The talk audio now reaches the monitor as 16 kHz PCM, the format it plays. G.711 came out as hissing on an SCD923/26 and an SCD951/26 (Luuk Visser, [#111](https://github.com/thekoma/aventproxy/pull/111)). Not yet tried on an SCD973.
+- The log says `Talking to <camera>: the two-way session took …` and `Stopped talking to <camera> …`. Please post those lines on [#72](https://github.com/thekoma/aventproxy/issues/72), and say whether your voice came through and whether the lullaby carried on afterwards.
+
+**Fixes**
+- Video packets that Wi-Fi delivers out of order are put back in order before they reach the viewers, which removes a smeared, green lower half of the picture until the next keyframe (Wessel Blokzijl, [#112](https://github.com/thekoma/aventproxy/pull/112)).
+- SCD953P on firmware 2.4.1: picking a lullaby plays it, and the track select shows the track that plays (czaja, [#116](https://github.com/thekoma/aventproxy/pull/116)).
+- SCD971/26: the SenseIQ nightly summary shows light, deep and awake time instead of zeros (Kenny, [#108](https://github.com/thekoma/aventproxy/pull/108)).
+- On a monitor on protocol 3.4, Motion Alert and Sound Alert are independent again. rc1 paired them from 3.4 up, but only a 3.5 monitor runs one detector at a time ([#110](https://github.com/thekoma/aventproxy/issues/110)).
+
+**New action `philips_avent.get_sleep_history`** (Kenny, [#109](https://github.com/thekoma/aventproxy/pull/109)). It returns the SenseIQ daily summary for a range of days, each session with its stage timeline. The cloud keeps about 30 days, so an older start date is moved up to 29 days ago.
+
+`cloud_transport: imm` has now kept the lullaby playing on an SCD953P too ([#72](https://github.com/thekoma/aventproxy/issues/72)). It stays opt-in for this rc.
+
+## 2026.11.0-rc1
+
+Update the integration and this card together. Part of what follows is in each, and the bridge streams over the LAN only with the protocol version that this integration writes into its config.
+
+**Local streaming ([#51](https://github.com/thekoma/aventproxy/issues/51)).** Ported from Leonard Pitzu's fork, with his measurements. On monitors that speak Tuya LAN protocol 3.5, the bridge negotiates the stream with the monitor over your network and uses cloud signalling only when that fails. Each failure in a row doubles how long it waits before trying the LAN again, up to an hour. Monitors on 3.3, such as an SCD973 on firmware 1.4.0, stay on cloud signalling, and the video of such a stream usually travels over your LAN already. The integration option **LAN streaming**, on by default, turns it off. The bridge log says `Streaming <camera> with LAN signalling` or `Not using LAN signalling for <camera>: protocol 3.3`.
+
+**New option `cloud_transport` ([#72](https://github.com/thekoma/aventproxy/issues/72), [#59](https://github.com/thekoma/aventproxy/issues/59)), experimental.** `webrtc`, the default, changes nothing. With `imm`, a stream that does not take the LAN first tries the Philips app's own transport over cloud signalling, and falls back to webrtc when that fails. On an SCD973 on firmware 1.4.0 (protocol 3.3) it came up in under a second and a playing lullaby kept playing. With webrtc, the same monitor flags the session as the app talking and stops the lullaby until the stream closes. It needs the monitor on your local network. The log says `Streaming <camera> with imm over cloud signalling`, or one warning names the step that failed and that camera skips imm for 5 minutes. A start can take up to 16 seconds before the fallback, 20 when a LAN attempt runs first. Please report on #72, with your monitor model and firmware.
+
+**Alerts on protocol 3.4 and newer.** The integration keeps a LAN session with the monitor and gets motion and sound alarms pushed within seconds, and commands stay local. Turning Motion Alert on turns Sound Alert off, because the monitor runs one detector at a time. None of this has been tested here on a 3.4 or 3.5 monitor.
+
+**Fixes**
+- RTSP viewers no longer stall at DESCRIBE while their camera's stream starts ([#89](https://github.com/thekoma/aventproxy/issues/89), [#97](https://github.com/thekoma/aventproxy/issues/97)).
+- With two or more cameras, one MQTT connection serves all of them. Each camera's start used to cut the other's off.
+- A cloud session that carries no media for 20 s is replaced, with the warning `Cloud session for <camera> is up but carried no media in 20s`. A session that carries only audio, as in privacy mode, is kept.
+- Viewers keep the picture when a cloud retry replaces the session, a viewer that stops reading for 5 s is dropped instead of freezing the others, RTSP over UDP works from another machine, and audio is timed by its samples, which may stop crackle.
+- A start that times out says what it waited for, on the `Failed to start WebRTC bridge` line.
+- On 3.3, LAN pushes no longer delay the cloud poll, and with it the motion and sound alerts.
+- A lullaby next or previous no longer skips tracks when the monitor answers slowly.
+- While the integration's LAN session is up, a cloud outage leaves the entities available, and a re-paired monitor is picked up without restarting Home Assistant.
+- New Baby Moving sensor. Sleep stage knows Out of bed and Settling.
+- A temporary bridge config that a crash left in `/config` is removed.
+
+If something broke, turn off **LAN streaming** and set `cloud_transport` back to `webrtc`, then open an issue with your monitor model, firmware, the integration diagnostics and the bridge log.
+
 ## 2026.10.1-rc3
 
 The bridge is unchanged from rc1. In the integration, Baby Detected no longer

@@ -1,6 +1,7 @@
 """Philips Avent Baby Monitor integration for Home Assistant."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 
@@ -18,10 +19,13 @@ from .const import (
     CONF_COUNTRY_CODE,
     CONF_DEVICE_ID,
     CONF_ECODE,
+    CONF_LAN_STREAMING,
     CONF_PARTNER,
     CONF_SID,
     CONF_TALKBACK,
+    CONF_UID,
     DEFAULT_BRIDGE_PORT,
+    DEFAULT_LAN_STREAMING,
     DEFAULT_TALKBACK,
     DOMAIN,
     TUYA_APP_KEY,
@@ -30,16 +34,18 @@ from .const import (
     TUYA_SIGNING_KEY,
 )
 from .coordinator import PhilipsAventCoordinator
+from .lan_credentials import fetch_missing_passwords, fetch_p2p_passwords, lan_credentials
 from .payload import (
     BRIDGE_CONFIG_PREFIX,
     bridge_config_filename,
     build_bridge_config,
     orphan_bridge_configs,
+    previous_lan_values,
     strip_stored_password,
     write_bridge_config_file,
 )
 from .region import DEFAULT_DATA_CENTER, api_host, api_url_for_host
-from .services import async_register_services
+from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -64,7 +70,9 @@ def _entry_api_host(entry: ConfigEntry) -> str:
     return entry.data.get(CONF_API_HOST) or api_host(DEFAULT_DATA_CENTER)
 
 
-async def _write_bridge_config(hass: HomeAssistant, entry: ConfigEntry, api: PhilipsAventAPI, cameras: list) -> None:
+async def _write_bridge_config(
+    hass: HomeAssistant, entry: ConfigEntry, api: PhilipsAventAPI, cameras: list, lan: dict
+) -> None:
     """Write bridge config JSON for the add-on."""
     bridge_port = entry.options.get(CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT)
     bridge_config = build_bridge_config(
@@ -77,6 +85,9 @@ async def _write_bridge_config(hass: HomeAssistant, entry: ConfigEntry, api: Phi
         package_name=TUYA_PACKAGE_NAME,
         api_host=_entry_api_host(entry),
         talkback=entry.options.get(CONF_TALKBACK, DEFAULT_TALKBACK),
+        uid=entry.data.get(CONF_UID, ""),
+        lan_streaming=entry.options.get(CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING),
+        lan=lan,
         bridge_port=bridge_port,
         cameras=cameras,
     )
@@ -216,7 +227,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             except Exception:  # noqa: BLE001 - setup continues even if the backfill fails
                 _LOGGER.warning(
                     "Could not backfill productId from Tuya API; SCD951 cameras may fail "
-                    "to stream until HA restarts or the integration is reconfigured"
+                    "to stream until Home Assistant restarts or the integration is reloaded"
                 )
     else:
         # Fallback: re-discover via API
@@ -227,37 +238,95 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             cameras = []
 
     if not cameras:
-        _LOGGER.error("No cameras found. Reconfigure the integration to re-discover.")
+        # The integration has no reconfigure step: a reload runs the discovery
+        # above again, since the entry stores no cameras.
+        _LOGGER.error(
+            "No cameras found in this account. Reload the integration to search again; "
+            "with debug logging on, the log shows what each discovery step returned."
+        )
         await session.close()
         return False
 
-    coordinators = {}
-    for cam in cameras:
-        cam_id = cam.get("deviceId") or cam.get("devId")
-        cam_name = cam.get("deviceName") or cam.get("name", cam_id)
-        local_key = cam.get("localKey")
+    bridge_path = Path(hass.config.path(bridge_config_filename(entry.entry_id)))
 
-        coordinator = PhilipsAventCoordinator(hass, api, cam_id, cam_name, local_key=local_key)
-        await coordinator.async_config_entry_first_refresh()
+    def _read_previous() -> str:
+        # Unreadable or undecodable both mean no seed. Raising here would fail
+        # setup before the try below, leaking the aiohttp session.
+        try:
+            return bridge_path.read_text()
+        except (OSError, ValueError):
+            return ""
 
-        if not local_key:
-            local_key = coordinator.device_info.get("localKey")
-            if local_key:
-                coordinator._local_key = local_key
+    previous = previous_lan_values(await hass.async_add_executor_job(_read_previous))
 
-        await coordinator.start_lan()
-        coordinators[cam_id] = coordinator
-
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
+    coordinators: dict = {}
+    passwords: dict[str, str] = {}
+    write_lock = asyncio.Lock()
+    data: dict = {
         "api": api,
         "session": session,
         "coordinators": coordinators,
         "config": entry.data,
     }
+    ready = False
 
-    await _write_bridge_config(hass, entry, api, cameras)
+    def _live() -> bool:
+        # False once setup failed or the entry unloaded: hass.data no longer holds this setup's data.
+        return ready and hass.data.get(DOMAIN, {}).get(entry.entry_id) is data
+
+    async def _rewrite_bridge_config(*, refetch: bool = True) -> None:
+        # One writer at a time. Its only cloud call, for a P2P password the setup
+        # could not fetch, is bounded, so a rewrite during an outage still writes.
+        if refetch and _live() and entry.options.get(CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING):
+            passwords.update(await fetch_missing_passwords(api, list(coordinators), passwords))
+        async with write_lock:
+            # A rewrite queued during the setup write can get the lock only after
+            # that setup failed, and must not write for an entry that is gone.
+            if not _live():
+                return
+            lan = lan_credentials(coordinators, passwords)
+            await _write_bridge_config(hass, entry, api, cameras, lan)
+
+    def _on_address_change(_ip: str) -> None:
+        # On the event loop. Before `ready` it is dropped: the setup write reads every address.
+        # After an unload the entry data is gone, and unload cancels a task already queued.
+        if _live():
+            entry.async_create_background_task(hass, _rewrite_bridge_config(), "philips_avent_bridge_config")
+
+    try:
+        for cam in cameras:
+            cam_id = cam.get("deviceId") or cam.get("devId")
+            cam_name = cam.get("deviceName") or cam.get("name", cam_id)
+            local_key = cam.get("localKey")
+
+            coordinator = PhilipsAventCoordinator(hass, api, cam_id, cam_name, local_key=local_key)
+            await coordinator.async_config_entry_first_refresh()
+
+            coordinators[cam_id] = coordinator
+            seed = previous.get(cam_id, {})
+            await coordinator.start_lan(_on_address_change, seed.get("lan_ip") or None, seed.get("lan_protocol", ""))
+
+        # With LAN streaming off the bridge file carries no P2P password, so there is nothing to fetch.
+        if entry.options.get(CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING):
+            passwords.update(
+                await fetch_p2p_passwords(
+                    api, list(coordinators), {k: v["p2p_password"] for k, v in previous.items()}
+                )
+            )
+        hass.data.setdefault(DOMAIN, {})[entry.entry_id] = data
+        ready = True
+        # The passwords were fetched just above; asking again here would only repeat a failure.
+        await _rewrite_bridge_config(refetch=False)
+    except BaseException:
+        ready = False
+        hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+        for coordinator in coordinators.values():
+            await coordinator.stop_lan()
+        await session.close()
+        raise
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    await async_setup_services(hass)
 
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
 

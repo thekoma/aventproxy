@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -45,9 +46,29 @@ type RTSPServer struct {
 	MobileClient   *tuya.MobileSDKClient
 	mqttManager    *MQTTManager
 
-	// Talkback asks the camera for two-way audio on every stream. Off by
-	// default; see WebRTCBridge.Talkback and issue #72.
+	// Talkback lets RTSP clients talk to the camera. Off by default; see
+	// WebRTCBridge.Talkback and issue #72.
 	Talkback bool
+
+	// TalkbackMode is how Talkback reaches the camera: TalkbackSession (the
+	// default, "" too) makes every camera session two-way, TalkbackOnDemand
+	// opens a two-way session only while a client talks (see talker).
+	TalkbackMode string
+
+	// SpeakerOff asks the monitor to keep its speaker closed on every cloud
+	// session without talkback; see WebRTCBridge.SpeakerOff. Off by default
+	// until a tester confirms it (issue #72): only the Dev card turns it on.
+	SpeakerOff bool
+
+	// WebRTCAudio is the audio cloud offers ask for: WebRTCAudioRecvonly (the
+	// default) or WebRTCAudioNone. RTSP clients see the same description
+	// either way.
+	WebRTCAudio string
+
+	// CloudTransport is CloudTransportWebRTC (the default, "" too) or
+	// CloudTransportIMM, which tries an imm session over cloud signalling
+	// before the webrtc one (experimental, Dev card only; see tryIMM).
+	CloudTransport string
 
 	// BindAddress limits the interfaces the RTSP server listens on. The server
 	// has no authentication, so anyone who can reach the port can watch the
@@ -58,6 +79,23 @@ type RTSPServer struct {
 	//   - "0.0.0.0" or "::": all interfaces, on purpose.
 	// Set it before Start.
 	BindAddress string
+
+	// LAN streaming: tried first for eligible streams (see lanEligible). Set
+	// before Start, read-only after. LANTargets is keyed by device id.
+	LanStreaming bool
+	UID          string
+	LANTargets   map[string]LANTarget
+
+	cooldownMutex sync.Mutex
+	lanCooldowns  map[string]time.Time // device id -> end of its LAN cool-down
+	lanFailures   map[string]int       // device id -> LAN failures in a row; made on first use
+	immCooldowns  map[string]time.Time // device id -> end of its imm cool-down; made on first use
+
+	// newStream, if set, prepares every stream getOrCreateStream creates,
+	// before any client can reach it (tests only).
+	newStream func(*CameraStream)
+	// beforeJoin, if set, runs at the start of every joinStream (tests only).
+	beforeJoin func(*RTSPClient)
 }
 
 // describeBind is the human-readable form of BindAddress for the log.
@@ -133,6 +171,10 @@ type RTSPClient struct {
 	backAudioRTPChannel  byte
 	backAudioRTCPChannel byte
 	setupCount           int
+
+	// attached is closed once the client has joined its stream, or was
+	// refused (see joinStream). Nil for a client that never joins one.
+	attached chan struct{}
 }
 
 type CameraStream struct {
@@ -140,17 +182,38 @@ type CameraStream struct {
 	resolution   string
 	user         *storage.UserSession
 	webrtcBridge *WebRTCBridge
+	// forwarder is where RTSP clients attach. It is the stream's, not the
+	// bridge's, so clients stay attached when a retry or a restart replaces
+	// the bridge, and SETUP can reach it without the lock: it never changes.
+	forwarder    *RTPForwarder
 	clients      map[string]*RTSPClient
 	mutex        sync.RWMutex
-	connecting   bool
-	active       bool
 	lastActivity time.Time
+
+	// The state flags change under mutex (pending also under the server's
+	// mutex) and are atomic so the server can read them without waiting for
+	// a stream lock that a whole connect can hold.
+	connecting atomic.Bool
+	active     atomic.Bool
+	// pending counts the clients getOrCreateStream handed this stream whose
+	// AddClient has not run yet. A count, not a flag: one client arriving
+	// must not hide another that is still on its way.
+	pending atomic.Int32
+
+	// stops counts the stops that dropped the forwarder's clients (written
+	// under mutex). A client compares it across its RTSP setup to learn
+	// whether a stop dropped it before it joined; see joinStream.
+	stops atomic.Uint64
+
+	// startGen numbers the stream's starts. A start that waited without the
+	// lock checks it, so it never acts on a newer start's behalf.
+	startGen uint64
 
 	// handlingError prevents re-entrant OnError from PeerConnection.Close during teardown.
 	handlingError bool
 
-	// bridgeStarted records that the current bridge has been started once, so a
-	// restart replaces it instead of reusing a stopped one.
+	// bridgeStarted records that the current bridge has been started or
+	// stopped once, so a restart replaces it instead of reusing a dead one.
 	bridgeStarted bool
 
 	// Delayed shutdown
@@ -163,7 +226,41 @@ type CameraStream struct {
 
 	// startStreamOverride, if set, replaces startStream (tests only).
 	startStreamOverride func()
+
+	lan           lanStreamer                     // the LAN source, from its attempt on; nil on the cloud
+	lanFactory    func(*RTPForwarder) lanStreamer // builds a LAN source feeding that forwarder; callers hold mutex
+	cloudStart    func() error                    // the cloud attempt; callers hold mutex
+	attemptCancel context.CancelFunc              // ends a LAN attempt or probe in flight
+	promoteTimer  *time.Timer                     // moves a cloud stream back to the LAN; see armPromotion
+	mediaTimer    *time.Timer                     // fails a cloud session that carries no media; see armMediaCheck
+	immFactory    func(*RTPForwarder) lanStreamer // builds an imm source; nil means newIMMSource
+	talk          *talker                         // the clients' backchannel audio with TalkbackOnDemand; nil otherwise
 }
+
+// sessionTalkback says whether every camera session is asked for two-way audio.
+func (s *RTSPServer) sessionTalkback() bool {
+	return s != nil && s.Talkback && s.TalkbackMode != TalkbackOnDemand
+}
+
+// talkOnDemand says whether a client's backchannel audio opens a session of its own.
+func (s *RTSPServer) talkOnDemand() bool {
+	return s != nil && s.Talkback && s.TalkbackMode == TalkbackOnDemand
+}
+
+// cloudRetryDelay separates the two cloud attempts of a stream start.
+var cloudRetryDelay = 3 * time.Second
+
+// cloudMediaTimeout bounds how long a cloud session that came up may carry no
+// media at all before it counts as failed (#89): Start returns once ICE
+// connects, or once the HEVC datachannel confirms its codec, which is no
+// proof that anything will follow. A working camera sends its first packet
+// within a second or two.
+//
+// It holds a time.Duration and is atomic because tests shorten it while timers
+// that earlier tests armed may still be running.
+var cloudMediaTimeout atomic.Int64
+
+func init() { cloudMediaTimeout.Store(int64(20 * time.Second)) }
 
 type ServerConfig struct {
 	Port                 int
@@ -181,9 +278,11 @@ func NewRTSPServer(port int, storageManager *storage.StorageManager) *RTSPServer
 		storageManager: storageManager,
 		clients:        make(map[string]*RTSPClient),
 		streams:        make(map[string]*CameraStream),
+		lanCooldowns:   make(map[string]time.Time),
 		ctx:            ctx,
 		cancel:         cancel,
 		running:        false,
+		WebRTCAudio:    WebRTCAudioRecvonly,
 	}
 }
 
@@ -248,9 +347,8 @@ func (s *RTSPServer) Start() error {
 
 func (s *RTSPServer) Stop() error {
 	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
 	if !s.running {
+		s.mutex.Unlock()
 		return errors.New("server is not running")
 	}
 
@@ -270,13 +368,19 @@ func (s *RTSPServer) Stop() error {
 		client.conn.Close()
 	}
 
-	// Stop all streams
+	streams := make([]*CameraStream, 0, len(s.streams))
 	for _, stream := range s.streams {
+		streams = append(streams, stream)
+	}
+	mqttManager := s.mqttManager
+	s.mutex.Unlock()
+
+	// Outside s.mutex: a stream's lock can be held for a whole connect.
+	for _, stream := range streams {
 		stream.Stop()
 	}
-
-	if s.mqttManager != nil {
-		s.mqttManager.Stop()
+	if mqttManager != nil {
+		mqttManager.Stop()
 	}
 
 	return nil
@@ -298,7 +402,7 @@ func (s *RTSPServer) GetStats() ServerStats {
 
 	activeStreams := 0
 	for _, stream := range s.streams {
-		if stream.active {
+		if stream.active.Load() {
 			activeStreams++
 		}
 	}
@@ -320,7 +424,16 @@ type ServerStats struct {
 	TotalStreams int  `json:"totalStreams"`
 }
 
+// Accept errors are retried after a back-off between these bounds, as
+// net/http does, so a failure that persists (no file descriptors left) neither
+// spins the loop nor floods the log.
+const (
+	acceptRetryMin = 5 * time.Millisecond
+	acceptRetryMax = time.Second
+)
+
 func (s *RTSPServer) acceptConnections(listener net.Listener) {
+	var delay time.Duration
 	// running is written under s.mutex by Stop, so it is read through
 	// IsRunning here rather than directly.
 	for s.IsRunning() {
@@ -330,11 +443,19 @@ func (s *RTSPServer) acceptConnections(listener net.Listener) {
 		default:
 			conn, err := listener.Accept()
 			if err != nil {
-				if s.IsRunning() {
-					core.Logger.Error().Err(err).Msg("Error accepting connection")
+				if !s.IsRunning() {
+					continue
+				}
+				core.Logger.Error().Err(err).Msg("Error accepting connection")
+				delay = min(max(2*delay, acceptRetryMin), acceptRetryMax)
+				select {
+				case <-s.ctx.Done():
+					return
+				case <-time.After(delay):
 				}
 				continue
 			}
+			delay = 0
 
 			// Handle connection in goroutine
 			go s.handleConnection(conn)
@@ -350,7 +471,12 @@ func (s *RTSPServer) handleConnection(conn net.Conn) {
 
 	reader := bufio.NewReader(conn)
 
-	// Parse initial RTSP request
+	// Parse initial RTSP request. A client that connects and never sends
+	// one would otherwise hold this goroutine and its socket for good: it is
+	// not in the client map yet, so not even Stop closes it.
+	if err := conn.SetReadDeadline(time.Now().Add(requestReadTimeout)); err != nil {
+		return
+	}
 	request, err := s.parseRTSPRequestFromReader(reader)
 	if err != nil {
 		core.Logger.Error().Err(err).Msg("Error parsing initial RTSP request")
@@ -388,6 +514,7 @@ func (s *RTSPServer) handleConnection(conn net.Conn) {
 		sendRTSPResponse(conn, 500, "Internal Server Error", nil, "Failed to create stream")
 		return
 	}
+	stops := stream.stops.Load()
 
 	// Create RTSP client
 	client := &RTSPClient{
@@ -404,11 +531,15 @@ func (s *RTSPServer) handleConnection(conn net.Conn) {
 		audioRTPChannel:     2,
 		backAudioRTPChannel: 4,
 		setupCount:          0,
+		attached:            make(chan struct{}),
 	}
 
-	// Add client to server and stream
+	// The client joins its stream on the side, because the stream's lock is
+	// held for a whole cloud attempt, and none of the RTSP answers needs it:
+	// joining first made every client after the first wait for the attempt,
+	// so a camera that never answered stalled them all at DESCRIBE (#89, #97).
 	s.addClient(client)
-	stream.AddClient(client)
+	go s.joinStream(client, stops)
 
 	// Handle initial request
 	s.handleRTSPMethod(client, request)
@@ -450,29 +581,28 @@ func (s *RTSPServer) getOrCreateStream(camera *storage.CameraInfo, streamResolut
 	// Check if stream already exists
 	streamId := fmt.Sprintf("%s-%s", camera.DeviceID, streamResolution)
 	if stream, exists := s.streams[streamId]; exists {
-		if stream.active || stream.connecting {
+		if stream.inUse() {
 			core.Logger.Trace().Msgf("Reusing existing stream for camera: %s", camera.DeviceName)
-			stream.lastActivity = time.Now()
+			// Pending until the client's AddClient, so a stop that lands
+			// first cannot drop the stream from the map under it.
+			stream.pending.Add(1)
 			return stream, nil
 		}
 	}
 
-	// Create new stream
+	// Create new stream. The cloud attempt connects MQTT (startCloud), so a
+	// stream exists while the cloud is down and s.mutex never waits on it.
 	stream := NewCameraStream(camera, streamResolution, user, s.storageManager, s)
 
-	// Setup bridge dependencies
 	if s.MobileClient != nil {
 		stream.webrtcBridge.SetMobileClient(s.MobileClient)
 	}
-	if s.mqttManager != nil {
-		mqttClient, err := s.mqttManager.GetClient(camera.DeviceID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get MQTT client: %v", err)
-		}
-		stream.webrtcBridge.SetMQTTClient(mqttClient)
-	}
 
 	stream.attachBridgeErrorHandler()
+	stream.pending.Add(1)
+	if s.newStream != nil {
+		s.newStream(stream)
+	}
 
 	s.streams[streamId] = stream
 
@@ -490,6 +620,11 @@ func (s *RTSPServer) removeStream(stream *CameraStream) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
+	// A stream that restarted, or that getOrCreateStream just handed to a
+	// client, stays: dropping it would leave it running outside the map.
+	if stream.inUse() {
+		return
+	}
 	if existing, exists := s.streams[stream.streamId]; exists && existing == stream {
 		delete(s.streams, stream.streamId)
 		core.Logger.Trace().Msgf("Removed stream %s from server map", stream.streamId)
@@ -502,18 +637,42 @@ func (s *RTSPServer) addClient(client *RTSPClient) {
 	s.clients[client.session] = client
 }
 
+// joinStream adds client to its stream, which starts the stream if it is idle.
+// stops is the stream's stop count from when the client was handed it. If a
+// stop came in between, it dropped the client from the forwarder, and the
+// teardown could not close a client the stream did not know yet: the client
+// is closed now, to reconnect to a fresh stream, rather than joined to one
+// that would never send it anything.
+func (s *RTSPServer) joinStream(client *RTSPClient, stops uint64) {
+	defer close(client.attached)
+	if s.beforeJoin != nil {
+		s.beforeJoin(client)
+	}
+	if client.stream.attach(client, stops) {
+		return
+	}
+	core.Logger.Info().Msgf("Closing RTSP client %s: the stream for %s stopped before the client could join it",
+		client.session, client.stream.camera.DeviceName)
+	_ = client.conn.Close()
+}
+
 func (s *RTSPServer) removeClient(sessionID string) {
 	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	client, exists := s.clients[sessionID]
+	delete(s.clients, sessionID)
+	s.mutex.Unlock()
 
-	if client, exists := s.clients[sessionID]; exists {
-		// Remove client from stream
-		if client.stream != nil {
-			client.stream.RemoveClient(sessionID)
+	if !exists {
+		return
+	}
+	// The connection first: the stream's lock can be held for a whole
+	// connect, and the peer must not wait for it. Never under s.mutex either.
+	client.conn.Close()
+	if client.stream != nil {
+		if client.attached != nil {
+			<-client.attached // leaving before joining would leave a ghost behind
 		}
-
-		client.conn.Close()
-		delete(s.clients, sessionID)
+		client.stream.RemoveClient(sessionID)
 	}
 }
 
@@ -561,18 +720,29 @@ func (s *RTSPServer) cleanupRoutine() {
 }
 
 func (s *RTSPServer) cleanupInactiveStreams() {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	// A stream's lock can be held for a whole connect, so it is never taken
+	// under s.mutex: snapshot the streams, then look at each one.
+	s.mutex.RLock()
+	streams := make([]*CameraStream, 0, len(s.streams))
+	for _, stream := range s.streams {
+		streams = append(streams, stream)
+	}
+	s.mutex.RUnlock()
 
-	now := time.Now()
-	for deviceID, stream := range s.streams {
-		// Remove streams inactive for more than 5 minutes
-		if now.Sub(stream.lastActivity) > 5*time.Minute && len(stream.clients) == 0 {
+	for _, stream := range streams {
+		if stream.idleFor(5 * time.Minute) {
 			core.Logger.Trace().Msgf("Cleaning up inactive stream for camera: %s", stream.camera.DeviceName)
 			stream.Stop()
-			delete(s.streams, deviceID)
+			s.removeStream(stream)
 		}
 	}
+}
+
+// idleFor reports whether the stream has served nobody for at least d.
+func (cs *CameraStream) idleFor(d time.Duration) bool {
+	cs.mutex.RLock()
+	defer cs.mutex.RUnlock()
+	return len(cs.clients) == 0 && time.Since(cs.lastActivity) > d
 }
 
 func NewCameraStream(camera *storage.CameraInfo, resolution string, user *storage.UserSession, storageManager *storage.StorageManager, server *RTSPServer) *CameraStream {
@@ -581,17 +751,20 @@ func NewCameraStream(camera *storage.CameraInfo, resolution string, user *storag
 		resolution:    resolution,
 		user:          user,
 		clients:       make(map[string]*RTSPClient),
-		active:        false,
 		lastActivity:  time.Now(),
 		shutdownDelay: 30 * time.Second,
 		server:        server,
 		streamId:      fmt.Sprintf("%s-%s", camera.DeviceID, resolution),
 	}
 
-	stream.webrtcBridge = NewWebRTCBridge(camera, resolution, user, storageManager)
-	if server != nil {
-		stream.webrtcBridge.Talkback = server.Talkback
+	stream.forwarder = NewRTPForwarder()
+	if server.talkOnDemand() {
+		stream.talk = newTalker(camera.DeviceName, stream.openTalkSession)
 	}
+	stream.webrtcBridge = NewWebRTCBridge(camera, resolution, user, storageManager, stream.forwarder)
+	stream.configureBridge()
+	stream.lanFactory = stream.newLANSource
+	stream.cloudStart = stream.startCloud
 
 	return stream
 }
@@ -599,7 +772,24 @@ func NewCameraStream(camera *storage.CameraInfo, resolution string, user *storag
 func (cs *CameraStream) AddClient(client *RTSPClient) {
 	cs.mutex.Lock()
 	defer cs.mutex.Unlock()
+	cs.addClientLocked(client)
+}
 
+// attach is AddClient for a client handed the stream when its stop count was
+// stops. It refuses the client, and reports false, if the stream stopped
+// since: see joinStream.
+func (cs *CameraStream) attach(client *RTSPClient, stops uint64) bool {
+	cs.mutex.Lock()
+	defer cs.mutex.Unlock()
+	if cs.stops.Load() != stops {
+		cs.clientArrived()
+		return false
+	}
+	cs.addClientLocked(client)
+	return true
+}
+
+func (cs *CameraStream) addClientLocked(client *RTSPClient) {
 	// Cancel any pending shutdown
 	if cs.shutdownTimer != nil {
 		cs.shutdownTimer.Stop()
@@ -611,30 +801,72 @@ func (cs *CameraStream) AddClient(client *RTSPClient) {
 	cs.lastActivity = time.Now()
 
 	// Start stream if not active and not already connecting
-	if !cs.active && !cs.connecting {
-		cs.connecting = true
+	if !cs.active.Load() && !cs.connecting.Load() {
+		gen := cs.claimStart()
 		if cs.startStreamOverride != nil {
 			go cs.startStreamOverride()
 		} else {
-			go cs.startStream()
+			go cs.startStream(gen)
 		}
 	}
+	cs.clientArrived() // after claimStart: see inUse
+}
+
+// inUse reports whether the stream is up, starting, or promised to a client
+// that has not joined it yet: getOrCreateStream must then hand it out rather
+// than replace it. The server reads the flags without the stream's lock, so
+// they are read in the order they hand over to each other: a joining client
+// claims the start before it leaves pending, and a start that succeeds sets
+// active before it clears connecting (markActive). Read the other way round,
+// a stream between two flags could look idle for an instant and get a twin,
+// the duplicate of issue #97.
+func (cs *CameraStream) inUse() bool {
+	return cs.pending.Load() > 0 || cs.connecting.Load() || cs.active.Load()
+}
+
+// markActive commits a successful start; see inUse for the order. Callers
+// hold mutex.
+func (cs *CameraStream) markActive() {
+	cs.active.Store(true)
+	cs.connecting.Store(false)
+}
+
+// clientArrived takes one client off pending. A client attached without
+// getOrCreateStream (tests, mostly) finds it at zero and leaves it there.
+func (cs *CameraStream) clientArrived() {
+	for {
+		n := cs.pending.Load()
+		if n <= 0 || cs.pending.CompareAndSwap(n, n-1) {
+			return
+		}
+	}
+}
+
+// claimStart marks the stream connecting and returns the new start's number.
+// Callers hold mutex.
+func (cs *CameraStream) claimStart() uint64 {
+	cs.connecting.Store(true)
+	cs.startGen++
+	return cs.startGen
+}
+
+// superseded reports whether start gen has nothing left to do: the stream is
+// up, was stopped, or belongs to a newer start. Callers hold mutex.
+func (cs *CameraStream) superseded(gen uint64) bool {
+	return cs.active.Load() || !cs.connecting.Load() || cs.startGen != gen
 }
 
 func (cs *CameraStream) RemoveClient(sessionID string) {
 	cs.mutex.Lock()
 	defer cs.mutex.Unlock()
 
-	// Remove from RTP forwarder
-	if cs.webrtcBridge != nil && cs.webrtcBridge.rtpForwarder != nil {
-		cs.webrtcBridge.rtpForwarder.RemoveClient(sessionID)
-	}
+	cs.forwarder.RemoveClient(sessionID)
 
 	delete(cs.clients, sessionID)
 	cs.lastActivity = time.Now()
 
 	// Schedule stream shutdown if no clients and stream is active
-	if len(cs.clients) == 0 && cs.active {
+	if len(cs.clients) == 0 && cs.active.Load() {
 		cs.scheduleShutdown()
 	}
 }
@@ -646,31 +878,45 @@ func (cs *CameraStream) SetShutdownDelay(delay time.Duration) {
 }
 
 func (cs *CameraStream) Stop() {
-	// Clear all clients first
+	// Snapshot first: RemoveClient takes the lock and deletes from the map,
+	// so ranging over it directly raced with clients coming and going.
+	cs.mutex.RLock()
+	sessions := make([]string, 0, len(cs.clients))
 	for sessionID := range cs.clients {
+		sessions = append(sessions, sessionID)
+	}
+	cs.mutex.RUnlock()
+
+	for _, sessionID := range sessions {
 		cs.RemoveClient(sessionID)
 	}
-
-	// Stop the stream
 	cs.stopStream()
 }
 
-func (cs *CameraStream) startStream() {
+// startStream runs start gen: the LAN first, then up to two cloud attempts.
+// Every time it takes the lock back after waiting, it gives up if the start
+// was superseded, so a start that slept through a stop and a restart cannot
+// tear down or duplicate the newer one.
+func (cs *CameraStream) startStream(gen uint64) {
 	cs.mutex.Lock()
-	if cs.active || !cs.connecting {
+	if cs.superseded(gen) {
 		cs.mutex.Unlock()
 		return
 	}
 	cs.mutex.Unlock()
 
+	if cs.tryLAN(gen) || cs.tryIMM(gen) {
+		return
+	}
+
 	for attempt := 1; attempt <= 2; attempt++ {
 		if attempt > 1 {
 			core.Logger.Info().Msgf("Retrying stream for camera %s (attempt %d/2)", cs.camera.DeviceName, attempt)
-			time.Sleep(3 * time.Second)
+			time.Sleep(cloudRetryDelay)
 		}
 
 		cs.mutex.Lock()
-		if cs.active || !cs.connecting {
+		if cs.superseded(gen) {
 			cs.mutex.Unlock()
 			return
 		}
@@ -688,11 +934,16 @@ func (cs *CameraStream) startStream() {
 		}
 
 		cs.bridgeStarted = true
-		err := cs.webrtcBridge.Start()
+		err := cs.cloudStart()
 		if err == nil {
-			cs.connecting = false
-			cs.active = true
+			cs.markActive()
+			if len(cs.clients) == 0 { // the last client left during a LAN attempt or the retry wait
+				cs.scheduleShutdown()
+			}
+			cs.armPromotion()
+			cs.armMediaCheck()
 			cs.mutex.Unlock()
+			core.Logger.Info().Msgf("Streaming %s with cloud signalling", cs.camera.DeviceName)
 			return
 		}
 
@@ -700,9 +951,25 @@ func (cs *CameraStream) startStream() {
 		cs.mutex.Unlock()
 	}
 
+	// Nothing streams. The clients are closed so they reconnect now rather
+	// than at their own timeout, and a cool-down that alone kept this stream
+	// off the LAN ends: with no working cloud there is nothing to wait for.
 	cs.mutex.Lock()
-	cs.stopStreamInternal()
+	if cs.superseded(gen) {
+		cs.mutex.Unlock()
+		return
+	}
+	if ok, reason := cs.lanEligible(); !ok && reason == "cooling down" {
+		cs.server.cooldownMutex.Lock()
+		delete(cs.server.lanCooldowns, cs.camera.DeviceID)
+		delete(cs.server.lanFailures, cs.camera.DeviceID) // the LAN may not have been at fault
+		cs.server.cooldownMutex.Unlock()
+		core.Logger.Info().Msgf("Cloud signalling failed too for %s, trying LAN signalling again on the next start", cs.camera.DeviceName)
+	}
+	cs.endIMMCooldown()
+	clients := cs.teardownLocked()
 	cs.mutex.Unlock()
+	closeClients(clients)
 }
 
 func (cs *CameraStream) stopStream() {
@@ -712,10 +979,11 @@ func (cs *CameraStream) stopStream() {
 }
 
 // replaceBridge swaps in a fresh WebRTC bridge, rewired to the server's mobile
-// and MQTT clients, with the error handler attached. Callers must hold cs.mutex.
+// client, with the error handler attached; startCloud adds the MQTT client.
+// Callers must hold cs.mutex.
 func (cs *CameraStream) replaceBridge() {
 	if cs.webrtcBridge != nil {
-		cs.webrtcBridge.OnError = nil
+		cs.webrtcBridge.SetOnError(nil)
 		cs.webrtcBridge.Stop()
 	}
 
@@ -723,44 +991,119 @@ func (cs *CameraStream) replaceBridge() {
 	if cs.server != nil {
 		storageManager = cs.server.storageManager
 	}
-	cs.webrtcBridge = NewWebRTCBridge(cs.camera, cs.resolution, cs.user, storageManager)
-
-	if cs.server != nil {
-		cs.webrtcBridge.Talkback = cs.server.Talkback
-		if cs.server.MobileClient != nil {
-			cs.webrtcBridge.SetMobileClient(cs.server.MobileClient)
-		}
-		if cs.server.mqttManager != nil {
-			if mqttClient, err := cs.server.mqttManager.GetClient(cs.camera.DeviceID); err == nil {
-				cs.webrtcBridge.SetMQTTClient(mqttClient)
-			}
-		}
+	cs.webrtcBridge = NewWebRTCBridge(cs.camera, cs.resolution, cs.user, storageManager, cs.forwarder)
+	cs.bridgeStarted = false
+	// The new session is a new sender: what the old one left held for
+	// reordering must not wait for, or block, its packets.
+	if cs.forwarder != nil {
+		cs.forwarder.ResetVideoOrder()
+	}
+	cs.configureBridge()
+	if cs.server != nil && cs.server.MobileClient != nil {
+		cs.webrtcBridge.SetMobileClient(cs.server.MobileClient)
 	}
 
 	cs.attachBridgeErrorHandler()
 }
 
-// attachBridgeErrorHandler wires WebRTC OnError to handleBridgeError on the current bridge.
-func (cs *CameraStream) attachBridgeErrorHandler() {
-	if cs.webrtcBridge == nil {
+// configureBridge copies the server's session settings onto the current
+// bridge, the first one and every replacement alike.
+func (cs *CameraStream) configureBridge() {
+	if cs.server == nil {
 		return
 	}
-	cs.webrtcBridge.OnError = func(err error) {
-		cs.handleBridgeError(err)
+	cs.webrtcBridge.Talkback = cs.server.sessionTalkback()
+	cs.webrtcBridge.SpeakerOff = cs.server.SpeakerOff
+	cs.webrtcBridge.WebRTCAudio = cs.server.WebRTCAudio
+	if cs.talk != nil {
+		// A new bridge takes the backchannel; on demand it goes to the talker.
+		cs.forwarder.SetBackchannelSink(cs.talk.packet)
 	}
+}
+
+// startCloud is the default cloudStart. It fetches the MQTT client only now,
+// so a stream can exist while the cloud is down. Callers must hold cs.mutex.
+func (cs *CameraStream) startCloud() error {
+	if cs.server != nil && cs.server.mqttManager != nil {
+		mqttClient, err := cs.server.mqttManager.GetClient(cs.camera.DeviceID)
+		if err != nil {
+			return fmt.Errorf("failed to get MQTT client: %v", err)
+		}
+		cs.webrtcBridge.SetMQTTClient(mqttClient)
+	}
+	return cs.webrtcBridge.Start()
+}
+
+// armMediaCheck fails the cloud session that just came up if it has carried
+// no media at all after cloudMediaTimeout: its clients would wait for good,
+// and every later one would join the dead stream instead of starting a fresh
+// one (#89). Audio alone keeps a session alive: a monitor in privacy mode
+// sends only audio (examples/DPS_REFERENCE.md), and failing that session
+// would start a new one every ~25 s while a viewer stays, each of which can
+// pause a playing lullaby (#72). The failure is handled as a WebRTC error is:
+// the clients are closed and reconnect. Callers hold cs.mutex.
+func (cs *CameraStream) armMediaCheck() {
+	bridge := cs.webrtcBridge
+	var timer *time.Timer
+	timeout := time.Duration(cloudMediaTimeout.Load())
+	timer = time.AfterFunc(timeout, func() {
+		// Taken before timer is read: armMediaCheck's caller holds it while timer is set.
+		cs.mutex.Lock()
+		if cs.mediaTimer != timer { // the stream stopped, or restarted, since
+			cs.mutex.Unlock()
+			return
+		}
+		cs.mediaTimer = nil
+		if !cs.active.Load() || cs.webrtcBridge != bridge ||
+			bridge.videoPackets.Load() > 0 || bridge.audioPackets.Load() > 0 {
+			cs.mutex.Unlock()
+			return
+		}
+		core.Logger.Warn().Msgf("Cloud session for %s is up but carried no media in %v; closing its clients so they reconnect to a new one",
+			cs.camera.DeviceName, timeout)
+		clients := cs.teardownLocked()
+		cs.mutex.Unlock()
+		closeClients(clients)
+	})
+	cs.mediaTimer = timer
+}
+
+// attachBridgeErrorHandler wires WebRTC OnError to handleBridgeError on the current bridge.
+func (cs *CameraStream) attachBridgeErrorHandler() {
+	bridge := cs.webrtcBridge
+	if bridge == nil {
+		return
+	}
+	bridge.SetOnError(func(err error) {
+		cs.handleBridgeError(bridge, err)
+	})
 }
 
 // handleBridgeError tears down a failed WebRTC session and force-closes RTSP clients
 // so they reconnect against a fresh stream (required for persistent clients like Scrypted).
-func (cs *CameraStream) handleBridgeError(err error) {
+//
+// Only an error from the bridge an active stream runs on counts. While the
+// stream is connecting, the start owns a failed attempt and retries it; and a
+// replaced bridge's handler can already be running when its successor takes
+// over, and must leave the successor alone.
+func (cs *CameraStream) handleBridgeError(bridge *WebRTCBridge, err error) {
 	cs.mutex.Lock()
-	if cs.handlingError || (!cs.active && !cs.connecting) {
+	if cs.handlingError || !cs.active.Load() || cs.webrtcBridge != bridge {
 		cs.mutex.Unlock()
 		return
 	}
-	cs.handlingError = true
 
 	core.Logger.Error().Err(err).Msgf("WebRTC error for camera %s", cs.camera.DeviceName)
+
+	clients := cs.teardownLocked()
+	cs.mutex.Unlock()
+	closeClients(clients)
+}
+
+// teardownLocked stops a failed stream and returns its clients, for the caller
+// to close once it has released cs.mutex. Callers must hold cs.mutex.
+func (cs *CameraStream) teardownLocked() []*RTSPClient {
+	cs.handlingError = true
 
 	clients := make([]*RTSPClient, 0, len(cs.clients))
 	for _, client := range cs.clients {
@@ -769,12 +1112,14 @@ func (cs *CameraStream) handleBridgeError(err error) {
 
 	// Clear OnError before Stop so PeerConnection.Close cannot re-enter this path.
 	if cs.webrtcBridge != nil {
-		cs.webrtcBridge.OnError = nil
+		cs.webrtcBridge.SetOnError(nil)
 	}
 	cs.stopStreamInternal()
 	cs.handlingError = false
-	cs.mutex.Unlock()
+	return clients
+}
 
+func closeClients(clients []*RTSPClient) {
 	for _, client := range clients {
 		if client.conn != nil {
 			_ = client.conn.Close()
@@ -784,18 +1129,26 @@ func (cs *CameraStream) handleBridgeError(err error) {
 
 func (cs *CameraStream) stopStreamInternal() {
 	// Check if we should actually stop
-	if !cs.active && !cs.connecting {
+	if !cs.active.Load() && !cs.connecting.Load() {
 		return
 	}
 
-	wasActive := cs.active
-	cs.active = false
-	cs.connecting = false
+	wasActive := cs.active.Load()
+	cs.active.Store(false)
+	cs.connecting.Store(false)
 
 	// Cancel any pending shutdown
 	if cs.shutdownTimer != nil {
 		cs.shutdownTimer.Stop()
 		cs.shutdownTimer = nil
+	}
+	if cs.promoteTimer != nil {
+		cs.promoteTimer.Stop()
+		cs.promoteTimer = nil
+	}
+	if cs.mediaTimer != nil {
+		cs.mediaTimer.Stop()
+		cs.mediaTimer = nil
 	}
 
 	// Only log if we were actually active
@@ -803,11 +1156,39 @@ func (cs *CameraStream) stopStreamInternal() {
 		core.Logger.Info().Msgf("Stopping stream for camera: %s", cs.camera.DeviceName)
 	}
 
+	// A LAN attempt in flight ends now rather than at its deadline.
+	if cs.attemptCancel != nil {
+		cs.attemptCancel()
+		cs.attemptCancel = nil
+	}
+	if cs.lan != nil {
+		cs.lan.Stop()
+		cs.lan = nil
+	}
+	if cs.talk != nil {
+		// Clients keep reading until they are closed, after the lock is
+		// released: their audio must not open a talk on a stopped stream. A
+		// restart replaces the bridge, and configureBridge sets the sink again.
+		cs.forwarder.SetBackchannelSink(nil)
+		cs.talk.end("the stream stopped")
+	}
+
 	// Stop WebRTC bridge (sends SendDisconnect to clean device-side session)
 	if cs.webrtcBridge != nil {
-		cs.webrtcBridge.OnError = nil
+		cs.webrtcBridge.SetOnError(nil)
 		cs.webrtcBridge.Stop()
+		// Even a bridge that never ran (a LAN stream) has lost its OnError,
+		// so a restart must replace it.
+		cs.bridgeStarted = true
 	}
+	// The bridge leaves the stream's forwarder alone; its clients go here.
+	cs.forwarder.Stop()
+	// After the drop, still under the lock: a client that registered with
+	// the forwarder before it read the count before it, so its join sees the
+	// count move and is refused (joinStream). Bumped any earlier, a client
+	// handed the stream while the bridge stops could read the new count,
+	// register, be dropped here, and still be accepted.
+	cs.stops.Add(1)
 
 	// MQTT client is NOT closed — kept alive for next stream (matches app behavior)
 
@@ -822,7 +1203,7 @@ func (cs *CameraStream) stopStreamInternal() {
 
 func (cs *CameraStream) scheduleShutdown() {
 	// Don't schedule if we're not active
-	if !cs.active {
+	if !cs.active.Load() {
 		return
 	}
 
@@ -838,7 +1219,7 @@ func (cs *CameraStream) scheduleShutdown() {
 		defer cs.mutex.Unlock()
 
 		// Double-check no clients connected during the delay and stream is still active
-		if len(cs.clients) == 0 && cs.active {
+		if len(cs.clients) == 0 && cs.active.Load() {
 			core.Logger.Info().Msgf("Executing delayed shutdown for camera %s", cs.camera.DeviceName)
 			cs.stopStreamInternal()
 		}

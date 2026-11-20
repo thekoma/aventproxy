@@ -232,6 +232,7 @@ type WebRTCConfig struct {
 	MotoId              string          `json:"motoId"`
 	NodeId              string          `json:"nodeId"`
 	P2PConfig           P2PConfig       `json:"p2pConfig"`
+	Password            string          `json:"password"` // P2P password, for the imm media login: never log it
 	ProtocolVersion     string          `json:"protocolVersion"`
 	Skill               string          `json:"skill"`
 	Sub                 bool            `json:"sub"`

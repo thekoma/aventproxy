@@ -60,12 +60,14 @@
         "data": {
           "bridge_host": "Hôte du pont",
           "bridge_port": "Port RTSP du pont",
-          "talkback": "Audio bidirectionnel (interphone)"
+          "talkback": "Audio bidirectionnel (interphone)",
+          "lan_streaming": "Streaming sur le réseau local"
         },
         "data_description": {
           "bridge_host": "Emplacement où Home Assistant peut joindre le pont WebRTC. Laissez localhost si vous utilisez l'add-on ; indiquez le nom du conteneur ou l'adresse IP si vous exécutez le pont ailleurs vous-même.",
           "bridge_port": "Port sur lequel le pont WebRTC écoute (par défaut : 38554)",
-          "talkback": "Laissez désactivé sauf si un de vos clients parle réellement via le flux. Demander l'audio bidirectionnel à la caméra fait que le moniteur arrête une berceuse en cours et la redémarre depuis le début à la fermeture du flux."
+          "talkback": "Activez pour parler dans la pièce, depuis Home Assistant 2026.11 (aperçu Labs, HTTPS et WebRTC) ou un autre client qui envoie de l'audio sur le flux. Avec la carte Dev du pont, l'audio bidirectionnel n'est demandé au moniteur que pendant qu'on parle ; ailleurs chaque flux le demande, ce qui fait que le moniteur arrête une berceuse en cours et la redémarre depuis le début quand vous fermez le flux.",
+          "lan_streaming": "Diffuser via le réseau local lorsque le moniteur le permet. Désactivez-le si votre flux a cessé de fonctionner après une mise à jour."
         }
       }
     }
@@ -95,7 +97,9 @@
         "state": {
           "awake": "Éveillé",
           "light": "Sommeil léger",
-          "deep": "Sommeil profond"
+          "deep": "Sommeil profond",
+          "out": "Hors du lit",
+          "settling": "Initialisation"
         }
       },
       "device_errors": {
@@ -129,6 +133,9 @@
       },
       "baby_detected": {
         "name": "Bébé détecté"
+      },
+      "baby_moving": {
+        "name": "Bébé en mouvement"
       },
       "crying_detected": {
         "name": "Pleurs détectés"
@@ -209,39 +216,21 @@
     }
   },
   "services": {
-    "upload_lullaby": {
-      "name": "Téléverser une berceuse",
-      "description": "Enregistre un fichier audio comme l'une des deux berceuses personnalisées de la caméra, les emplacements que l'application Philips remplit par enregistrement. Elle apparaît ensuite dans la sélection de berceuse.",
+    "get_sleep_history": {
+      "name": "Obtenir l'historique de sommeil",
+      "description": "Le résumé SenseIQ de chaque jour d'une période, avec chaque session et ses phases.",
       "fields": {
         "device_id": {
-          "name": "Caméra",
-          "description": "Le babyphone vers lequel téléverser."
+          "name": "Moniteur",
+          "description": "Le moniteur Philips Avent avec SenseIQ."
         },
-        "file": {
-          "name": "Fichier",
-          "description": "Chemin absolu d'un fichier audio lisible par Home Assistant, par exemple sous /media. Tout format lu par ffmpeg."
+        "start_date": {
+          "name": "Date de début",
+          "description": "Premier jour, inclus."
         },
-        "name": {
-          "name": "Nom",
-          "description": "Nom affiché dans la sélection de berceuse. Par défaut, le nom du fichier."
-        },
-        "max_duration": {
-          "name": "Durée maximale",
-          "description": "Un audio plus long est coupé à cette durée. L'application enregistre au plus 90 secondes ; au-delà, ce n'est pas testé."
-        }
-      }
-    },
-    "delete_lullaby": {
-      "name": "Supprimer une berceuse",
-      "description": "Supprime l'une des berceuses personnalisées de la caméra pour libérer son emplacement. Les berceuses prédéfinies ne peuvent pas être supprimées.",
-      "fields": {
-        "device_id": {
-          "name": "Caméra",
-          "description": "Le babyphone qui contient l'enregistrement."
-        },
-        "recording": {
-          "name": "Enregistrement",
-          "description": "Nom de l'enregistrement tel que la sélection de berceuse l'affiche, ou son identifiant."
+        "end_date": {
+          "name": "Date de fin",
+          "description": "Dernier jour, inclus. Aujourd'hui par défaut."
         }
       }
     }

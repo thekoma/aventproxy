@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	pion "github.com/pion/webrtc/v4"
@@ -25,6 +26,9 @@ import (
 
 	"github.com/pion/rtp"
 )
+
+// answerTimeout bounds the wait for the camera's answer so a silent camera cannot hang startStream.
+const answerTimeout = 20 * time.Second
 
 type WebRTCBridge struct {
 	camera         *storage.CameraInfo
@@ -40,10 +44,23 @@ type WebRTCBridge struct {
 	dataChannel    *pion.DataChannel
 	mqttClient     *tuya.MQTTClient
 	cameraClient   *tuya.MQTTCameraClient
+	controls       cameraControls // the camera client's 312 controls; a seam for tests
 	rtpForwarder   *RTPForwarder
+	ownsForwarder  bool // the bridge made rtpForwarder, so Stop stops it
+
+	// SSRCs the camera announces for the HEVC datachannel transport: set on
+	// the datachannel's message goroutine, read for every packet.
+	videoSSRC atomic.Uint32
+	audioSSRC atomic.Uint32
+
+	// Packets this session delivered, logged when it stops (issue #72: does
+	// audio keep flowing with the monitor's speaker kept closed?).
+	videoPackets atomic.Uint64
+	audioPackets atomic.Uint64
 
 	// State
 	connected         bool
+	stopped           bool
 	ownsClient        bool
 	answerReceived    bool
 	pendingCandidates []pion.ICECandidateInit
@@ -55,41 +72,84 @@ type WebRTCBridge struct {
 	cancel context.CancelFunc
 
 	// RTP forwarding
-	videoTrack  *pion.TrackRemote
-	audioTrack  *pion.TrackRemote
-	backchannel *pion.TrackLocalStaticRTP
+	videoTrack *pion.TrackRemote
+	audioTrack *pion.TrackRemote
+	// backchannel is set by pion's track callback and read for every
+	// talkback packet, on other goroutines.
+	backchannel atomic.Pointer[pion.TrackLocalStaticRTP]
+	// talkPCM turns the talk audio into the cameras' PCM on its way to backchannel.
+	talkPCM talkPCM
 
-	// Talkback offers the camera two-way audio. Off by default: an offer with
-	// a sendrecv audio direction makes the camera set DPS 253 (app_talking),
-	// take the speaker and stop whatever lullaby is playing, then restart it
-	// with a fresh timer when the stream closes (issue #72). Watching must not
-	// disturb the room, so the caller opts in.
+	// Talkback offers the camera two-way audio. Off by default: the camera
+	// session of a stream sets it only with TalkbackSession, while with
+	// TalkbackOnDemand only a talk's own session does (see talker). It is not
+	// what stops a playing lullaby
+	// (issue #72): DPS 253 (app_talking) flips with a recvonly offer and no
+	// backchannel too, which points at the webrtc session mode itself; see
+	// SpeakerOff.
 	Talkback bool
+
+	// SpeakerOff asks the monitor, once the session is up, to keep its
+	// speaker closed (312 "speaker", value 0). Never sent with Talkback.
+	SpeakerOff bool
+
+	// WebRTCAudio is the audio the offer asks the camera for: recvonly, or
+	// none to leave the section out (an issue #72 experiment). Talkback
+	// overrides it.
+	WebRTCAudio string
 
 	// Callbacks
 	OnVideoPacket func(packet *rtp.Packet)
 	OnAudioPacket func(packet *rtp.Packet)
-	OnError       func(error)
+
+	// onError is called from pion's and MQTT's goroutines while the stream
+	// sets and clears it, so it sits behind its own lock: wb.mutex is held
+	// for the whole of Start.
+	errMu   sync.Mutex
+	onError func(error)
 }
 
-func NewWebRTCBridge(camera *storage.CameraInfo, streamResolution string, user *storage.UserSession, storageManager *storage.StorageManager) *WebRTCBridge {
+// NewWebRTCBridge prepares a bridge that feeds forwarder. The forwarder
+// belongs to the caller, which stops it; a nil forwarder makes the bridge
+// create its own and stop it with itself.
+func NewWebRTCBridge(camera *storage.CameraInfo, streamResolution string, user *storage.UserSession, storageManager *storage.StorageManager, forwarder *RTPForwarder) *WebRTCBridge {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	owns := forwarder == nil
+	if owns {
+		forwarder = NewRTPForwarder()
+	}
 	wb := &WebRTCBridge{
 		camera:         camera,
 		resolution:     streamResolution,
 		user:           user,
-		rtpForwarder:   NewRTPForwarder(),
+		rtpForwarder:   forwarder,
+		ownsForwarder:  owns,
 		storageManager: storageManager,
 		connected:      false,
 		waiter:         utils.Waiter{},
 		ctx:            ctx,
 		cancel:         cancel,
 	}
+	wb.audioSSRC.Store(1) // the defaults the datachannel path matched before the camera names its own
 
-	wb.rtpForwarder.OnBackchannelAudio = wb.ForwardBackchannelAudioPacket
+	// Talkback from the forwarder's clients goes to the newest bridge.
+	forwarder.SetBackchannelSink(wb.ForwardBackchannelAudioPacket)
 
 	return wb
+}
+
+// SetOnError sets the handler for a failed session; nil detaches it.
+func (wb *WebRTCBridge) SetOnError(fn func(error)) {
+	wb.errMu.Lock()
+	wb.onError = fn
+	wb.errMu.Unlock()
+}
+
+func (wb *WebRTCBridge) errorHandler() func(error) {
+	wb.errMu.Lock()
+	defer wb.errMu.Unlock()
+	return wb.onError
 }
 
 func (wb *WebRTCBridge) SetMobileClient(client *tuya.MobileSDKClient) {
@@ -164,7 +224,7 @@ func (wb *WebRTCBridge) Start() error {
 				return fmt.Errorf("failed to connect to MQTT: %v", err)
 			}
 
-			if err = wb.mqttClient.Connected.Wait(); err != nil {
+			if err = wb.mqttClient.Connected.WaitTimeout(mqttHandshakeTimeout); err != nil {
 				return fmt.Errorf("MQTT connection failed: %v", err)
 			}
 
@@ -206,7 +266,7 @@ func (wb *WebRTCBridge) Start() error {
 			return fmt.Errorf("failed to connect to MQTT: %v", err)
 		}
 
-		if err = wb.mqttClient.Connected.Wait(); err != nil {
+		if err = wb.mqttClient.Connected.WaitTimeout(mqttHandshakeTimeout); err != nil {
 			return fmt.Errorf("MQTT connection failed: %v", err)
 		}
 	}
@@ -249,7 +309,10 @@ func (wb *WebRTCBridge) Start() error {
 		return fmt.Errorf("failed to create offer: %v", err)
 	}
 
-	if err = wb.waiter.Wait(); err != nil {
+	if err = wb.waiter.WaitTimeout(answerTimeout); err != nil {
+		if errors.Is(err, utils.ErrWaitTimeout) {
+			return fmt.Errorf("failed to establish connection: %w after %v: %s", err, answerTimeout, wb.stalledStep())
+		}
 		return fmt.Errorf("failed to establish connection: %v", err)
 	}
 
@@ -259,14 +322,36 @@ func (wb *WebRTCBridge) Start() error {
 	return nil
 }
 
+// stalledStep names what a start that timed out was waiting for (#89).
+func (wb *WebRTCBridge) stalledStep() string {
+	pc := wb.peerConnection
+	return stalledAt(pc.RemoteDescription() != nil, pc.ConnectionState(), wb.isHEVC)
+}
+
+func stalledAt(answered bool, state pion.PeerConnectionState, hevc bool) string {
+	switch {
+	case !answered:
+		return "the camera never answered the offer"
+	case state != pion.PeerConnectionStateConnected:
+		return fmt.Sprintf("the camera answered, but the connection to it never came up (%s)", state)
+	case hevc:
+		return "connected, but the camera never confirmed the video codec on the datachannel"
+	default:
+		return "connected"
+	}
+}
+
 func (wb *WebRTCBridge) Stop() {
 	wb.mutex.Lock()
 	defer wb.mutex.Unlock()
 
-	if !wb.connected {
+	// A Start that failed after creating the PeerConnection (no answer in
+	// time) left it and the MQTT camera client behind: tear those down too.
+	if wb.stopped || (!wb.connected && wb.peerConnection == nil) {
 		return
 	}
 
+	wb.stopped = true
 	wb.connected = false
 
 	core.Logger.Info().Msgf("Stopping WebRTC bridge for camera: %s", wb.camera.DeviceName)
@@ -294,11 +379,14 @@ func (wb *WebRTCBridge) Stop() {
 		wb.mqttClient.Stop()
 	}
 
-	// Stop RTP forwarder
-	if wb.rtpForwarder != nil {
+	// Stop the RTP forwarder, unless it belongs to the stream: its clients
+	// stay attached across a bridge replacement.
+	if wb.ownsForwarder && wb.rtpForwarder != nil {
 		wb.rtpForwarder.Stop()
 	}
 
+	core.Logger.Info().Msgf("Cloud session for %s carried %d video and %d audio packets",
+		wb.camera.DeviceName, wb.videoPackets.Load(), wb.audioPackets.Load())
 	core.Logger.Info().Msgf("WebRTC bridge stopped for camera: %s", wb.camera.DeviceName)
 }
 
@@ -308,9 +396,13 @@ func (wb *WebRTCBridge) IsConnected() bool {
 	return wb.connected
 }
 
+// ForwardBackchannelAudioPacket sends a client's talk audio to the camera, as
+// the 16 kHz PCM the cameras play (talk_pcm.go).
 func (wb *WebRTCBridge) ForwardBackchannelAudioPacket(packet *rtp.Packet) {
-	if wb.backchannel != nil {
-		_ = wb.backchannel.WriteRTP(packet)
+	if track := wb.backchannel.Load(); track != nil {
+		for _, p := range wb.talkPCM.convert(packet) {
+			_ = track.WriteRTP(p)
+		}
 	}
 }
 
@@ -370,10 +462,10 @@ func (wb *WebRTCBridge) setupPeerConnection(webRTCConfig *tuya.WebRTCConfig) err
 				}
 
 				switch packet.SSRC {
-				case wb.rtpForwarder.videoSSRC:
-					wb.rtpForwarder.ForwardVideoPacket(packet)
-				case wb.rtpForwarder.audioSSRC:
-					wb.rtpForwarder.ForwardAudioPacket(packet)
+				case wb.videoSSRC.Load():
+					wb.forwardVideo(packet)
+				case wb.audioSSRC.Load():
+					wb.forwardAudio(packet)
 				}
 			}
 		})
@@ -423,7 +515,7 @@ func (wb *WebRTCBridge) setupPeerConnection(webRTCConfig *tuya.WebRTCConfig) err
 							"audio-backchannel", "pion",
 						)
 						tr.Sender().ReplaceTrack(localTrack)
-						wb.backchannel = localTrack
+						wb.backchannel.Store(localTrack)
 						core.Logger.Trace().Msgf("Setup backchannel track")
 						break
 					}
@@ -446,14 +538,109 @@ func (wb *WebRTCBridge) handlePeerConnectionStateChange(state pion.PeerConnectio
 
 	if state == pion.PeerConnectionStateConnected {
 		core.Logger.Info().Msgf("WebRTC connection established")
-
+		wb.sendSessionControls()
 		if !wb.isHEVC {
-			if wb.resolution == "hd" {
-				_ = wb.cameraClient.SendResolution(0)
-			}
 			wb.waiter.Done(nil)
 		}
 	}
+}
+
+// The audio a cloud offer asks the camera for (WebRTCBridge.WebRTCAudio).
+const (
+	WebRTCAudioRecvonly = "recvonly"
+	WebRTCAudioNone     = "none"
+)
+
+// ParseWebRTCAudio checks a webrtc_audio setting; empty means recvonly.
+func ParseWebRTCAudio(mode string) (string, error) {
+	switch mode {
+	case "", WebRTCAudioRecvonly:
+		return WebRTCAudioRecvonly, nil
+	case WebRTCAudioNone:
+		return WebRTCAudioNone, nil
+	}
+	return "", fmt.Errorf("webrtc audio %q: want %s or %s", mode, WebRTCAudioRecvonly, WebRTCAudioNone)
+}
+
+// offerMedias is what an offer asks the camera for. Talkback needs a sendrecv
+// audio section whatever audio says; otherwise audio is recvonly, or left out
+// with WebRTCAudioNone. The RTSP description never depends on it.
+func offerMedias(talkback bool, audio string) []*utils.Media {
+	video := &utils.Media{Kind: utils.KindVideo, Direction: utils.DirectionRecvonly}
+	switch {
+	case talkback:
+		return []*utils.Media{{Kind: utils.KindAudio, Direction: utils.DirectionSendRecv}, video}
+	case audio == WebRTCAudioNone:
+		return []*utils.Media{video}
+	default:
+		return []*utils.Media{{Kind: utils.KindAudio, Direction: utils.DirectionRecvonly}, video}
+	}
+}
+
+// speakerAudioCheckDelay is how long after the speaker-off request the bridge
+// checks that the session still carries audio.
+var speakerAudioCheckDelay = 10 * time.Second
+
+// cameraControls is the part of the MQTT camera client the bridge drives once
+// the connection is up.
+type cameraControls interface {
+	SendResolution(resolution int) error
+	SendSpeaker(speaker int) error
+}
+
+// sendSessionControls sends the 312 controls a cloud session needs once it is
+// up: the HD request, as before (H.264 only), and a speaker-off unless
+// talkback is on.
+//
+// Issue #72: a "webrtc"-mode session sets DPS 253 (app_talking) and pauses a
+// playing lullaby whatever audio direction the offer carries. The official
+// app never uses this mode: it streams over imm and starts a preview with
+// IOCtrl commands 6 and 9, sending the speaker command (8) only while the
+// parent talks. A webrtc client has no IOCtrls, so the monitor opens its
+// speaker for the whole session; 312 "speaker" is this mode's counterpart of
+// command 8. Unconfirmed on hardware: the session's log lines (this one, and
+// the audio packet count at Stop) are what settle it.
+func (wb *WebRTCBridge) sendSessionControls() {
+	if wb.controls == nil {
+		return
+	}
+	if !wb.isHEVC && wb.resolution == "hd" {
+		if err := wb.controls.SendResolution(0); err != nil {
+			core.Logger.Warn().Err(err).Msgf("Could not ask %s for HD", wb.camera.DeviceName)
+		}
+	}
+	if wb.Talkback || !wb.SpeakerOff {
+		return
+	}
+	if err := wb.controls.SendSpeaker(0); err != nil {
+		core.Logger.Warn().Err(err).Msgf("Could not ask %s to keep its speaker off", wb.camera.DeviceName)
+		return
+	}
+	core.Logger.Info().Msgf("Asked %s to keep its speaker off (issue #72)", wb.camera.DeviceName)
+	go wb.checkAudioAfterSpeakerOff(wb.audioPackets.Load(), speakerAudioCheckDelay)
+}
+
+// checkAudioAfterSpeakerOff says, once, whether audio kept flowing after the
+// speaker-off request. If Tuya's "speaker" means the viewer's audio rather
+// than the monitor's loudspeaker, the request mutes the stream, and the count
+// logged at Stop is never reached by an always-on consumer such as Frigate.
+func (wb *WebRTCBridge) checkAudioAfterSpeakerOff(before uint64, after time.Duration) {
+	var ended <-chan struct{}
+	if wb.ctx != nil {
+		ended = wb.ctx.Done()
+	}
+	select {
+	case <-ended:
+		return
+	case <-time.After(after):
+	}
+	if n := wb.audioPackets.Load() - before; n > 0 {
+		core.Logger.Info().Msgf("Audio from %s still flows with its speaker kept closed: %d packets in %v (issue #72)",
+			wb.camera.DeviceName, n, after)
+		return
+	}
+	core.Logger.Warn().Msgf("No audio from %s since asking the monitor to keep its speaker closed; "+
+		"set speaker_off to false on the Dev card if you need audio (issue #72)", wb.camera.DeviceName)
 }
 
 func (wb *WebRTCBridge) setupMQTTCameraClient(webRTCConfig *tuya.WebRTCConfig) {
@@ -467,14 +654,23 @@ func (wb *WebRTCBridge) setupMQTTCameraClient(webRTCConfig *tuya.WebRTCConfig) {
 
 	// Create MQTT camera client
 	wb.cameraClient = tuya.NewMqttCameraClient(wb.mqttClient, device, webRTCConfig)
+	wb.controls = wb.cameraClient
 	wb.mqttClient.AddCameraClient(wb.cameraClient.SessionId, wb.cameraClient)
 
-	// Setup handlers
+	// Setup handlers. They run on the MQTT client's dispatch goroutine, which
+	// every camera shares (MQTTManager), and paho processes no PUBACK while one
+	// of them blocks. Reporting a failure takes the stream's lock
+	// (handleBridgeError) and a disconnect takes this bridge's, and a teardown
+	// can hold either for seconds while it waits for the PUBACK of its own
+	// SendDisconnect: a handler waiting on one would hold every camera's
+	// publishes and fail another camera's offer. Failures and disconnects are
+	// therefore reported on their own goroutine. The answer and the candidates
+	// are still handled here, in the order they arrive, which they need.
 	wb.answerReceived = false
 	wb.pendingCandidates = nil
 
 	wb.cameraClient.HandleAnswer = func(answer tuya.AnswerFrame) {
-		core.Logger.Trace().Msgf("Received WebRTC answer")
+		core.Logger.Info().Msgf("Answer from %s: %s", wb.camera.DeviceName, summarizeSDP(answer.Sdp))
 
 		desc := pion.SessionDescription{
 			Type: pion.SDPTypePranswer,
@@ -482,12 +678,12 @@ func (wb *WebRTCBridge) setupMQTTCameraClient(webRTCConfig *tuya.WebRTCConfig) {
 		}
 
 		if err := wb.peerConnection.SetRemoteDescription(desc); err != nil {
-			wb.handleError(err)
+			go wb.handleError(err)
 			return
 		}
 
 		if err := webrtc.SetAnswer(wb.peerConnection, answer.Sdp); err != nil {
-			wb.handleError(err)
+			go wb.handleError(err)
 			return
 		}
 
@@ -530,13 +726,20 @@ func (wb *WebRTCBridge) setupMQTTCameraClient(webRTCConfig *tuya.WebRTCConfig) {
 	}
 
 	wb.cameraClient.HandleError = func(err error) {
-		wb.handleError(err)
+		go wb.handleError(err)
 	}
 
 	wb.cameraClient.HandleDisconnect = func() {
-		wb.handleError(errors.New("camera client disconnected"))
-		wb.connected = false
+		go wb.cameraDisconnected()
 	}
+}
+
+// cameraDisconnected handles the camera ending the session.
+func (wb *WebRTCBridge) cameraDisconnected() {
+	wb.handleError(errors.New("camera client disconnected"))
+	wb.mutex.Lock()
+	wb.connected = false
+	wb.mutex.Unlock()
 }
 
 func (wb *WebRTCBridge) createAndSendOffer() error {
@@ -550,17 +753,8 @@ func (wb *WebRTCBridge) createAndSendOffer() error {
 		}
 	})
 
-	audioDirection := utils.DirectionRecvonly
-	if wb.Talkback {
-		audioDirection = utils.DirectionSendRecv
-	}
-	medias := []*utils.Media{
-		{Kind: utils.KindAudio, Direction: audioDirection},
-		{Kind: utils.KindVideo, Direction: utils.DirectionRecvonly},
-	}
-
 	// Create offer
-	offer, err := webrtc.CreateOffer(wb.peerConnection, medias)
+	offer, err := webrtc.CreateOffer(wb.peerConnection, offerMedias(wb.Talkback, wb.WebRTCAudio))
 	if err != nil {
 		return fmt.Errorf("failed to create offer: %v", err)
 	}
@@ -569,7 +763,9 @@ func (wb *WebRTCBridge) createAndSendOffer() error {
 	re := regexp.MustCompile(`\r\na=extmap[^\r\n]*`)
 	offer = re.ReplaceAllString(offer, "")
 
-	core.Logger.Trace().Msgf("Sending WebRTC offer")
+	// The media sections only: the SDP's ICE credentials and fingerprint stay out.
+	core.Logger.Info().Msgf("Offer to %s: mode=webrtc stream_type=%d datachannel=%t talkback=%t %s",
+		wb.camera.DeviceName, wb.streamType, wb.isHEVC, wb.Talkback, summarizeSDP(offer))
 
 	// Send offer
 	if err := wb.cameraClient.SendOffer(offer, wb.resolution, wb.streamType, wb.isHEVC); err != nil {
@@ -603,7 +799,7 @@ func (wb *WebRTCBridge) handleVideoTrack(track *pion.TrackRemote) {
 				continue
 			}
 
-			wb.rtpForwarder.ForwardVideoPacket(packet)
+			wb.forwardVideo(packet)
 		}
 	}
 }
@@ -631,9 +827,21 @@ func (wb *WebRTCBridge) handleAudioTrack(track *pion.TrackRemote) {
 				continue
 			}
 
-			wb.rtpForwarder.ForwardAudioPacket(packet)
+			wb.forwardAudio(packet)
 		}
 	}
+}
+
+// forwardVideo hands one video packet from the camera to the forwarder.
+func (wb *WebRTCBridge) forwardVideo(packet *rtp.Packet) {
+	wb.videoPackets.Add(1)
+	wb.rtpForwarder.ForwardVideoPacket(packet)
+}
+
+// forwardAudio hands one audio packet from the camera to the forwarder.
+func (wb *WebRTCBridge) forwardAudio(packet *rtp.Packet) {
+	wb.audioPackets.Add(1)
+	wb.rtpForwarder.ForwardAudioPacket(packet)
 }
 
 func (wb *WebRTCBridge) createHTTPClient() *http.Client {
@@ -693,8 +901,8 @@ func (wb *WebRTCBridge) probe(msg pion.DataChannelMessage) (bool, error) {
 			return false, err
 		}
 
-		wb.rtpForwarder.videoSSRC = recvMessage.Video.SSRC
-		wb.rtpForwarder.audioSSRC = recvMessage.Audio.SSRC
+		wb.videoSSRC.Store(recvMessage.Video.SSRC)
+		wb.audioSSRC.Store(recvMessage.Audio.SSRC)
 
 		completeMsg, _ := json.Marshal(tuya.DataChannelMessage{
 			Type: "complete",
@@ -721,8 +929,8 @@ func (wb *WebRTCBridge) sendMessageToDataChannel(message []byte) error {
 }
 
 func (wb *WebRTCBridge) handleError(err error) {
-	if wb.OnError != nil {
+	if onError := wb.errorHandler(); onError != nil {
 		wb.waiter.Done(err)
-		wb.OnError(err)
+		onError(err)
 	}
 }

@@ -5,8 +5,11 @@ loaded by tests without dragging in the full HA stack.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import tempfile
+import time
 
 BRIDGE_CONFIG_PREFIX = "philips_avent_bridge_"
 BRIDGE_CONFIG_SUFFIX = ".json"
@@ -91,6 +94,9 @@ def build_bridge_config(
     bridge_port: int,
     cameras: list,
     talkback: bool = False,
+    uid: str = "",
+    lan_streaming: bool = True,
+    lan: dict[str, dict] | None = None,
 ) -> dict:
     """Build the bridge JSON the add-on reads.
 
@@ -99,7 +105,19 @@ def build_bridge_config(
     by any other host (issues #44, #58). `talkback` asks the camera for two-way
     audio, which the monitor answers by stopping a playing lullaby, so it
     defaults to off (issue #72).
+    `uid` and `lan_streaming` steer the LAN path; `lan` maps a camera id to its
+    `local_key`, `p2p_password`, `lan_ip` and `lan_protocol`.
+
+    With LAN streaming off the bridge never uses the local key or the P2P
+    password, so they stay out of a file that every backup copies. The address
+    and protocol stay: they are no credentials, and the next setup seeds the LAN
+    client from them, which keeps the file the same across restarts.
     """
+    if not lan_streaming:
+        lan = {
+            camera_id: {**values, "local_key": "", "p2p_password": ""}
+            for camera_id, values in (lan or {}).items()
+        }
     return {
         "signing_key": signing_key,
         "sid": sid,
@@ -110,12 +128,14 @@ def build_bridge_config(
         "package_name": package_name,
         "api_host": api_host,
         "talkback": talkback,
+        "uid": uid,
+        "lan_streaming": lan_streaming,
         "bridge_port": bridge_port,
-        "cameras": build_cameras_payload(cameras),
+        "cameras": build_cameras_payload(cameras, lan),
     }
 
 
-def build_cameras_payload(cameras: list) -> list:
+def build_cameras_payload(cameras: list, lan: dict[str, dict] | None = None) -> list:
     """Build the canonical bridge-JSON cameras list.
 
     Accepts any of the dict shapes we may hold:
@@ -123,12 +143,15 @@ def build_cameras_payload(cameras: list) -> list:
     - raw Tuya discovery dict: ``{"devId"|"deviceId", "name"|"deviceName", "productId"|"productKey"}``
     - in-memory shape from async_setup_entry: ``{"deviceId", "deviceName", "productId"}``
 
-    Returns a list of ``{"camera_id", "camera_name", "product_id"}`` dicts —
-    the contract consumed by the Go bridge in ``cmd/addon/addon.go``.
+    Returns a list of ``{"camera_id", "camera_name", "product_id", "local_key",
+    "p2p_password", "lan_ip", "lan_protocol"}`` dicts — the contract consumed by
+    the Go bridge in ``cmd/addon/addon.go``. The last four come from
+    ``lan[camera_id]`` and are empty strings when unknown.
     """
+    lan = lan or {}
     return [
         {
-            "camera_id": cam.get("deviceId") or cam.get("devId") or cam.get("id", ""),
+            "camera_id": (camera_id := cam.get("deviceId") or cam.get("devId") or cam.get("id", "")),
             "camera_name": cam.get("deviceName") or cam.get("name", "camera"),
             "product_id": (
                 cam.get("productId")
@@ -136,12 +159,64 @@ def build_cameras_payload(cameras: list) -> list:
                 or cam.get("productKey")
                 or ""
             ),
+            "local_key": lan.get(camera_id, {}).get("local_key", ""),
+            "p2p_password": lan.get(camera_id, {}).get("p2p_password", ""),
+            "lan_ip": lan.get(camera_id, {}).get("lan_ip", ""),
+            "lan_protocol": lan.get(camera_id, {}).get("lan_protocol", ""),
         }
         for cam in cameras
     ]
 
 
 BRIDGE_CONFIG_MODE = 0o600
+
+
+def previous_lan_values(text: str) -> dict[str, dict[str, str]]:
+    """Per camera ``lan_ip``, ``lan_protocol`` and ``p2p_password`` from an earlier bridge JSON.
+
+    Missing or corrupt text gives an empty result. Used to keep the file
+    byte-identical across restarts and to keep a password when the cloud call
+    that refreshes it fails.
+    """
+    try:
+        cameras = json.loads(text).get("cameras", [])
+        return {
+            cam["camera_id"]: {
+                "lan_ip": str(cam.get("lan_ip") or ""),
+                "lan_protocol": str(cam.get("lan_protocol") or ""),
+                "p2p_password": str(cam.get("p2p_password") or ""),
+            }
+            for cam in cameras
+        }
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return {}
+
+
+_TEMP_PREFIX = ".philips_avent_bridge_"
+_TEMP_SUFFIX = ".tmp"
+# A write takes milliseconds. A temporary file older than this was left by a
+# crash, not by a write still in flight in another config entry.
+_LEFTOVER_AGE_SECONDS = 60
+
+
+def _remove_leftover_temp_files(directory: str) -> None:
+    """Remove temporary bridge configs a crash left behind; best effort."""
+    cutoff = time.time() - _LEFTOVER_AGE_SECONDS
+    try:
+        with os.scandir(directory) as entries:
+            leftovers = [
+                entry.path
+                for entry in entries
+                if entry.name.startswith(_TEMP_PREFIX)
+                and entry.name.endswith(_TEMP_SUFFIX)
+                and entry.is_file(follow_symlinks=False)
+                and entry.stat(follow_symlinks=False).st_mtime < cutoff
+            ]
+    except OSError:
+        return
+    for leftover in leftovers:
+        with contextlib.suppress(OSError):
+            os.unlink(leftover)
 
 
 def write_bridge_config_file(path, config: dict) -> None:
@@ -152,17 +227,31 @@ def write_bridge_config_file(path, config: dict) -> None:
     all mount and which every backup copies. ``Path.write_text`` left it at
     the process umask, so in practice 0644.
 
-    The mode is tightened on the open file descriptor before any content is
-    written, so an already-existing 0644 file never holds the new session
-    while still world-readable. ``os.open`` alone would not be enough: its
-    mode argument only applies when the file is created.
+    The content goes to a temporary file in the same directory, owner-only
+    before anything is written to it, which then replaces the old file in one
+    step. Truncating in place let run.sh's md5 poll, or the seed read at the
+    next setup, catch a half-written file: a changed md5 restarts the bridge
+    on a config it cannot parse, and the full write then restarts it again
+    (#73). The temporary name matches neither the add-on's glob nor the
+    orphan cleanup, and it is removed if the write fails. One a hard crash
+    left behind still holds a session, so the next write removes it.
     """
     payload = json.dumps(config, indent=2)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, BRIDGE_CONFIG_MODE)
-    with os.fdopen(fd, "w") as handle:
-        if hasattr(os, "fchmod"):
-            os.fchmod(handle.fileno(), BRIDGE_CONFIG_MODE)
-        handle.write(payload)
+    directory = os.path.dirname(os.fspath(path)) or "."
+    _remove_leftover_temp_files(directory)
+    fd, tmp = tempfile.mkstemp(prefix=_TEMP_PREFIX, suffix=_TEMP_SUFFIX, dir=directory)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            if hasattr(os, "fchmod"):
+                os.fchmod(handle.fileno(), BRIDGE_CONFIG_MODE)
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 # homeassistant.const.CONF_PASSWORD, spelled out so this module stays free of

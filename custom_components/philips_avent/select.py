@@ -25,6 +25,7 @@ from .const import (
     LULLABY_TRACK_MAP,
     TIMER_OPTIONS,
     TIMER_SECONDS_TO_LABEL,
+    lullaby_report_id,
     lullaby_track_id,
 )
 from .coordinator import PhilipsAventCoordinator
@@ -79,11 +80,7 @@ class AventLullabySelect(CoordinatorEntity, SelectEntity):
 
     def _current_track_id(self) -> int | None:
         """The track id the camera last reported in DPS 248, if any."""
-        return audio.track_id_in((self.coordinator.data or {}).get(DPS_LULLABY_CURRENT))
-
-    @property
-    def options(self) -> list[str]:
-        return audio.track_options(self.coordinator.catalogue, preset=self._preset)
+        return lullaby_report_id((self.coordinator.data or {}).get("248"))
 
     @property
     def current_option(self) -> str | None:
@@ -100,30 +97,14 @@ class AventLullabySelect(CoordinatorEntity, SelectEntity):
             track_id = lullaby_track_id(option, self._current_track_id())
         if track_id is None:
             return
-        await self.coordinator.set_dps({
-            DPS_LULLABY_PLAY: json.dumps({"bizcode": LULLABY_BIZ_CODE, "id": track_id}),
-            DPS_LULLABY_CONTROL: "play",
-        })
-        self.coordinator.data[DPS_LULLABY_CURRENT] = json.dumps(
-            {"bizcode": LULLABY_BIZ_CODE, "id": track_id, "errcode": 0}
+        # The monitor echoes the chosen track in DPS 248, not in the 202 written.
+        await self.coordinator.set_dps(
+            {
+                "202": json.dumps({"bizcode": "phi-no-bm", "id": track_id}),
+                DPS_LULLABY_CONTROL: "play",
+            },
+            optimistic={"248": json.dumps({"bizcode": "phi-no-bm", "id": track_id, "errcode": 0})},
         )
-        self.coordinator.async_update_listeners()
-
-
-class AventRecordingSelect(AventLullabySelect):
-    """The camera's own recordings, which the app lists apart from the presets.
-
-    The app plays a recording with the same DPS 202 command as a preset and
-    stops it through DPS 201 like one. Unavailable while the camera holds none.
-    """
-
-    _attr_translation_key = "lullaby_recording"
-    _attr_icon = "mdi:account-voice"
-    _preset = False
-
-    @property
-    def available(self) -> bool:
-        return super().available and bool(self.options)
 
 
 class AventPlayModeSelect(CoordinatorEntity, SelectEntity):
@@ -150,8 +131,6 @@ class AventPlayModeSelect(CoordinatorEntity, SelectEntity):
         if mode is None:
             return
         await self.coordinator.set_dps({DPS_LULLABY_MODE: mode})
-        self.coordinator.data[DPS_LULLABY_MODE] = mode
-        self.async_write_ha_state()
 
 
 class AventTimerSelect(CoordinatorEntity, SelectEntity):
@@ -190,9 +169,5 @@ class AventTimerSelect(CoordinatorEntity, SelectEntity):
         seconds = TIMER_OPTIONS.get(option, 0)
         if seconds == 0:
             await self.coordinator.set_dps({self._dps_switch: False})
-            self.coordinator.data[self._dps_switch] = False
         else:
             await self.coordinator.set_dps({self._dps_switch: True, self._dps_timer: seconds})
-            self.coordinator.data[self._dps_switch] = True
-            self.coordinator.data[self._dps_timer] = seconds
-        self.async_write_ha_state()

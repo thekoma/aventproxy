@@ -5,6 +5,8 @@ an HA runtime; `lan.py` owns the sockets and calls into here.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 # The monitor closes an idle LAN socket after roughly 30-45 seconds, which shows
 # up as "Unexpected Payload from Device" followed by a reconnect every ~30s
 # (issue #62). tinytuya leaves keep-alive to the caller on persistent sockets, so
@@ -27,6 +29,19 @@ LAN_ERR_CONNECT = "901"
 LAN_ERR_PAYLOAD = "904"
 LAN_ERR_OFFLINE = "905"
 CONNECTION_ERRORS = frozenset({LAN_ERR_CONNECT, LAN_ERR_OFFLINE})
+LAN_ERR_TIMEOUT = "902"
+LAN_ERR_KEY_OR_VERSION = "914"
+
+# tinytuya hands a failed write back as an error dict rather than raising.
+# 905 and 914 come from opening the socket, before anything is sent: nothing to
+# connect to, or the session key refused (3.4 and up). tinytuya can also return
+# them when a send broke off half-way and the reconnect then failed, which is
+# rare enough to accept; a step is never re-sent after a slow reply, because
+# set_dps does not wait for one. 901 and 902 can come after the send: a connection error
+# while reading the reply, or no reply at all. 904, an unreadable reply, means
+# the monitor answered, so the command landed.
+WRITE_NEVER_SENT = frozenset({LAN_ERR_OFFLINE, LAN_ERR_KEY_OR_VERSION})
+WRITE_MAYBE_SENT = frozenset({LAN_ERR_CONNECT, LAN_ERR_TIMEOUT})
 
 # Reconnect once this many unparseable frames arrive in a row.
 MAX_PAYLOAD_ERRORS = 3
@@ -35,6 +50,29 @@ MAX_PAYLOAD_ERRORS = 3
 def is_connection_error(err_code: str | None) -> bool:
     """True when a tinytuya error code means the LAN socket is unusable."""
     return str(err_code or "") in CONNECTION_ERRORS
+
+
+def lan_write_delivered(result: object, *, repeatable: bool) -> bool:
+    """Whether a tinytuya `set_value` result means the command reached the monitor.
+
+    Before this, every write that did not raise counted as sent, and the cloud
+    mirror hid the ones that never left: harmless while every command also went
+    through the cloud, a lost command once it no longer does.
+
+    `repeatable` says whether sending the command twice is harmless. An
+    absolute value is, so anything short of an answer sends it through the cloud
+    as well. A relative lullaby step is not (issue #91): it goes to the cloud
+    only when it never left, and a step lost to an ambiguous error is preferred
+    to one taken twice.
+    """
+    if not isinstance(result, dict):
+        return True
+    code = str(result.get("Err") or "")
+    if code in WRITE_NEVER_SENT:
+        return False
+    if code in WRITE_MAYBE_SENT:
+        return not repeatable
+    return True
 
 
 def should_reconnect(err_code: str | None, consecutive_payload_errors: int) -> bool:
@@ -52,6 +90,24 @@ def should_reconnect(err_code: str | None, consecutive_payload_errors: int) -> b
 def heartbeat_due(now: float, last_heartbeat: float, interval: float = HEARTBEAT_INTERVAL) -> bool:
     """True when the next keep-alive ping is due."""
     return now - last_heartbeat >= interval
+
+
+def heartbeat_outcome(result: object) -> tuple[bool, dict | None]:
+    """What a keep-alive got back: whether the socket lives, and any state pushed in its place.
+
+    tinytuya's `heartbeat(nowait=False)` skips the empty ack and returns the next
+    frame that has a payload, from the same socket the pushes arrive on. A push
+    landing in that window comes back here rather than in the receive loop, and
+    dropping it lost about half of a run of alarms on an SCD973/26 (fork
+    8c4fc03), so the caller publishes it. Only a connection error counts as
+    failure: an ack we cannot parse still proves the socket is alive.
+    """
+    if not isinstance(result, dict):
+        return True, None
+    if is_connection_error(result.get("Err")):
+        return False, None
+    dps = result.get("dps")
+    return True, (dps if isinstance(dps, dict) and dps else None)
 
 
 def data_stale(now: float, last_data: float, timeout: float = DATA_TIMEOUT) -> bool:
@@ -72,13 +128,83 @@ def reconnect_delay(consecutive_failures: int, delay: float = RECONNECT_DELAY) -
     return delay
 
 # Protocol version for the local Tuya session. 3.3 is what the integration has
-# always used and what every model connects with today. The SCD953 announces 3.5
-# in its discovery broadcast (capture on #51), and a session negotiated at the
+# always used, and what an SCD973 on firmware 1.4.0 speaks. An SCD973/26 announces
+# 3.5 in its discovery broadcast (capture on #51), and a session negotiated at the
 # wrong version cannot read frames the camera sends, which is the likely source
 # of the "Unexpected Payload from Device" frames on #62. Try what the camera
 # announces, keep 3.3 as the fallback so local control cannot regress.
 PROTOCOL_VERSION_DEFAULT = 3.3
 SUPPORTED_PROTOCOL_VERSIONS = (3.1, 3.2, 3.3, 3.4, 3.5)
+
+# From 3.4 up the session is keyed, and on such a session an SCD973/26 answered
+# DP_QUERY with all 37 keys and pushed its alarm record in DPS 212 within 0.2 to
+# 2.4 seconds (fork c3d0b83 and 619981b, measured at 3.5). A 3.3 session does
+# neither: the query goes unanswered and 212 never arrives. The maintainer's
+# SCD973 on firmware 1.4.0 speaks 3.3, so everything gated here leaves it as it
+# was.
+KEYED_PROTOCOL_MIN_VERSION = 3.4
+
+
+def keyed_protocol(version: float | None) -> bool:
+    """Whether a session at `version` carries the monitor's state on its own."""
+    return version is not None and version >= KEYED_PROTOCOL_MIN_VERSION
+
+
+# Turning one alert detector on turns the other off on a monitor speaking 3.5
+# (fork 04d6d28). An SCD951 on 3.4 and an SCD923 on 3.3 run both at once: with
+# both switches on they sent 157 motion and 344 sound records, and 212 and 149,
+# over 2-4 November 2026 (issue #110).
+EXCLUSIVE_DETECTORS_MIN_VERSION = 3.5
+
+
+def exclusive_alert_detectors(version: float | None) -> bool:
+    """Whether a monitor at `version` runs only one alert detector at a time."""
+    return version is not None and version >= EXCLUSIVE_DETECTORS_MIN_VERSION
+
+
+def seeded_session(last_ip: str | None, last_protocol: str) -> tuple[str | None, float | None]:
+    """The address and protocol a new client may dial before its first scan, or (None, None).
+
+    Seeded from the pair last published to the bridge, so a restart need not wait
+    for a broadcast. Only a keyed protocol qualifies: its handshake proves the
+    address and the version together, so a stale pair fails and the client scans.
+    A 3.3 pair is a bare TCP connect that proves neither, so those clients scan
+    first, as they always did.
+    """
+    version = parse_protocol_version(last_protocol)
+    if last_ip and keyed_protocol(version):
+        return last_ip, version
+    return None, None
+
+
+def session_candidates(announced: float | None, last_session: float | None, *, scanned: bool) -> list[float]:
+    """Protocol versions to try at an address, best guess first.
+
+    The announced version comes before the last session's. A 3.3 fallback on a
+    monitor that announces 3.5 is a TCP connect that reads nothing (see
+    `confirmed_protocol`), and starting every reconnect from it kept such a
+    monitor on 3.3 until Home Assistant restarted.
+
+    At an address that did not just come from a scan, a keyed version gets no
+    3.3 fallback: only its handshake proves the monitor is the one answering
+    there, and a failure sends the client back to the scan instead.
+    """
+    preferred = announced if announced is not None else last_session
+    if not scanned and keyed_protocol(preferred):
+        return [preferred]
+    return version_candidates(preferred)
+
+
+def baseline_dps(result: object) -> dict | None:
+    """The state in an answer to DP_QUERY, or None when it carries none.
+
+    An error frame, an empty answer or a timeout all give None: the session goes
+    on as before and the cloud poll keeps the baseline it already provided.
+    """
+    if not isinstance(result, dict) or "Err" in result:
+        return None
+    dps = result.get("dps")
+    return dps if isinstance(dps, dict) and dps else None
 
 
 def parse_protocol_version(value: object) -> float | None:
@@ -117,3 +243,52 @@ def version_candidates(
     if default not in candidates:
         candidates.append(default)
     return candidates
+
+
+def confirmed_protocol(version: float, announced: float | None) -> str | None:
+    """The protocol to publish for a session at `version`, or None when it proves nothing.
+
+    Below 3.4 tinytuya does no handshake, so the 3.3 fallback on a monitor that
+    announces 3.5 is only a TCP connect, often after a Wi-Fi blip. Publishing it
+    would restart the bridge and keep every stream off the LAN until Home
+    Assistant restarts, so only a version at or above the announced one counts.
+    """
+    if announced is None or version >= announced:
+        return str(version)
+    return None
+
+
+class AddressPublisher:
+    """Report the monitor's LAN address and protocol when the pair becomes new and complete.
+
+    The LAN client clears its address on every failed connect and refills it after
+    rediscovery. Reporting those blips would rewrite the bridge JSON, and restart
+    the bridge, twice per hiccup (issue #73), so losing the address says nothing
+    and a return to the last reported pair says nothing either. The protocol rides
+    along because the bridge's LAN path speaks only 3.5.
+    """
+
+    def __init__(
+        self, callback: Callable[[str], None] | None, last: str | None = None, protocol: str = ""
+    ) -> None:
+        self._callback = callback
+        # Seeded from the bridge JSON on start, so rediscovery at the same address stays silent.
+        self._last = last or None
+        self._protocol = protocol or ""
+
+    @property
+    def last(self) -> str | None:
+        """The last address reported (or seeded): what the bridge JSON carries."""
+        return self._last
+
+    @property
+    def protocol(self) -> str:
+        """The protocol reported (or seeded) with that address, such as "3.3"; "" when unknown."""
+        return self._protocol
+
+    def update(self, ip: str | None, protocol: str | None) -> None:
+        if not ip or not protocol or (ip, protocol) == (self._last, self._protocol):
+            return
+        self._last, self._protocol = ip, protocol
+        if self._callback:
+            self._callback(ip)

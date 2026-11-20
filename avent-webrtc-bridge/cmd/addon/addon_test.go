@@ -1,10 +1,17 @@
 package addon
 
 import (
+	"errors"
+	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"avent-webrtc-bridge/pkg/rtsp"
+	"avent-webrtc-bridge/pkg/storage"
 	"avent-webrtc-bridge/pkg/tuya"
 )
 
@@ -21,7 +28,7 @@ func TestLoadConfig_ValidTwoCameras(t *testing.T) {
 	  "package_name": "pkg",
 	  "bridge_port": 38554,
 	  "cameras": [
-	    {"camera_id": "abc123", "camera_name": "Erik", "product_id": "selj2idknqhjnids"},
+	    {"camera_id": "abc123", "camera_name": "Monitor", "product_id": "selj2idknqhjnids"},
 	    {"camera_id": "def456", "camera_name": "Anna"}
 	  ]
 	}`
@@ -42,7 +49,7 @@ func TestLoadConfig_ValidTwoCameras(t *testing.T) {
 	if len(cfg.Cameras) != 2 {
 		t.Fatalf("cameras = %d, want 2", len(cfg.Cameras))
 	}
-	if cfg.Cameras[0].ID != "abc123" || cfg.Cameras[0].Name != "Erik" {
+	if cfg.Cameras[0].ID != "abc123" || cfg.Cameras[0].Name != "Monitor" {
 		t.Errorf("camera[0] = %+v", cfg.Cameras[0])
 	}
 	if cfg.Cameras[0].ProductID != "selj2idknqhjnids" {
@@ -75,7 +82,7 @@ func TestLoadConfig_MissingFile(t *testing.T) {
 }
 
 func TestValidateConfig_RejectsMissingCreds(t *testing.T) {
-	cfg := BridgeConfig{Cameras: []Camera{{ID: "abc", Name: "Erik"}}}
+	cfg := BridgeConfig{Cameras: []Camera{{ID: "abc", Name: "Monitor"}}}
 	if err := validateConfig(cfg); err == nil {
 		t.Fatal("want error for missing signing_key")
 	}
@@ -96,7 +103,7 @@ func TestValidateConfig_AcceptsMinimal(t *testing.T) {
 	cfg := BridgeConfig{
 		SigningKey: "sk", SID: "S", AppKey: "AK", DeviceID: "D",
 		Ecode: "E", Partner: "P",
-		Cameras: []Camera{{ID: "abc", Name: "Erik"}},
+		Cameras: []Camera{{ID: "abc", Name: "Monitor"}},
 	}
 	if err := validateConfig(cfg); err != nil {
 		t.Fatalf("validateConfig: unexpected error %v", err)
@@ -107,7 +114,7 @@ func TestValidateConfig_RejectsMissingEcode(t *testing.T) {
 	cfg := BridgeConfig{
 		SigningKey: "sk", SID: "S", AppKey: "AK", DeviceID: "D",
 		Partner: "P",
-		Cameras: []Camera{{ID: "abc", Name: "Erik"}},
+		Cameras: []Camera{{ID: "abc", Name: "Monitor"}},
 	}
 	if err := validateConfig(cfg); err == nil {
 		t.Fatal("want error for missing ecode")
@@ -118,7 +125,7 @@ func TestValidateConfig_RejectsMissingPartner(t *testing.T) {
 	cfg := BridgeConfig{
 		SigningKey: "sk", SID: "S", AppKey: "AK", DeviceID: "D",
 		Ecode:   "E",
-		Cameras: []Camera{{ID: "abc", Name: "Erik"}},
+		Cameras: []Camera{{ID: "abc", Name: "Monitor"}},
 	}
 	if err := validateConfig(cfg); err == nil {
 		t.Fatal("want error for missing partner")
@@ -127,15 +134,15 @@ func TestValidateConfig_RejectsMissingPartner(t *testing.T) {
 
 func TestAssignPaths_NoCollision(t *testing.T) {
 	cams := []Camera{
-		{ID: "abc123", Name: "Erik"},
+		{ID: "abc123", Name: "Monitor"},
 		{ID: "def456", Name: "Anna"},
 	}
 	out := assignPaths(cams)
 	if len(out) != 2 {
 		t.Fatalf("got %d, want 2", len(out))
 	}
-	if out[0].Path != "/Erik" {
-		t.Errorf("out[0].Path = %q, want /Erik", out[0].Path)
+	if out[0].Path != "/Monitor" {
+		t.Errorf("out[0].Path = %q, want /Monitor", out[0].Path)
 	}
 	if out[1].Path != "/Anna" {
 		t.Errorf("out[1].Path = %q, want /Anna", out[1].Path)
@@ -207,15 +214,15 @@ func TestAssignPaths_CascadingFallback(t *testing.T) {
 func TestAssignPaths_DuplicateCameraID(t *testing.T) {
 	// Different names per duplicate to make the "first entry wins" contract explicit.
 	cams := []Camera{
-		{ID: "abc123", Name: "Erik"},
-		{ID: "abc123", Name: "Renamed Erik"},
+		{ID: "abc123", Name: "Monitor"},
+		{ID: "abc123", Name: "Renamed Monitor"},
 		{ID: "def456", Name: "Anna"},
 	}
 	out := assignPaths(cams)
 	if len(out) != 2 {
 		t.Fatalf("got %d, want 2 (the second 'abc123' should be skipped)", len(out))
 	}
-	if out[0].ID != "abc123" || out[0].Name != "Erik" {
+	if out[0].ID != "abc123" || out[0].Name != "Monitor" {
 		t.Errorf("first occurrence should win, got %+v", out[0])
 	}
 	if out[1].ID != "def456" {
@@ -226,7 +233,7 @@ func TestAssignPaths_DuplicateCameraID(t *testing.T) {
 func TestAssignPaths_SkipsMissingID(t *testing.T) {
 	cams := []Camera{
 		{ID: "", Name: "Ghost"},
-		{ID: "abc123", Name: "Erik"},
+		{ID: "abc123", Name: "Monitor"},
 	}
 	out := assignPaths(cams)
 	if len(out) != 1 {
@@ -239,7 +246,7 @@ func TestAssignPaths_SkipsMissingID(t *testing.T) {
 
 func TestAssignPaths_PreservesProductID(t *testing.T) {
 	cams := []Camera{
-		{ID: "abc123", Name: "Erik", ProductID: "selj2idknqhjnids"},
+		{ID: "abc123", Name: "Monitor", ProductID: "selj2idknqhjnids"},
 		{ID: "def456", Name: "Anna", ProductID: ""},
 	}
 	out := assignPaths(cams)
@@ -267,7 +274,7 @@ func TestLoadConfig_APIHost(t *testing.T) {
 	  "package_name": "pkg",
 	  "api_host": "a1.tuyaus.com",
 	  "bridge_port": 38554,
-	  "cameras": [{"camera_id": "abc123", "camera_name": "Erik"}]
+	  "cameras": [{"camera_id": "abc123", "camera_name": "Monitor"}]
 	}`
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -299,7 +306,7 @@ func TestLoadConfig_APIHostMissingFallsBackToEU(t *testing.T) {
 	  "device_id": "D",
 	  "package_name": "pkg",
 	  "bridge_port": 38554,
-	  "cameras": [{"camera_id": "abc123", "camera_name": "Erik"}]
+	  "cameras": [{"camera_id": "abc123", "camera_name": "Monitor"}]
 	}`
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -329,7 +336,7 @@ func TestLoadConfig_TalkbackDefaultsToOff(t *testing.T) {
 	  "signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P",
 	  "app_key": "AK", "device_id": "D", "package_name": "pkg",
 	  "api_host": "a1.tuyaeu.com", "bridge_port": 38554,
-	  "cameras": [{"camera_id": "abc123", "camera_name": "Erik"}]
+	  "cameras": [{"camera_id": "abc123", "camera_name": "Monitor"}]
 	}`
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -350,7 +357,7 @@ func TestLoadConfig_TalkbackHonoured(t *testing.T) {
 	  "signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P",
 	  "app_key": "AK", "device_id": "D", "package_name": "pkg",
 	  "api_host": "a1.tuyaeu.com", "talkback": true, "bridge_port": 38554,
-	  "cameras": [{"camera_id": "abc123", "camera_name": "Erik"}]
+	  "cameras": [{"camera_id": "abc123", "camera_name": "Monitor"}]
 	}`
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -391,7 +398,7 @@ func TestLoadConfig_RTSPBind(t *testing.T) {
 	body := `{
 	  "signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P",
 	  "app_key": "AK", "device_id": "D", "rtsp_bind_address": "0.0.0.0",
-	  "cameras": [{"camera_id": "abc123", "camera_name": "Erik"}]
+	  "cameras": [{"camera_id": "abc123", "camera_name": "Monitor"}]
 	}`
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -402,5 +409,208 @@ func TestLoadConfig_RTSPBind(t *testing.T) {
 	}
 	if cfg.RTSPBind != "0.0.0.0" {
 		t.Errorf("RTSPBind = %q, want 0.0.0.0", cfg.RTSPBind)
+	}
+}
+
+func writeCfg(t *testing.T, body string) BridgeConfig {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "bridge.json")
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig(p)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	return cfg
+}
+
+func TestLoadConfigWithLANFields(t *testing.T) {
+	cfg := writeCfg(t, `{
+	  "signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P",
+	  "app_key": "AK", "device_id": "D", "uid": "u1", "lan_streaming": false,
+	  "cameras": [{"camera_id": "abc123", "camera_name": "Monitor",
+	    "local_key": "lk", "p2p_password": "pw", "lan_ip": "192.0.2.7", "lan_protocol": "3.3"}]
+	}`)
+	if cfg.UID != "u1" {
+		t.Errorf("UID = %q", cfg.UID)
+	}
+	if lanStreamingEnabled(cfg) {
+		t.Error("lan_streaming false must disable LAN streaming")
+	}
+	got, ok := lanTargets(cfg.Cameras)["abc123"]
+	want := rtsp.LANTarget{LocalKey: "lk", Password: "pw", IP: "192.0.2.7", Protocol: "3.3"}
+	if !ok || got != want {
+		t.Errorf("target = %+v (present %v), want %+v", got, ok, want)
+	}
+}
+
+func TestLoadConfigWithoutLANFields(t *testing.T) {
+	cfg := writeCfg(t, `{
+	  "signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P",
+	  "app_key": "AK", "device_id": "D",
+	  "cameras": [{"camera_id": "abc123", "camera_name": "Monitor"}]
+	}`)
+	if !lanStreamingEnabled(cfg) {
+		t.Error("an absent lan_streaming must mean enabled")
+	}
+	if n := len(lanTargets(cfg.Cameras)); n != 0 {
+		t.Errorf("targets = %d, want 0", n)
+	}
+}
+
+func TestLanTargetsNeedKeyAndPassword(t *testing.T) {
+	got := lanTargets([]Camera{
+		{ID: "a", LocalKey: "lk"},
+		{ID: "b", P2PPassword: "pw"},
+		{ID: "c", LocalKey: "lk", P2PPassword: "pw"},
+	})
+	if len(got) != 1 {
+		t.Fatalf("targets = %v, want only c", got)
+	}
+	if _, ok := got["c"]; !ok {
+		t.Errorf("c missing: %v", got)
+	}
+}
+
+func addonUser(key, uid string) storage.UserSession {
+	return storage.UserSession{
+		Region: "addon", UserKey: key,
+		SessionData: &tuya.SessionData{LoginResult: &tuya.LoginResult{Uid: uid}},
+	}
+}
+
+func TestCloudFallbackUser(t *testing.T) {
+	errCloud := errors.New("API verification failed: down")
+	targets := map[string]rtsp.LANTarget{"a": {LocalKey: "lk", Password: "pw"}}
+	a, b := addonUser("addon_a", "ua"), addonUser("addon_b", "ub")
+	other := storage.UserSession{Region: "other", UserKey: "other_x"}
+
+	// The registry from the last cloud start: addon_b registered camera "a".
+	registry := []storage.CameraInfo{{UserKey: "addon_b", DeviceID: "a"}, {UserKey: "addon_a", DeviceID: "other-cam"}}
+
+	cases := []struct {
+		name     string
+		uid      string
+		targets  map[string]rtsp.LANTarget
+		stored   []storage.UserSession
+		registry []storage.CameraInfo
+		wantKey  string // empty: the original error
+	}{
+		{"configured uid picks the matching user", "ub", targets, []storage.UserSession{a, b}, nil, "addon_b"},
+		{"configured uid skips other regions", "ua", targets, []storage.UserSession{other, a}, nil, "addon_a"},
+		{"configured uid without a match fails", "uz", targets, []storage.UserSession{a, b}, nil, ""},
+		{"no uid fails, even with a sole add-on user", "", targets, []storage.UserSession{a}, registry, ""},
+		{"no LAN targets fails", "ua", nil, []storage.UserSession{a}, nil, ""},
+		{"no stored add-on user fails", "ua", targets, []storage.UserSession{other}, nil, ""},
+		// The user is saved under the cloud's user id. Should it ever differ
+		// from the integration's uid, the cameras still name the account.
+		{"a uid that differs falls back to the user owning a LAN camera", "uz", targets, []storage.UserSession{a, b}, registry, "addon_b"},
+		{"the configured uid wins over camera ownership", "ua", targets, []storage.UserSession{a, b}, registry, "addon_a"},
+		{"owning only other cameras is not enough", "uz", targets, []storage.UserSession{a}, registry, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			u, err := cloudFallbackUser(errCloud, c.uid, c.targets, c.stored, c.registry)
+			if c.wantKey == "" {
+				if u != nil || !errors.Is(err, errCloud) {
+					t.Errorf("got %+v, %v; want the original error", u, err)
+				}
+				return
+			}
+			if err != nil || u == nil || u.UserKey != c.wantKey {
+				t.Errorf("got %+v, %v", u, err)
+			}
+		})
+	}
+}
+
+func TestLanUID(t *testing.T) {
+	cases := []struct {
+		cfgUID, cloudUID, want string
+		differ                 bool
+	}{
+		{"u1", "u1", "u1", false},
+		{"", "u1", "u1", false},  // a config without uid takes the cloud's
+		{"u1", "", "u1", false},  // the cloud returned no id
+		{"u1", "u2", "u1", true}, // LAN offers keep the integration's uid
+	}
+	for _, c := range cases {
+		got, differ := lanUID(c.cfgUID, c.cloudUID)
+		if got != c.want || differ != c.differ {
+			t.Errorf("lanUID(%q, %q) = %q, %v; want %q, %v", c.cfgUID, c.cloudUID, got, differ, c.want, c.differ)
+		}
+	}
+}
+
+func TestCloudCheckWarning(t *testing.T) {
+	unreachable := fmt.Errorf("API verification failed: %w", &url.Error{Op: "Post", URL: "https://a1.tuyaeu.com/api.json", Err: &net.OpError{Op: "dial", Err: errors.New("no route to host")}})
+	if got := cloudCheckWarning(unreachable); !strings.HasPrefix(got, "Cloud unreachable,") {
+		t.Errorf("a network error reads %q", got)
+	}
+	expired := fmt.Errorf("API verification failed: %w", errors.New("API error: session expired (code: USER_SESSION_INVALID)"))
+	if got := cloudCheckWarning(expired); strings.Contains(got, "unreachable") {
+		t.Errorf("an API error such as an expired sid reads %q; the cloud answered", got)
+	}
+}
+
+// The issue #72 knobs come from the Dev card's options through run.sh. A card
+// that does not define them passes no flag, and the defaults apply.
+func TestSessionFlags(t *testing.T) {
+	for _, tc := range []struct {
+		args       []string
+		speakerOff bool
+		audio      string
+		wantErr    bool
+	}{
+		{nil, false, rtsp.WebRTCAudioRecvonly, false}, // stable and beta: as before #72's experiment
+		{[]string{"--speaker-off=false"}, false, rtsp.WebRTCAudioRecvonly, false},
+		{[]string{"--speaker-off=true", "--webrtc-audio", "none"}, true, rtsp.WebRTCAudioNone, false},
+		{[]string{"--webrtc-audio", "sendrecv"}, false, "", true},
+	} {
+		cmd := NewAddonCmd()
+		if err := cmd.ParseFlags(tc.args); err != nil {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		speakerOff, audio, err := sessionFlags(cmd)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("%v: want an error", tc.args)
+			}
+			continue
+		}
+		if err != nil || speakerOff != tc.speakerOff || audio != tc.audio {
+			t.Errorf("%v: got %v, %q, %v; want %v, %q", tc.args, speakerOff, audio, err, tc.speakerOff, tc.audio)
+		}
+	}
+}
+
+// cloud_transport comes from the Dev card through run.sh. Without the flag, as
+// on the stable and beta cards, the bridge keeps the webrtc session.
+func TestCloudTransportFlag(t *testing.T) {
+	for _, tc := range []struct {
+		args    []string
+		want    string
+		wantErr bool
+	}{
+		{nil, rtsp.CloudTransportWebRTC, false},
+		{[]string{"--cloud-transport", "webrtc"}, rtsp.CloudTransportWebRTC, false},
+		{[]string{"--cloud-transport", "imm"}, rtsp.CloudTransportIMM, false},
+		{[]string{"--cloud-transport", "lan"}, "", true},
+	} {
+		cmd := NewAddonCmd()
+		if err := cmd.ParseFlags(tc.args); err != nil {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		got, err := cloudTransportFlag(cmd)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("%v: want an error", tc.args)
+			}
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Errorf("%v: got %q, %v; want %q", tc.args, got, err, tc.want)
+		}
 	}
 }

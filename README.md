@@ -14,7 +14,7 @@ Home Assistant integration for Philips Avent SCD973/SCD923 baby monitors, provid
 
 | Feature | Entity Type | Description |
 |---------|-------------|-------------|
-| 📹 Live Video | Camera | 1080p H.264 stream via WebRTC→RTSP bridge |
+| 📹 Live Video | Camera | 1080p H.264 stream via WebRTC→RTSP bridge, over your local network when possible |
 | 🌡️ Temperature | Sensor | Room temperature from built-in sensor |
 | 💡 Night Light | Switch + Number | On/off + brightness 1-100% |
 | 🎵 Lullabies | Buttons + Number + Select | Play/pause/stop/next/prev + volume + track |
@@ -24,6 +24,10 @@ Home Assistant integration for Philips Avent SCD973/SCD923 baby monitors, provid
 | 🏃 Motion Detected | Binary Sensor | Fires when motion is detected (auto-clears after 30s) |
 | 🔊 Sound Detected | Binary Sensor | Fires when sound is detected (auto-clears after 30s) |
 | 🔒 Privacy Mode | Switch | Camera on/off |
+
+The video travels over your local network whenever the bridge can reach the monitor directly. On monitors that allow it, the signalling that starts a stream stays local too, so no cloud call is needed. See [Local streaming](#local-streaming) below.
+
+Monitors with SenseIQ also get sleep and presence entities. Among them are Baby Detected, Baby Moving, Breathing rate, Sleep stage (awake, light, deep, out of bed, settling), the sleep duration and a nightly summary.
 
 Multiple monitors on one Tuya account are supported: the bridge serves each camera from the same port on a distinct RTSP path derived from the camera's display name.
 
@@ -41,7 +45,9 @@ The integration is model-agnostic (it talks to the Tuya cloud API generically), 
 | SCD921 | ⚠️ Partial: video works but is intermittent; motion/sound detection and WiFi signal behave inconsistently ([#40](https://github.com/thekoma/aventproxy/issues/40)) |
 | SCD860 | ❓ Requested, not yet confirmed ([#59](https://github.com/thekoma/aventproxy/issues/59)) |
 
-Motion and sound alerts do not travel the same way on every model. The SCD973 and SCD923 report them on DPS 250 and 141, while the SCD951 and SCD953 use a timestamped alarm record on DPS 212 instead. Both shapes are handled since 2026.8.0. If your monitor raises an alert the app notifies you about and Home Assistant stays quiet, the log now names the alert Tuya sent, which usually turns the fix into one line.
+Motion and sound alerts do not travel the same way on every monitor. Some report them on DPS 250 and 141, such as an SCD973 on firmware 1.4.0. Others use a timestamped alarm record on DPS 212 instead: the SCD951, the SCD953, and the SCD973/26 in Leonard Pitzu's fork. The choice follows the firmware, not the model, so the integration reads both on every monitor. Both shapes are handled since 2026.8.0. If your monitor raises an alert the app notifies you about and Home Assistant stays quiet, the log now names the alert Tuya sent, which usually turns the fix into one line.
+
+LAN streaming has only been tested on an SCD973/26.
 
 Got a model that isn't listed, or one that misbehaves? A [diagnostics dump](docs/reporting-issues.md) is the fastest way to get it mapped.
 
@@ -68,7 +74,7 @@ Or manually:
 2. Add `https://github.com/thekoma/aventproxy`
 3. Install "Philips Avent WebRTC Bridge (Addon)"
 
-**Two cards, one choice.** The store shows the bridge twice:
+**Three cards, one choice.** The store shows the bridge three times:
 
 | Card | Install it when |
 |------|-----------------|
@@ -93,9 +99,11 @@ The country matters: a Philips/Tuya account lives in one regional server, and th
 
 ### Running the bridge outside Home Assistant
 
-Two-way audio is off by default. Asking the camera for it makes the monitor stop a playing lullaby and restart it from the beginning when you close the stream, so listening does not imply talking. If a client of yours really talks back through the RTSP stream, turn on **Two-way audio (talkback)** under Configure.
+Two-way audio is off by default. Asking the camera for it makes the monitor stop a playing lullaby and restart it from the beginning when you close the stream, so listening does not imply talking. If a client of yours really talks back through the RTSP stream, turn on **Two-way audio (talkback)** under Configure. Home Assistant 2026.11 can be that client: with talkback on, the camera tells it that it takes audio, and the camera dialog shows a microphone once the two-way audio preview is on under Settings → System → Labs (it needs HTTPS and a WebRTC stream). With `talkback_mode: on_demand`, the add-on's default, the monitor is asked for two-way audio only while someone talks, so the lullaby pauses only then (see the add-on's changelog). On some monitors a stream pauses a playing lullaby even with two-way audio off ([#72](https://github.com/thekoma/aventproxy/issues/72)). On an SCD973 the cause turned out to be the webrtc session itself: the monitor treats it as the app talking. The add-on's `cloud_transport: imm` option avoids it there (see [imm over cloud signalling](#imm-over-cloud-signalling-experimental)). The Dev card's `speaker_off` option, described in its changelog, did not help.
 
 If you don't run the add-on but host the bridge yourself, in its own container or on another machine, tell the integration where to find it: **Settings → Integrations → Philips Avent → Configure → Bridge host**. It defaults to `localhost`, which is only correct when the bridge shares the network with Home Assistant. A wrong host makes the camera entity flap between `Unavailable` and `Idle`, because Home Assistant marks a camera unavailable while its stream cannot be opened.
+
+Give that container the directory with `philips_avent_bridge.json` in it, as `docker-compose.yml` does with the whole `/config`, not the file alone. The integration replaces the file in one step (it writes a new one and renames it over the old), and a bind mount of a single file stays on the file that was there when the container started, so the bridge would keep reading the old credentials (thanks to Luuk Visser, [#110](https://github.com/thekoma/aventproxy/issues/110)).
 
 #### Who can reach the RTSP stream
 
@@ -105,7 +113,7 @@ The bridge's RTSP server has no password. The add-on therefore listens on loopba
 
 The integration exposes `binary_sensor.<camera>_sound_detected` and `binary_sensor.<camera>_motion_detected` that turn on for ~30 seconds when the monitor reports an event. They are the trigger points for any automation.
 
-Note: detection must be enabled on the device side via the `🔊 Sound Alert` / `🏃 Motion Alert` switches — otherwise the monitor never sends the event.
+Note: detection must be enabled on the device side via the `🔊 Sound Alert` / `🏃 Motion Alert` switches — otherwise the monitor never sends the event. On a monitor whose LAN session has confirmed protocol 3.4 or newer, only one detector runs at a time. Turning one switch on there turns the other off, and turning one off leaves the other alone.
 
 ```yaml
 # Mobile notification when sound is detected
@@ -182,6 +190,49 @@ The integration uses the same Tuya Mobile SDK API as the official Philips Avent 
 └─────────────────────────────┘
 ```
 
+### Local streaming
+
+The video already travels over your local network whenever the bridge and the monitor can reach each other directly. ICE picks the monitor's LAN address, and a capture on an SCD973 showed every media packet coming straight from the monitor. What can go through the Tuya cloud is the *signalling*, the short exchange that starts a stream. The bridge log names each stream by it: `Streaming <camera> with cloud signalling` or `Streaming <camera> with LAN signalling`. LAN signalling, on the monitors that allow it (below), needs no cloud call, so a stream still starts when Tuya or your internet connection is down.
+
+The bridge tries LAN signalling first, under these conditions:
+- the stream is HD, and talkback is off or on demand;
+- LAN streaming is on;
+- the camera has a local key and a P2P password;
+- the integration knows the camera's LAN address.
+
+The monitor must speak Tuya LAN protocol 3.5. Monitors on 3.3 (seen on an SCD973 with firmware 1.4.0) keep cloud signalling, and the bridge log says `Not using LAN signalling for <camera>: protocol 3.3`. The stream must deliver H.264, otherwise the first-frame check below sends it to the cloud. `/sd` streams, and talkback in its session-wide mode, always use cloud signalling. The monitor must also have reached the internet once since it booted, or it sends no media to a stream with LAN signalling.
+
+If no H.264 video arrives within 4 seconds of a LAN attempt, the same start falls back to cloud signalling and that camera skips the LAN for 5 minutes. An HEVC monitor ends up here. A LAN stream that dies restarts on the cloud with the same 5-minute wait. Each further LAN failure in a row doubles the wait, up to an hour, so a monitor whose LAN never works is not probed every 5 minutes for good; a LAN stream that works ends the streak. If cloud signalling fails as well, the wait is cleared, so the next start tries the LAN again. Once the wait is over, a stream on the cloud checks the LAN in the background and moves its viewers back, with one short reconnect. RTSP clients see the same H.264 video and PCMU/8000 audio either way.
+
+The **LAN streaming** option in the integration options is on by default. Turn it off if a stream stopped working after an update, and open an issue with your monitor model and the bridge log. While it is off, the bridge config holds no local key or P2P password.
+
+#### imm over cloud signalling (experimental)
+
+The add-on has a `cloud_transport` option for streams that do not take the LAN, such as every stream from a 3.3 monitor. `webrtc`, the default, is the cloud session the bridge has always used. With `imm`, the bridge first tries the Philips app's own transport (imm, AES/KCP) with cloud signalling: the offer and answer go through Tuya's broker and the media takes the LAN path's code. The offer goes to Tuya's media relay first. If the monitor does not answer within 3 seconds, the bridge also sends it the way the app does, on the monitor's own MQTT channel, over a separate connection. That connection is shared by your cameras, opened the first time a camera needs it, and stays open as long as a session uses it. It may help with a lullaby that pauses when you open the stream ([#72](https://github.com/thekoma/aventproxy/issues/72)), and with monitors that send no video over webrtc ([#59](https://github.com/thekoma/aventproxy/issues/59)). On an SCD973 on firmware 1.4.0 (protocol 3.3), the monitor answered through the media relay and the stream came up in under a second; a playing lullaby kept playing, where the webrtc session stopped it. No other model has tried it yet.
+
+- The first version reaches the monitor on your local network only. If no H.264 video arrives, the same start falls back to the webrtc session, and that camera skips imm for 5 minutes. Nothing moves a running stream back to imm afterwards: with a viewer that never disconnects (Frigate, an always-on go2rtc), the camera stays on webrtc until that viewer reconnects. A start can take up to 16 seconds before it falls back, or 20 when a LAN attempt runs first. A stream that starts while privacy mode is on sends no video, so it uses the webrtc session, which still carries the sound, and that camera skips imm for the next 5 minutes.
+- `/sd` streams, and talkback in its session-wide mode, always use webrtc. With `talkback_mode: on_demand` the stream keeps imm, and a talk opens a webrtc session of its own.
+- The bridge fetches the local key and the P2P password it needs from the cloud, so it does not depend on the integration's **LAN streaming** option.
+- The log says `Streaming <camera> with imm over cloud signalling`, and `Answer from <camera> via moto` or `via device channel` tells which route worked. Otherwise one warning names the step that failed, such as `no answer`, `ICE timeout` or `no SPS/IDR`, before `using webrtc cloud signalling`.
+
+### Local control and alerts
+
+The integration keeps its own LAN session with the monitor, separate from the bridge's streams, for pushed state and commands. What it does with that session depends on the protocol the session negotiates.
+
+- **Protocol 3.3.** The cloud stays in the loop, as before. Pushes such as the temperature arrive locally. Commands go over the LAN and are repeated through the cloud. The cloud is still polled every 30 or 120 seconds, and motion and sound alerts arrive only through that poll.
+- **Protocol 3.4 and newer.** The session reads the monitor's full state when it comes up, and it receives alarms as pushes in DPS 212. Once the monitor has ever reported an alarm in DPS 212, three things change while the session is up:
+  - the cloud poll pauses;
+  - commands the LAN delivered are not repeated through the cloud;
+  - the cloud is only asked for the WiFi signal every 5 minutes and, on SenseIQ monitors, for the nightly summary every 15 minutes.
+
+  The poll comes back within 30 seconds of the session dropping. A monitor that has never reported DPS 212 keeps the poll and the cloud copy of commands. The integration log says `Cloud poll for <camera> paused: its LAN session at protocol 3.5 pushes state and alarms`, and later `Cloud poll for <camera> resumed`.
+
+The 3.4+ behaviour follows Leonard Pitzu's measurements on his SCD973/26 at protocol 3.5. Nobody has tested it here on a 3.4 or 3.5 monitor yet.
+
+During a cloud outage, a LAN session that has proven its key keeps the entities available. On 3.3, a session proves its key with its first decrypted push. The integration logs one warning when the cloud fails, `Cloud for <camera> failed (…); its LAN session keeps it available until the cloud answers again`, and `Cloud for <camera> answers again` when it does. On 3.3, alerts come only from the cloud poll, so Motion Detected, Sound Detected and Crying Detected read unavailable until the cloud answers. They cannot fire in the meantime, and showing them as unavailable makes that visible. The same goes for a 3.4+ monitor that has never reported DPS 212. Without a LAN session, every entity goes unavailable during an outage, as before.
+
+If the monitor is paired again and gets a new local key, the next cloud poll picks it up. The LAN session reconnects with the new key and the bridge config is rewritten, with no Home Assistant restart.
+
 ## Camera Data Points
 
 | DPS | Code | Description | Values |
@@ -233,11 +284,17 @@ cd avent-webrtc-bridge && go build -o avent-webrtc-bridge .
 
 Found a bug or an entity that behaves oddly? See [`docs/reporting-issues.md`](docs/reporting-issues.md). It's a parent-friendly, three-click walkthrough for downloading the diagnostics dump that lets us triage your device without asking for packet captures.
 
+## Supporting the project
+
+If the integration is useful to you and you would like to say thanks, you can sponsor it through [GitHub Sponsors](https://github.com/sponsors/thekoma). It is entirely optional: bug reports, tests on other models and pull requests help the project just as much.
+
 ## Acknowledgments
 
 The WebRTC bridge (`avent-webrtc-bridge/`) is forked from [tuya-ipc-terminal](https://github.com/seydx/tuya-ipc-terminal) by seydx, which itself uses WebRTC and codec utilities from [go2rtc](https://github.com/AlexxIT/go2rtc) by AlexxIT. The bridge has since diverged significantly with Philips Avent-specific features including RTP timestamp rebasing, SPS/PPS injection, RTSP backchannel audio, and MQTT-based WebRTC signaling via the Tuya Mobile SDK.
 
 Protocol research in `WHITEPAPER.md` sections 14 to 17, covering the WebRTC signaling frames, the native `libThingP2PSDK.so` analysis and the local-signaling path, was contributed by [@leonardpitzu](https://github.com/leonardpitzu) in [#51](https://github.com/thekoma/aventproxy/issues/51) from work on the sibling `aventlocal` project.
+
+The local streaming path is a port of [Leonard Pitzu's work](https://github.com/leonardpitzu/aventproxy) ([#51](https://github.com/thekoma/aventproxy/issues/51)): he reverse-engineered the LAN protocol and wrote the first implementation. It is documented in `WHITEPAPER.md` section 20 and in his [PROTOCOL.md](https://github.com/leonardpitzu/aventproxy/blob/main/PROTOCOL.md).
 
 ## License
 

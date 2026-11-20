@@ -4,6 +4,8 @@ Entity classes require homeassistant runtime, so we test the transformation
 logic they use: DPS parsing, URL construction, event detection patterns.
 """
 
+import json
+
 from const import (
     CONF_BRIDGE_PORT,
     DEFAULT_BRIDGE_PORT,
@@ -24,6 +26,7 @@ from const import (
     LULLABY_TRACKS,
     TIMER_OPTIONS,
     TIMER_SECONDS_TO_LABEL,
+    lullaby_report_id,
     lullaby_track_id,
     mirror_dps_to_cloud,
 )
@@ -158,7 +161,16 @@ class TestLullabySelect:
         assert LULLABY_TRACK_MAP[12072925][0] == "White Noise"
         assert LULLABY_TRACK_MAP[12072930][0] == "Rain Shower"
 
+    def test_scd923_block_names(self):
+        # Issue #93: a kzm54lhabeeucq5a SCD923 on firmware 1.4.0, measured from the app.
+        assert LULLABY_TRACK_MAP[3219038][0] == "Baa Baa Black Sheep"
+        assert LULLABY_TRACK_MAP[3219045][0] == "Heartbeat"
+        assert LULLABY_TRACK_MAP[3219047][0] == "White Noise"
+        assert LULLABY_TRACK_MAP[3219052][0] == "Rain Shower"
+
     def test_blocks_do_not_overlap(self):
+        assert 3219038 - 1 not in LULLABY_TRACK_MAP
+        assert 3219052 + 1 not in LULLABY_TRACK_MAP
         assert 3542168 + 1 not in LULLABY_TRACK_MAP
         assert 12072916 - 1 not in LULLABY_TRACK_MAP
 
@@ -166,6 +178,7 @@ class TestLullabySelect:
         assert lullaby_track_id("White Noise", 3542160) == 3542163
         assert lullaby_track_id("White Noise", 12072925) == 12072925
         assert lullaby_track_id("Rain Shower", 12072916) == 12072930
+        assert lullaby_track_id("Heartbeat", 3219043) == 3219045
 
     def test_id_defaults_to_original_block(self):
         assert lullaby_track_id("Brahms' Lullaby", None) == 3542155
@@ -178,6 +191,43 @@ class TestLullabySelect:
 
     def test_unknown_name(self):
         assert lullaby_track_id("Not A Track", 3542154) is None
+
+    def test_scd953p_block_names(self):
+        # PR #116: an SCD953P on firmware 2.4.1, every track picked in the app.
+        assert LULLABY_TRACK_MAP[12552458][0] == "Baa Baa Black Sheep"
+        assert LULLABY_TRACK_MAP[12552467][0] == "White Noise"
+        assert LULLABY_TRACK_MAP[12552472][0] == "Rain Shower"
+        assert lullaby_track_id("Rain Shower", 12552458) == 12552472
+
+
+class TestLullabyReportId:
+    """Reading the current track id from DPS 248 (PR #116)."""
+
+    def test_plain_json(self):
+        assert lullaby_report_id('{"bizcode": "phi-no-bm", "id": 3542163, "errcode": 0}') == 3542163
+
+    def test_quote_escaped_json(self):
+        # The SCD953P on firmware 2.4.1 reports the record with its quotes escaped.
+        assert lullaby_report_id(r'{\"bizcode\":\"phi-no-bm\",\"id\":12552458,\"errcode\":0}') == 12552458
+
+    def test_json_encoded_twice(self):
+        assert lullaby_report_id(json.dumps(json.dumps({"id": 12552472}))) == 12552472
+
+    def test_dict(self):
+        assert lullaby_report_id({"id": 3219045}) == 3219045
+
+    def test_missing_or_malformed(self):
+        assert lullaby_report_id(None) is None
+        assert lullaby_report_id("") is None
+        assert lullaby_report_id("not json") is None
+        assert lullaby_report_id('{"bizcode": "phi-no-bm"}') is None
+        assert lullaby_report_id("[1, 2]") is None
+        assert lullaby_report_id(42) is None
+
+    def test_id_must_be_an_int(self):
+        assert lullaby_report_id('{"id": "3542163"}') is None
+        assert lullaby_report_id('{"id": true}') is None
+        assert lullaby_report_id('{"id": 3542163.0}') is None
 
 
 class TestCloudMirror:

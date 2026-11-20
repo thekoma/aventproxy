@@ -22,6 +22,7 @@ from .const import (
 )
 from .coordinator import PhilipsAventCoordinator
 from .entity import add_entities_when_ready, build_device_info, dps_present
+from .events import alert_selection
 
 
 async def async_setup_entry(
@@ -32,8 +33,14 @@ async def async_setup_entry(
     for cam_id, coordinator in data["coordinators"].items():
         entities.extend([
             AventSwitch(coordinator, cam_id, DPS_NIGHT_LIGHT, None, "mdi:lightbulb-night", translation_key="night_light"),
-            AventSwitch(coordinator, cam_id, DPS_MOTION_SWITCH, None, "mdi:motion-sensor", translation_key="motion_alert"),
-            AventSwitch(coordinator, cam_id, DPS_SOUND_SWITCH, None, "mdi:ear-hearing", translation_key="sound_alert"),
+            AventSwitch(
+                coordinator, cam_id, DPS_MOTION_SWITCH, None, "mdi:motion-sensor",
+                translation_key="motion_alert", partner=DPS_SOUND_SWITCH,
+            ),
+            AventSwitch(
+                coordinator, cam_id, DPS_SOUND_SWITCH, None, "mdi:ear-hearing",
+                translation_key="sound_alert", partner=DPS_MOTION_SWITCH,
+            ),
             AventEnumSwitch(coordinator, cam_id, DPS_PRIVACY_MODE, None, "mdi:eye-off", translation_key="privacy_mode"),
         ])
         # SenseIQ controls, each gated on its own data point so a monitor that
@@ -59,11 +66,13 @@ class AventSwitch(CoordinatorEntity, SwitchEntity):
     def __init__(
         self, coordinator: PhilipsAventCoordinator, cam_id: str,
         dps_id: str, name: str | None, icon: str,
-        *, translation_key: str | None = None,
+        *, translation_key: str | None = None, partner: str | None = None,
     ):
         super().__init__(coordinator)
         self._cam_id = cam_id
         self._dps_id = dps_id
+        # The other alert detector, on a monitor that runs one at a time.
+        self._partner = partner
         if translation_key is not None:
             self._attr_translation_key = translation_key
         else:
@@ -80,7 +89,8 @@ class AventSwitch(CoordinatorEntity, SwitchEntity):
         return None
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        await self.coordinator.set_dps({self._dps_id: True})
+        partner = self._partner if self.coordinator.alert_detectors_exclusive else None
+        await self.coordinator.set_dps(alert_selection(self._dps_id, partner))
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self.coordinator.set_dps({self._dps_id: False})

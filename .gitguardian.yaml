@@ -1,0 +1,9 @@
+version: 2
+
+secret:
+  ignored-matches:
+    # "p2p_password" and "lan_ip" are field names of the bridge config, listed
+    # next to each other in payload.py, redact.py and the tests. The generic
+    # password detector reads the second name as the value of the first.
+    - name: bridge config field name, not a password
+      match: lan_ip

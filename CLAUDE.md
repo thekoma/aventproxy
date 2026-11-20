@@ -119,6 +119,6 @@ because Tuya returns cameras (with their `localKey`) as a list.
   needs a `# noqa: BLE001 - <reason>`; the existing ones sit on teardown paths, callback boundaries
   and tinytuya calls. Scripts under `tools/` and `examples/` are exempt via per-file-ignores
 - Go 1.23, static build (`CGO_ENABLED=0`). CI gates `gofmt -l` and runs `go test ./...`, so format
-  before pushing: `docker run --rm -v $PWD:/src -w /src golang:1.27-bookworm gofmt -w .` from
+  before pushing: `docker run --rm -v $PWD:/src -w /src golang:1.27-trixie gofmt -w .` from
   `avent-webrtc-bridge/`
 - Reverse-engineering notes and methodology in `WHITEPAPER.md`
