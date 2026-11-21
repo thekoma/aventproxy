@@ -148,6 +148,13 @@ def _warnings(caplog):
     return [r.getMessage() for r in caplog.records if r.levelname == "WARNING" and "did not start" in r.getMessage()]
 
 
+def test_the_cloud_session_gives_up_after_30_s(setup):
+    # aiohttp's default is five minutes, which held a command to a silent cloud that long.
+    ok, hass, _ = setup({})
+    assert ok is True
+    assert hass.data["philips_avent"]["entry1"]["session"].timeout.total == 30
+
+
 class TestMonitorWithoutAccess:
     def test_a_monitor_the_account_cannot_reach_is_skipped(self, setup, caplog):
         caplog.set_level("WARNING")

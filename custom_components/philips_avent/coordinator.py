@@ -360,6 +360,9 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
 
         `optimistic` carries values the monitor reports back under another key
         than the one written, such as the lullaby track in DPS 248.
+
+        The mirror is skipped while the last cloud poll failed, and a mirror
+        that fails cannot fail a command the LAN already delivered.
         """
         local_only = self.cloud_poll_pausable
         if self._lan_client and self._lan_client.connected:
@@ -367,8 +370,8 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
             if result:
                 _LOGGER.debug("DPS sent via LAN for %s: %s", self.camera_name, dps)
                 self._apply_optimistic(dps, optimistic)
-                if not local_only and mirror_dps_to_cloud(dps):
-                    with contextlib.suppress(TuyaAPIError):
+                if not local_only and mirror_dps_to_cloud(dps) and not self._cloud_failing:
+                    with contextlib.suppress(TuyaAPIError, aiohttp.ClientError, TimeoutError, ValueError):
                         await self.api.set_dps(self.camera_id, dps)
                 return result
         self._apply_optimistic(dps, optimistic)
@@ -581,7 +584,7 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         self._cloud_failing = True
         _LOGGER.warning(
             "Cloud for %s failed (%s); its LAN session keeps it available until the cloud answers again",
-            self.camera_name, err,
+            self.camera_name, str(err) or type(err).__name__,
         )
 
     async def _poll_cloud(self) -> dict:

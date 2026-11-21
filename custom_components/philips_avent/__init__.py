@@ -50,6 +50,10 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.CAMERA, Platform.SENSOR, Platform.SWITCH, Platform.NUMBER, Platform.BUTTON, Platform.SELECT, Platform.BINARY_SENSOR]
 
+# aiohttp's default total timeout is five minutes: on a pooled connection, a
+# cloud that stops answering held a command that long before it failed.
+CLOUD_TIMEOUT = 30
+
 
 def _entry_api_host(entry: ConfigEntry) -> str:
     """API host for this account, falling back to Central Europe.
@@ -170,7 +174,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Philips Avent from a config entry."""
     _purge_stored_password(hass, entry)
 
-    session = aiohttp.ClientSession()
+    session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=CLOUD_TIMEOUT))
     api = PhilipsAventAPI(
         session,
         sid=entry.data[CONF_SID],

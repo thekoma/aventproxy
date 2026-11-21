@@ -854,3 +854,34 @@ class TestPushedAlarmsFireWhateverTheClock:
         else:
             coordinator.data = {**coordinator.data, "212": ahead}
         assert reported() == (False, False, False)
+
+
+class TestAMirrorCannotFailADeliveredCommand:
+    """A command the LAN delivered stays delivered when the cloud cannot take its mirror."""
+
+    def test_a_command_is_not_mirrored_while_the_cloud_poll_fails(self, make):
+        coordinator = make(3.3, api=FakeApi(device_error=aiohttp.ClientError("cloud down")))
+        asyncio.run(coordinator._async_update_data())
+        asyncio.run(coordinator.set_dps({"138": True}))
+        assert coordinator._lan_client.sent == [{"138": True}]
+        assert coordinator.api.published == []
+
+    @pytest.mark.parametrize(
+        "error", [aiohttp.ClientConnectionError("cloud down"), TimeoutError(), ValueError("not JSON")]
+    )
+    def test_a_mirror_that_cannot_reach_the_cloud_leaves_the_command_delivered(self, make, error):
+        class UnreachableApi(FakeApi):
+            async def set_dps(self, dev_id, dps):
+                raise error
+
+        coordinator = make(3.3, api=UnreachableApi())
+        assert asyncio.run(coordinator.set_dps({"138": True})) == {"success": True}
+        assert coordinator._lan_client.sent == [{"138": True}]
+
+    def test_a_timeout_names_itself_in_the_outage_warning(self, make, caplog):
+        # str(TimeoutError()) is empty, which logged "failed ()".
+        coordinator = make(3.3, api=FakeApi(device_error=TimeoutError()))
+        asyncio.run(coordinator._async_update_data())
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "failed (TimeoutError)" in warnings[0]
