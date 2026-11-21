@@ -76,6 +76,12 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         self.api = api
         self.camera_id = camera_id
         self.camera_name = camera_name
+        # Set by async_setup_entry once all cameras are known (const.rtsp_paths):
+        # the bridge's path for this camera and the name the device shows, which
+        # differ from camera_name only for cameras that share a path (their name
+        # after sanitizing).
+        self.rtsp_path: str | None = None
+        self.display_name = camera_name
         self.device_info: dict = {}
         self.rssi: int | None = None
         self._local_key = local_key

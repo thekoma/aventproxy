@@ -63,7 +63,7 @@ class AventCamera(Camera):
         self._cam_id = cam_id
         self._attr_unique_id = f"{cam_id}_camera"
         self._stream_url = build_rtsp_url(
-            bridge_host, bridge_port, coordinator.camera_name, cam_id
+            bridge_host, bridge_port, coordinator.camera_name, cam_id, coordinator.rtsp_path
         )
         self._attr_device_info = build_device_info(coordinator, cam_id)
         if talkback and CameraEntityCapabilities is not None:
