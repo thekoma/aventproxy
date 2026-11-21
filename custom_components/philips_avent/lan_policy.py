@@ -18,8 +18,13 @@ HEARTBEAT_INTERVAL = 8.0
 # connection answers every heartbeat, so this only fires on a wedged socket.
 DATA_TIMEOUT = 600.0
 
-# Delay before retrying a connection, from the second consecutive failure on.
+# Delay before retrying a connection, from the second consecutive failure on;
+# it doubles with each further failure up to RECONNECT_DELAY_MAX. This covers
+# every failed reconnect, whatever the cause. The cap keeps a camera back from
+# a Wi-Fi drop found within a minute, while one that is away for good
+# (unplugged, not on Wi-Fi) is tried once a minute instead of every 15 s.
 RECONNECT_DELAY = 15.0
+RECONNECT_DELAY_MAX = 60.0
 
 # tinytuya error codes (see tinytuya.core.error_helper). Only the connection
 # ones mean the socket is gone; 904 says a frame could not be parsed, which the
@@ -115,17 +120,21 @@ def data_stale(now: float, last_data: float, timeout: float = DATA_TIMEOUT) -> b
     return now - last_data > timeout
 
 
-def reconnect_delay(consecutive_failures: int, delay: float = RECONNECT_DELAY) -> float:
+def reconnect_delay(
+    consecutive_failures: int, delay: float = RECONNECT_DELAY, maximum: float = RECONNECT_DELAY_MAX
+) -> float:
     """Seconds to wait before the next connection attempt.
 
     The first failure retries immediately: a device that closed the socket is
     usually ready again straight away, and waiting only widens the window where
-    the integration falls back to cloud polling. Repeated failures back off so a
-    monitor that is really gone is not hammered.
+    the integration falls back to cloud polling. Repeated failures back off,
+    doubling up to `maximum`, so a monitor that is really gone is not hammered.
     """
     if consecutive_failures <= 1:
         return 0.0
-    return delay
+    # The failure count of an absent camera grows for good; a bounded exponent
+    # keeps 2 ** n from overflowing a float after about a thousand rounds.
+    return min(delay * 2 ** min(consecutive_failures - 2, 32), maximum)
 
 # Protocol version for the local Tuya session. 3.3 is what the integration has
 # always used, and what an SCD973 on firmware 1.4.0 speaks. An SCD973/26 announces

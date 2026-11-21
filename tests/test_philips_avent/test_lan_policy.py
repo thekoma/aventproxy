@@ -10,6 +10,7 @@ from lan_policy import (
     MAX_PAYLOAD_ERRORS,
     PROTOCOL_VERSION_DEFAULT,
     RECONNECT_DELAY,
+    RECONNECT_DELAY_MAX,
     baseline_dps,
     data_stale,
     exclusive_alert_detectors,
@@ -74,7 +75,20 @@ class TestReconnectDelay:
 
     def test_later_failures_back_off(self):
         assert reconnect_delay(2) == RECONNECT_DELAY
-        assert reconnect_delay(7) == RECONNECT_DELAY
+        assert reconnect_delay(3) == 2 * RECONNECT_DELAY
+        assert reconnect_delay(4) == RECONNECT_DELAY_MAX
+        assert reconnect_delay(7) == RECONNECT_DELAY_MAX
+        assert reconnect_delay(1000) == RECONNECT_DELAY_MAX
+
+    def test_backoff_stays_within_a_minute(self):
+        assert RECONNECT_DELAY_MAX == 60.0
+        assert max(reconnect_delay(n) for n in range(50)) == RECONNECT_DELAY_MAX
+
+    def test_a_camera_away_for_days_still_gets_a_delay(self):
+        # The failure count of an absent camera never resets; 2 ** n would overflow
+        # a float past about a thousand rounds (17 hours at a minute each).
+        assert reconnect_delay(1100) == RECONNECT_DELAY_MAX
+        assert reconnect_delay(10**6) == RECONNECT_DELAY_MAX
 
     def test_zero_or_negative_is_treated_as_first(self):
         assert reconnect_delay(0) == 0.0
