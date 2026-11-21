@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 
 DOMAIN = "philips_avent"
 
@@ -47,6 +48,7 @@ DPS_BRIGHTNESS = "158"
 DPS_LIGHT_COLOR = "204"
 DPS_LIGHT_TIMER = "240"
 DPS_LIGHT_TIMER_SWITCH = "241"
+DPS_LIGHT_REMAINING = "242"      # light_timer_display, -1..86400: assumed to behave like 245 (see Countdown)
 DPS_TEMPERATURE = "207"
 DPS_TEMPERATURE_F = "208"
 DPS_MOTION_SWITCH = "134"
@@ -59,6 +61,7 @@ DPS_LULLABY_MODE = "203"
 DPS_LULLABY_STATE = "246"
 DPS_LULLABY_TIMER_SWITCH = "243"
 DPS_LULLABY_TIMER = "244"
+DPS_LULLABY_REMAINING = "245"    # lullaby_display, -1..86400: the set length while it plays, 0 at the end
 DPS_PRIVACY_MODE = "237"
 DPS_POWER_STATUS = "205"
 DPS_FLIP = "102"
@@ -217,6 +220,115 @@ def mirror_dps_to_cloud(dps: dict) -> bool:
     forwards it to the camera, so Next would advance two tracks (issue #91).
     """
     return dps.get(DPS_LULLABY_CONTROL) not in LULLABY_STEP_COMMANDS
+
+
+def seconds_left(value) -> int | None:
+    """A timer's time left in seconds; 0 when it is not running (-1), None when unknown."""
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        return None
+    return max(seconds, 0)
+
+
+class Countdown:
+    """Counts a lullaby or night light timer down between the monitor's reports.
+
+    The monitor does not count DPS 245 down: while the lullaby plays it holds
+    the length the timer was set to, and it reads 0 when the timer ends (an
+    SCD923, 21-11-2026: 300 throughout a 5-minute timer; the app counts down
+    by itself). An SCD951 on 02-11-2026 still read 1800 from the cloud 22
+    minutes into a 30-minute timer; which of the two timers that was is not
+    recorded. While nothing plays it reads either 0 or the
+    set length (21-11-2026: 300 or 0 on an SCD923, 5400 or 0 on an SCD951,
+    at different times; 02-11-2026: 5400 with the lullaby stopped). 242 is
+    assumed to behave the same: the night light timer has not been run, and
+    with the light off it read 1800 once (02-11-2026) and 0 on both monitors
+    on 21-11-2026. So the length alone cannot tell a run from a held value;
+    `running` (the lullaby playing, DPS 246; the light on, DPS 138) can. The
+    end is the moment a run starts, or a new length is seen while it runs,
+    plus that length; the same length reported again keeps the end, and a
+    stop clears it. A pause is a stop: a resume counts from the full length
+    again (whether the monitor's own timer does the same is not measured).
+    After a restart the end comes back from the saved state, as long as the
+    length is still the same and the end has not passed. Times are seconds
+    since the epoch.
+
+    Without `running` (None: 246 or 138 not reported) only the length counts,
+    as a fallback: a monitor that never reports them still gets a countdown
+    from the first report of a length. The cost is that a held length then
+    counts down while nothing runs, and a start with the length of the run
+    before it keeps that run's end (it showed 0 for a whole lullaby on
+    02-11-2026).
+    """
+
+    def __init__(self, length: int | None = None, ends_at: float | None = None):
+        self.length = length
+        self.ends_at = ends_at
+
+    @classmethod
+    def restored(cls, saved: dict, now: float) -> Countdown:
+        """The countdown saved before a restart (length and ends_at).
+
+        An end that passed while Home Assistant was down belongs to a run that
+        is over, so a new run of the same length counts anew.
+        """
+        length, ends_at = saved.get("length"), saved.get("ends_at")
+        if not isinstance(length, int) or not isinstance(ends_at, (int, float)):
+            return cls()
+        return cls(length, float(ends_at) if ends_at > now else None)
+
+    def seen(self, value, now: float, running: bool | None = None) -> None:
+        length = seconds_left(value)
+        if length is None:
+            length = self.length
+        if length is None:
+            return
+        if length == 0 or running is False:
+            self.length, self.ends_at = length, None
+        elif length != self.length or self.ends_at is None:
+            self.length, self.ends_at = length, now + length
+
+    def left(self, now: float) -> int | None:
+        """Whole seconds left, rounded up; 0 when not running, None before any report."""
+        if self.length is None:
+            return None
+        if self.ends_at is None:
+            return 0
+        return max(0, math.ceil(self.ends_at - now))
+
+
+def lullaby_running(dps: dict | None) -> bool | None:
+    """Whether the lullaby plays on its timer (DPS 246, 243), for its Countdown.
+
+    None only when 246 is not reported (Countdown then counts from the length
+    alone). Any state but "playing" is a stop, a pause included: nothing sets
+    "paused" (the Pause button writes the optimistic "stopping"), and should a
+    monitor report it, nothing plays, so no countdown. A lullaby whose timer
+    is switched off plays until it is stopped, while 245 may still hold the
+    length: no countdown then either.
+    """
+    if (dps or {}).get(DPS_LULLABY_TIMER_SWITCH) is False:
+        return False
+    state = (dps or {}).get(DPS_LULLABY_STATE)
+    if state == "playing":
+        return True
+    if state is None:
+        return None
+    return False
+
+
+def night_light_running(dps: dict | None) -> bool | None:
+    """Whether the night light is on on its timer (DPS 138, 241), for its Countdown.
+
+    None when 138 is not reported (Countdown then counts from the length
+    alone). With its timer switched off the light stays on, while 242 may
+    still hold the length: no countdown then.
+    """
+    if (dps or {}).get(DPS_LIGHT_TIMER_SWITCH) is False:
+        return False
+    on = (dps or {}).get(DPS_NIGHT_LIGHT)
+    return on if isinstance(on, bool) else None
 
 
 def sanitize_rtsp_path(name: str, cam_id: str) -> str:
