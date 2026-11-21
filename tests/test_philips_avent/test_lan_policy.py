@@ -12,6 +12,7 @@ from lan_policy import (
     RECONNECT_DELAY,
     baseline_dps,
     data_stale,
+    device_answered,
     exclusive_alert_detectors,
     heartbeat_due,
     heartbeat_outcome,
@@ -168,8 +169,39 @@ class TestHeartbeatOutcome:
     def test_an_unreadable_ack_still_proves_the_socket_is_alive(self):
         assert heartbeat_outcome({"Error": "Unexpected Payload", "Err": LAN_ERR_PAYLOAD}) == (True, None)
 
+    def test_a_heartbeat_without_an_answer_is_a_failure(self):
+        # A timeout (902) counted as alive and reset the stale-data timer, so a
+        # session whose camera stopped answering stayed "connected" for good.
+        assert heartbeat_outcome({"Error": "Timeout Waiting for Device", "Err": "902"}) == (False, None)
+        assert heartbeat_outcome({"Error": "Check device key or version", "Err": "914"}) == (False, None)
+
     def test_junk_dps_is_not_published(self):
         assert heartbeat_outcome({"dps": "not a dict"}) == (True, None)
+
+
+class TestDeviceAnswered:
+    """tinytuya returns failures as dicts instead of raising (tinytuya 1.20.0,
+    XenonDevice._send_receive); these are the shapes it returns."""
+
+    @staticmethod
+    def err(code):
+        return {"Error": "tinytuya error", "Err": code, "Payload": None}
+
+    def test_an_ack_and_a_reply_are_answers(self):
+        assert device_answered(None)
+        assert device_answered({"dps": {"101": True}, "t": 1})
+        assert device_answered({})
+
+    def test_an_unreadable_ack_is_still_an_answer(self):
+        assert device_answered(self.err("904"))
+        assert device_answered(self.err("900"))
+
+    def test_timeout_is_no_answer(self):
+        assert not device_answered(self.err("902"))
+
+    def test_no_connection_or_refused_handshake_is_no_answer(self):
+        for code in ("901", "905", "914", 901, 902):
+            assert not device_answered(self.err(code)), code
 
 
 class TestLanWriteDelivered:

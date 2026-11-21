@@ -140,6 +140,12 @@ class TestKeepAlive:
         client._device.heartbeat_result = {"dps": {"212": "record"}}
         assert client._send_heartbeat() == (True, {"212": "record"})
 
+    def test_an_unanswered_keep_alive_is_a_failure(self, lan):
+        client = make_client(lan)
+        client._device = FakeDevice("dev", "10.0.0.7", "key")
+        client._device.heartbeat_result = {"Error": "Timeout Waiting for Device", "Err": "902"}
+        assert client._send_heartbeat() == (False, None)
+
     def test_a_dead_socket_is_reported(self, lan):
         client = make_client(lan)
         client._device = FakeDevice("dev", "10.0.0.7", "key")

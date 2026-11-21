@@ -299,7 +299,8 @@ class TuyaLANClient:
         ignores or crashes on, a heartbeat is the plain keep-alive command.
 
         The response is consumed here (`nowait=False`) so a stray ack cannot turn
-        up in the next receive() and look like a device error.
+        up in the next receive() and look like a device error. A heartbeat the
+        camera did not answer is a failure (`heartbeat_outcome`).
         """
         try:
             result = self._device.heartbeat(nowait=False)
@@ -309,7 +310,7 @@ class TuyaLANClient:
 
         alive, pushed = heartbeat_outcome(result)
         if not alive:
-            _LOGGER.debug("LAN heartbeat unreachable: %s", result.get("Error"))
+            _LOGGER.debug("LAN heartbeat not answered: %s", result.get("Error", result.get("Err")))
         return alive, pushed
 
     async def _run(self) -> None:
