@@ -13,6 +13,7 @@ from homeassistant.core import HomeAssistant
 
 from .lan_policy import (
     PROTOCOL_VERSION_DEFAULT,
+    SOCKET_RETRY_LIMIT,
     AddressPublisher,
     baseline_dps,
     confirmed_protocol,
@@ -31,6 +32,10 @@ from .lan_policy import (
 _LOGGER = logging.getLogger(__name__)
 
 SOCKET_TIMEOUT = 5
+# How long the listener's receive waits on the camera's socket before it looks
+# at the heartbeat. A heartbeat or a query waits up to SOCKET_TIMEOUT for its
+# answer.
+RECEIVE_POLL = 1
 SCAN_MAXRETRY = 5
 
 
@@ -164,8 +169,18 @@ class TuyaLANClient:
             d = tinytuya.Device(self._device_id, ip, self._local_key, version=version)
             d.set_socketPersistent(True)
             d.set_socketTimeout(SOCKET_TIMEOUT)
+            d.set_socketRetryLimit(SOCKET_RETRY_LIMIT)
             result = d._get_socket(False)
             if result is True:
+                # Receives wait briefly from here on (RECEIVE_POLL).
+                d.set_socketTimeout(RECEIVE_POLL)
+                # Return at the first message after a heartbeat: the camera's
+                # ack has no payload, and with retries on tinytuya then read on
+                # for another message until the socket timeout (5 s), holding up
+                # the listener. With retry off, a 3.5 frame that fails its GCM
+                # check ends the socket (904) instead of being skipped; the next
+                # receive() opens a new one.
+                d.set_retry(False)
                 return d
             _LOGGER.debug(
                 "LAN connection to %s at protocol %s refused: %s", ip, version, result
@@ -247,7 +262,18 @@ class TuyaLANClient:
         mean reading tinytuya's raw messages for their command.
         """
         try:
-            result = self._device.status()
+            # tinytuya's retry on for this call only, so that status() reads on
+            # past an empty ack if the monitor sends one before its answer (the
+            # lab monitor answers directly; real firmware not checked). With
+            # SOCKET_RETRY_LIMIT that reads at most 2 frames, where tinytuya's
+            # default read up to 6.
+            self._device.set_socketTimeout(SOCKET_TIMEOUT)
+            self._device.set_retry(True)
+            try:
+                result = self._device.status()
+            finally:
+                self._device.set_retry(False)
+                self._device.set_socketTimeout(RECEIVE_POLL)
         except Exception as ex:  # noqa: BLE001 - tinytuya raises socket and decode errors alike
             _LOGGER.debug("LAN baseline query failed: %s", ex)
             return None
@@ -303,7 +329,11 @@ class TuyaLANClient:
         camera did not answer is a failure (`heartbeat_outcome`).
         """
         try:
-            result = self._device.heartbeat(nowait=False)
+            self._device.set_socketTimeout(SOCKET_TIMEOUT)
+            try:
+                result = self._device.heartbeat(nowait=False)
+            finally:
+                self._device.set_socketTimeout(RECEIVE_POLL)
         except Exception as ex:  # noqa: BLE001 - any failure here means the socket is unusable
             _LOGGER.debug("LAN heartbeat failed (%s)", ex)
             return False, None
@@ -423,6 +453,7 @@ class TuyaLANClient:
                 version=self._version or PROTOCOL_VERSION_DEFAULT,
             )
             d.set_socketTimeout(SOCKET_TIMEOUT)
+            d.set_socketRetryLimit(SOCKET_RETRY_LIMIT)
             try:
                 for key, value in dps.items():
                     result = d.set_value(key, value, nowait=not repeatable)

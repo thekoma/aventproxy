@@ -11,7 +11,8 @@ from collections.abc import Callable
 # up as "Unexpected Payload from Device" followed by a reconnect every ~30s
 # (issue #62). tinytuya leaves keep-alive to the caller on persistent sockets, so
 # a ping well inside that window keeps the session up. Receives block for up to
-# SOCKET_TIMEOUT seconds, so the effective ping interval is this value plus that.
+# RECEIVE_POLL seconds (lan.py), so the effective ping interval is this value
+# plus that.
 HEARTBEAT_INTERVAL = 8.0
 
 # Force a reconnect when nothing at all has been heard for this long. A working
@@ -41,6 +42,19 @@ LAN_ERR_KEY_OR_VERSION = "914"
 # data received - connection closed?"). It drops that socket then and opens a
 # new one at the next request, where a camera that is gone fails.
 NO_ANSWER_ERRORS = CONNECTION_ERRORS | {LAN_ERR_TIMEOUT, LAN_ERR_KEY_OR_VERSION}
+
+# tinytuya retries a request this many times, closing the socket and opening a
+# new one each time, and makes this many attempts to open a socket, 5 s apart.
+# A reopen that fails returns at once, so the request retries add up only while
+# the socket reopens and the monitor stays silent. With tinytuya's default of 5
+# (tinytuya 1.20.0 on loopback), a request the monitor leaves unanswered took
+# 30 s to fail, a monitor that is gone up to about 50 s (worked out from the
+# source), and a command to a closed port 20 s; with 1: 10 s, about 10 s, and
+# at once. A refused session key (914) returns at once whatever the limit. One
+# retry (after the 5 s timeout and 0.1 s) still covers a single unanswered
+# request. With one opening attempt tinytuya never makes the pause between
+# attempts, so its length is left alone.
+SOCKET_RETRY_LIMIT = 1
 
 # tinytuya hands a failed write back as an error dict rather than raising.
 # 905 and 914 come from opening the socket, before anything is sent: nothing to
@@ -120,9 +134,10 @@ def heartbeat_due(now: float, last_heartbeat: float, interval: float = HEARTBEAT
 def heartbeat_outcome(result: object) -> tuple[bool, dict | None]:
     """What a keep-alive got back: whether the socket lives, and any state pushed in its place.
 
-    tinytuya's `heartbeat(nowait=False)` skips the empty ack and returns the next
-    frame that has a payload, from the same socket the pushes arrive on. A push
-    landing in that window comes back here rather than in the receive loop, and
+    tinytuya's `heartbeat(nowait=False)` returns the first frame that arrives on
+    the session (whose retry is off, see `TuyaLANClient._try_direct_connect`),
+    from the same socket the pushes arrive on. A push landing before the ack
+    comes back here rather than in the receive loop, and
     dropping it lost about half of a run of alarms on an SCD973/26 (fork
     8c4fc03), so the caller publishes it. A heartbeat the camera did not answer
     (`device_answered`: no connection, a timeout or a refused handshake) is a

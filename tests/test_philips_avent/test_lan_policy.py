@@ -28,8 +28,8 @@ from lan_policy import (
 )
 
 # tinytuya blocks in receive() for up to this long, so a heartbeat can be late
-# by that much. Mirrors SOCKET_TIMEOUT in lan.py.
-SOCKET_TIMEOUT = 5
+# by that much. Mirrors RECEIVE_POLL in lan.py.
+RECEIVE_POLL = 1
 
 # The monitor closes an idle socket after this long at the earliest.
 DEVICE_IDLE_CLOSE = 30
@@ -38,7 +38,7 @@ DEVICE_IDLE_CLOSE = 30
 class TestHeartbeatInterval:
     def test_ping_lands_well_inside_the_device_idle_window(self):
         # Worst case: a heartbeat becomes due right after a receive started.
-        assert HEARTBEAT_INTERVAL + SOCKET_TIMEOUT < DEVICE_IDLE_CLOSE
+        assert HEARTBEAT_INTERVAL + RECEIVE_POLL < DEVICE_IDLE_CLOSE
 
     def test_due_only_after_the_interval(self):
         assert not heartbeat_due(now=100.0, last_heartbeat=100.0)
