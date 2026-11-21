@@ -18,8 +18,9 @@ Home Assistant integration for Philips Avent SCD973/SCD923 baby monitors, provid
 | 🌡️ Temperature | Sensor | Room temperature from built-in sensor |
 | 💡 Night Light | Switch + Number | On/off + brightness 1-100% |
 | 🎵 Lullabies | Buttons + Number | Play/pause/stop/next/prev + volume |
-| 🏃 Motion Alert | Switch | Motion detection on/off |
-| 🔊 Sound Alert | Switch | Sound detection on/off |
+| 🏃 Detect motion | Switch (configuration) | The camera's motion detection on/off |
+| 🔊 Detect sound | Switch (configuration) | The camera's sound detection on/off |
+| 😢 Detect crying | Switch (configuration) | The camera's cry detection on/off (SenseIQ monitors) |
 | 🏃 Motion Detected | Binary Sensor | Fires when motion is detected (auto-clears after 30s) |
 | 🔊 Sound Detected | Binary Sensor | Fires when sound is detected (auto-clears after 30s) |
 | 🔒 Privacy Mode | Switch | Camera on/off |
@@ -112,7 +113,7 @@ The bridge's RTSP server has no password. The add-on therefore listens on loopba
 
 The integration exposes `binary_sensor.<camera>_sound_detected` and `binary_sensor.<camera>_motion_detected` that turn on for ~30 seconds when the monitor reports an event. They are the trigger points for any automation.
 
-Note: detection must be enabled on the device side via the `🔊 Sound Alert` / `🏃 Motion Alert` switches — otherwise the monitor never sends the event. On a monitor whose LAN session has confirmed protocol 3.4 or newer, only one detector runs at a time. Turning one switch on there turns the other off, and turning one off leaves the other alone.
+Note: detection must be enabled on the device side via the `🔊 Detect sound` / `🏃 Detect motion` switches — otherwise the monitor never sends the event. On a monitor whose LAN session has confirmed protocol 3.4 or newer, only one detector runs at a time. Turning one switch on there turns the other off, and turning one off leaves the other alone.
 
 ```yaml
 # Mobile notification when sound is detected

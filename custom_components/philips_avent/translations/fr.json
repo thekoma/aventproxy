@@ -146,10 +146,10 @@
         "name": "Veilleuse"
       },
       "motion_alert": {
-        "name": "Alerte mouvement"
+        "name": "Détecter les mouvements"
       },
       "sound_alert": {
-        "name": "Alerte son"
+        "name": "Détecter les sons"
       },
       "privacy_mode": {
         "name": "Mode privé"
@@ -161,7 +161,7 @@
         "name": "Alerte réveil"
       },
       "cry_alert": {
-        "name": "Alerte pleurs"
+        "name": "Détecter les pleurs"
       }
     },
     "number": {
