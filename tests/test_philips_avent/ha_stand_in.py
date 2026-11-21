@@ -73,6 +73,12 @@ class CoordinatorEntity:
     def available(self) -> bool:
         return self.coordinator.last_update_success
 
+    async def async_added_to_hass(self) -> None:
+        pass
+
+    def _handle_coordinator_update(self) -> None:
+        self.async_write_ha_state()
+
 
 class _Names:
     """Stands in for HA's enums and constant groups: any attribute is its own name."""
@@ -97,7 +103,14 @@ def _stand_in_modules() -> dict[str, types.ModuleType]:
         "homeassistant.exceptions": module("homeassistant.exceptions", ConfigEntryAuthFailed=ConfigEntryAuthFailed),
         "homeassistant.helpers": module("homeassistant.helpers"),
         "homeassistant.helpers.event": module(
-            "homeassistant.helpers.event", async_call_later=lambda hass, delay, action: lambda: None
+            "homeassistant.helpers.event",
+            async_call_later=lambda hass, delay, action: lambda: None,
+            async_track_time_interval=lambda hass, action, interval: lambda: None,
+        ),
+        "homeassistant.helpers.restore_state": module(
+            "homeassistant.helpers.restore_state",
+            ExtraStoredData=type("ExtraStoredData", (), {}),
+            RestoreEntity=type("RestoreEntity", (), {}),
         ),
         "homeassistant.helpers.update_coordinator": module(
             "homeassistant.helpers.update_coordinator",

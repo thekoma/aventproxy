@@ -119,6 +119,12 @@
       },
       "night_awake": {
         "name": "Éveillé (nuit)"
+      },
+      "lullaby_time_left": {
+        "name": "Temps restant de la berceuse"
+      },
+      "night_light_time_left": {
+        "name": "Temps restant de la veilleuse"
       }
     },
     "binary_sensor": {
