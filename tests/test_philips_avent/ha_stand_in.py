@@ -3,7 +3,8 @@
 The rest of the suite keeps Home Assistant out by testing pure helpers. A few
 decisions live in the coordinator itself, where a wrong one changes what a
 monitor on protocol 3.3 does, so those tests load the real module here. The
-stand-in covers only the names the coordinator and the LAN client import.
+stand-in covers only the names the coordinator, the LAN client and the camera
+entity import.
 
 Never used where Home Assistant is installed: the stand-in must not shadow the
 real package, so those tests are reported as skipped there, not run. tinytuya
@@ -85,6 +86,18 @@ class ConfigEntryAuthFailed(Exception):
     pass
 
 
+class Camera:
+    """Home Assistant's Camera: `stream` is None until a viewer opened one."""
+
+    def __init__(self):
+        self.hass = None
+        self.stream = None
+
+
+async def _no_ffmpeg(*args, **kwargs):
+    raise AssertionError("tests replace ffmpeg's async_get_image")
+
+
 def _stand_in_modules() -> dict[str, types.ModuleType]:
     def module(name, **attrs):
         mod = types.ModuleType(name)
@@ -115,6 +128,15 @@ def _stand_in_modules() -> dict[str, types.ModuleType]:
             UnitOfTime=_Names(),
         ),
         "homeassistant.components": module("homeassistant.components"),
+        "homeassistant.components.camera": module(
+            "homeassistant.components.camera",
+            Camera=Camera,
+            CameraEntityFeature=_Names(),
+            CameraEntityCapabilities=dict,
+        ),
+        "homeassistant.components.ffmpeg": module(
+            "homeassistant.components.ffmpeg", async_get_image=_no_ffmpeg
+        ),
         "homeassistant.components.binary_sensor": module(
             "homeassistant.components.binary_sensor",
             BinarySensorDeviceClass=_Names(),
