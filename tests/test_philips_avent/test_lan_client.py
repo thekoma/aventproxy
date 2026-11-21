@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
@@ -316,6 +317,104 @@ class TestSessionUp:
 
     def test_no_callback_is_fine(self, lan):
         make_client(lan)._announce_session()
+
+
+class TestListenerRestarts:
+    """An unexpected error in the listener reconnects instead of ending the session for good."""
+
+    def test_an_unexpected_error_is_logged_and_the_listener_comes_back(self, lan, monkeypatch, caplog):
+        client = make_client(lan)
+        connects, pauses = [], []
+
+        async def connect():
+            connects.append(True)
+            if len(connects) == 1:
+                # Fails with a half-open session, which the restart must close.
+                client._device = FakeDevice("dev", "10.0.0.7", "key")
+                client.connected = True
+                raise RuntimeError("boom")
+            client._device = FakeDevice("dev", "10.0.0.7", "key")
+            client.connected = True
+            client._stop_event.set()
+            return True
+
+        async def pause(seconds):
+            pauses.append(seconds)
+
+        monkeypatch.setattr(client, "_connect", connect)
+        monkeypatch.setattr(client, "_interruptible_sleep", pause)
+        asyncio.run(client._run())
+        assert len(connects) == 2
+        assert pauses == [lan.reconnect_delay(2)]
+        assert pauses[0] > 0
+        assert FakeDevice.instances[0].closed
+        assert "LAN listener of dev failed; reconnecting" in caplog.text
+
+    @staticmethod
+    def _failing(client, monkeypatch, times, clock=None, run_for=0.0):
+        """Every connect raises, `times` times; each one `run_for` s (or the list's n-th) after the listener started."""
+        connects, pauses = [], []
+
+        async def connect():
+            connects.append(True)
+            if clock is not None:
+                clock[0] += run_for[len(connects) - 1] if isinstance(run_for, list) else run_for
+            if len(connects) <= times:
+                raise RuntimeError("boom")
+            client._stop_event.set()
+            return False
+
+        async def pause(seconds):
+            pauses.append(seconds)
+
+        monkeypatch.setattr(client, "_connect", connect)
+        monkeypatch.setattr(client, "_interruptible_sleep", pause)
+        return pauses
+
+    def test_an_error_that_comes_back_is_logged_in_full_once(self, lan, monkeypatch, caplog):
+        caplog.set_level("DEBUG")
+        client = make_client(lan)
+        pauses = self._failing(client, monkeypatch, 6)
+        asyncio.run(client._run())
+        failed = [r for r in caplog.records if "LAN listener of dev failed" in r.getMessage()]
+        assert [r.levelname for r in failed] == ["ERROR", "WARNING", "WARNING", "DEBUG", "DEBUG", "DEBUG"]
+        assert [r.exc_info is not None for r in failed] == [True] + [False] * 5
+        assert "RuntimeError: boom" in failed[1].getMessage()
+        # The pause grows as for failed connects, up to the cap.
+        assert pauses[:6] == [lan.reconnect_delay(n) for n in range(2, 8)]
+        assert pauses[:6] == [15.0, 30.0, 60.0, 60.0, 60.0, 60.0]
+
+    def test_a_listener_that_ran_steadily_starts_the_count_again(self, lan, monkeypatch, caplog):
+        clock = [1000.0]
+        monkeypatch.setattr(lan, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+        client = make_client(lan)
+        pauses = self._failing(client, monkeypatch, 3, clock=clock, run_for=lan.LISTENER_STEADY)
+        asyncio.run(client._run())
+        failed = [r for r in caplog.records if "LAN listener of dev failed" in r.getMessage()]
+        assert [r.exc_info is not None for r in failed] == [True, True, True]
+        assert pauses[:3] == [15.0, 15.0, 15.0]
+
+    def test_short_failures_after_a_long_run_count_up_again(self, lan, monkeypatch, caplog):
+        # Each run's own length counts, not the time since the first start.
+        caplog.set_level("DEBUG")
+        clock = [1000.0]
+        monkeypatch.setattr(lan, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+        client = make_client(lan)
+        pauses = self._failing(client, monkeypatch, 4, clock=clock, run_for=[lan.LISTENER_STEADY, 1.0, 1.0, 1.0, 0.0])
+        asyncio.run(client._run())
+        failed = [r for r in caplog.records if "LAN listener of dev failed" in r.getMessage()]
+        assert [r.exc_info is not None for r in failed] == [True, False, False, False]
+        assert pauses[:4] == [15.0, 30.0, 60.0, 60.0]
+
+    def test_a_cancel_still_ends_it(self, lan, monkeypatch):
+        client = make_client(lan)
+
+        async def connect():
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(client, "_connect", connect)
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(client._run())
 
 
 class TestProven:
