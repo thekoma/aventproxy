@@ -187,7 +187,7 @@ func TestLoginPacedByTheAnswers(t *testing.T) {
 			control := newScriptedControl(tc.answer, 10*time.Millisecond)
 			var got int
 			start := time.Now()
-			err := login(context.Background(), control, testKey, "token", DefaultStartupGap, func(int) { got++ })
+			err := login(context.Background(), control, testKey, "token", DefaultStartupGap, func(int) { got++ }, 0)
 			took := time.Since(start)
 			if err != nil {
 				t.Fatal(err)

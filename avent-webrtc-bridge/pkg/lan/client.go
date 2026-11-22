@@ -82,6 +82,9 @@ type ClientConfig struct {
 	// none after the last one. Zero means DefaultStartupGap; a negative value
 	// sends them back to back without waiting for answers.
 	StartupGap time.Duration
+	// Clarity is the video clarity the startup sequence asks for: ClarityHD
+	// or ClarityStandard, what the app asks for. Zero is ClarityStandard.
+	Clarity uint32
 	// OnControl, when set, is told the size of everything the control
 	// conversation delivers after the login. Nothing reads those messages;
 	// whether any came tells a refused login from a silent path.
@@ -238,7 +241,7 @@ func (c *Client) stream(life, setup context.Context, sock *net.UDPConn, peer *ne
 	if err := c.hold(control); err != nil {
 		return err
 	}
-	if err := login(setup, control, aesKey, LoginToken(c.cfg.Password, c.cfg.LocalKey), c.startupGap(), c.cfg.OnControl); err != nil {
+	if err := login(setup, control, aesKey, LoginToken(c.cfg.Password, c.cfg.LocalKey), c.startupGap(), c.cfg.OnControl, c.cfg.Clarity); err != nil {
 		return err
 	}
 	// The waits left a read deadline on the conversation; drainControl reads
@@ -347,12 +350,13 @@ type controlConn interface {
 	mediaReader
 }
 
-// login sends the credentials, then the messages that start the stream, each
+// login sends the credentials, then the messages that start the stream (asking
+// for clarity), each
 // after the monitor answered the one before or after gap (sendPaced). What
 // those answers carry goes to onControl, when set, as drainControl's later
 // messages do.
-func login(ctx context.Context, control controlConn, aesKey []byte, token string, gap time.Duration, onControl func(int)) error {
-	msgs, err := startupSequence(token)
+func login(ctx context.Context, control controlConn, aesKey []byte, token string, gap time.Duration, onControl func(int), clarity uint32) error {
+	msgs, err := startupSequence(token, clarity)
 	if err != nil {
 		return err
 	}

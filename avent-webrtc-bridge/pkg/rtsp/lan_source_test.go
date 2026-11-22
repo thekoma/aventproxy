@@ -345,3 +345,13 @@ func TestLANSourcePassesTheProtocol(t *testing.T) {
 		}
 	}
 }
+
+// The LAN path asks for 1080p, the imm path for what the app asks.
+func TestLANSourceAsksForHD(t *testing.T) {
+	fake := &fakeLANClient{start: func(*fakeLANClient) error { return errors.New("stop here") }}
+	src, _ := newTestLANSource(t, fake)
+	_ = src.Start(context.Background())
+	if fake.cfg.Clarity != lan.ClarityHD {
+		t.Fatalf("clarity %d, want ClarityHD", fake.cfg.Clarity)
+	}
+}
