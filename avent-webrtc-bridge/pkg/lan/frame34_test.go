@@ -159,12 +159,12 @@ func TestSessionKey34MatchesTinytuya(t *testing.T) {
 }
 
 func TestParseVersion(t *testing.T) {
-	for in, want := range map[string]Version{"3.4": V34, "3.5": V35, " 3.5 ": V35} {
+	for in, want := range map[string]Version{"3.3": V33, "3.4": V34, "3.5": V35, " 3.5 ": V35} {
 		if got, err := ParseVersion(in); err != nil || got != want {
 			t.Errorf("ParseVersion(%q) = %v, %v; want %v", in, got, err, want)
 		}
 	}
-	for _, in := range []string{"", "3.3", "3.1", "3.6", "auto", "35"} {
+	for _, in := range []string{"", "3.1", "3.6", "auto", "35"} {
 		if _, err := ParseVersion(in); err == nil {
 			t.Errorf("ParseVersion(%q) accepted", in)
 		}
@@ -258,7 +258,7 @@ func TestReadSignalOn34(t *testing.T) {
 }
 
 func TestDialRefusesAnUnknownVersion(t *testing.T) {
-	if _, err := Dial(context.Background(), "127.0.0.1", "dev", string(testKey), Version(33)); err == nil {
-		t.Fatal("Dial accepted protocol 3.3")
+	if _, err := Dial(context.Background(), "127.0.0.1", "dev", string(testKey), Version(31)); err == nil {
+		t.Fatal("Dial accepted protocol 3.1")
 	}
 }

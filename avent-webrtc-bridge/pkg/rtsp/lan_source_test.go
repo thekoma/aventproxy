@@ -330,7 +330,7 @@ func TestLANSourceStopDuringStart(t *testing.T) {
 
 // The client speaks the protocol the integration published for the monitor.
 func TestLANSourcePassesTheProtocol(t *testing.T) {
-	for protocol, want := range map[string]lan.Version{"3.4": lan.V34, "3.5": lan.V35} {
+	for protocol, want := range map[string]lan.Version{"3.3": lan.V33, "3.4": lan.V34, "3.5": lan.V35} {
 		fake := &fakeLANClient{start: func(*fakeLANClient) error { return errors.New("stop here") }}
 		rf := NewRTPForwarder()
 		src := NewLANSource("dev1", "Nursery", "uid1", LANTarget{LocalKey: "lk", Password: "pw", IP: "192.0.2.10", Protocol: protocol}, rf)

@@ -68,8 +68,8 @@ func (cs *CameraStream) lanEligible() (bool, string) {
 	}
 	id := cs.camera.DeviceID
 	target := s.LANTargets[id]
-	// pkg/lan speaks 3.4 and 3.5. A monitor on 3.3 ignores their frames, so
-	// trying would only wait out the deadline.
+	// pkg/lan speaks 3.3, 3.4 and 3.5. A monitor on anything else would
+	// ignore its frames, so trying would only wait out the deadline.
 	_, err := lan.ParseVersion(target.Protocol)
 	switch {
 	case s.sessionTalkback():

@@ -1,6 +1,7 @@
 package lan
 
 import (
+	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -8,6 +9,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -41,6 +43,10 @@ var nonceSource io.Reader = rand.Reader
 type Version int
 
 const (
+	// V33 has no key negotiation, so a connection proves nothing; Dial asks
+	// for the data points first and keeps the session only when the answer
+	// decrypts under the monitor's key.
+	V33 Version = 33
 	V34 Version = 34
 	V35 Version = 35
 )
@@ -53,6 +59,8 @@ func (v Version) String() string {
 // as "3.4". Anything this package does not speak is an error.
 func ParseVersion(s string) (Version, error) {
 	switch strings.TrimSpace(s) {
+	case "3.3":
+		return V33, nil
 	case "3.4":
 		return V34, nil
 	case "3.5":
@@ -77,13 +85,14 @@ type Session struct {
 }
 
 // Dial opens a connection and completes the session-key negotiation for
-// version, 3.5 when it is zero. ctx bounds both the dial and the negotiation;
-// without a deadline the negotiation is capped at ioTimeout.
+// version, 3.5 when it is zero; on 3.3, which has none, it proves the monitor
+// instead (prove33). ctx bounds both the dial and the handshake; without a
+// deadline the handshake is capped at ioTimeout.
 func Dial(ctx context.Context, ip, deviceID, localKey string, version Version) (*Session, error) {
 	if version == 0 {
 		version = V35
 	}
-	if version != V34 && version != V35 {
+	if version != V33 && version != V34 && version != V35 {
 		return nil, fmt.Errorf("lan: unsupported protocol version %s", version)
 	}
 	var d net.Dialer
@@ -102,7 +111,11 @@ func Dial(ctx context.Context, ip, deviceID, localKey string, version Version) (
 	// Cancellation without a deadline must also unblock the negotiation reads.
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	s := &Session{DeviceID: deviceID, conn: conn, Key: []byte(localKey), Version: version}
-	if err := s.negotiate([]byte(localKey)); err != nil {
+	handshake := s.negotiate
+	if version == V33 {
+		handshake = s.prove33
+	}
+	if err := handshake([]byte(localKey)); err != nil {
 		stop()
 		conn.Close()
 		// A cancelled ctx closed the conn under the read: say so, rather than
@@ -170,6 +183,57 @@ func (s *Session) negotiate(localKey []byte) error {
 	return nil
 }
 
+// prove33 stands in for the negotiation 3.3 lacks. Anyone can complete a 3.3
+// connection, so before anything else the session asks for the data points
+// (command 10, as tinytuya does) and accepts only an answer that decrypts
+// under localKey into JSON and names no other device. Two unreadable answers,
+// or a foreign devId, mean another device at that address, which must never
+// get the offer.
+//
+// A monitor with a 22-character id may answer command 10 with the text "json
+// obj data unvalid" instead of JSON (tinytuya's "device22", localtuya's "type
+// 0d"): an SCD973-family camera did, 11 ms after the query, 02-11-2026. That
+// text decrypted under localKey, which no other device's key yields, so it
+// proves the monitor as well as JSON would.
+func (s *Session) prove33(localKey []byte) error {
+	query, err := json.Marshal(map[string]string{
+		"gwId": s.DeviceID, "devId": s.DeviceID, "uid": s.DeviceID,
+		"t": strconv.FormatInt(time.Now().Unix(), 10),
+	})
+	if err != nil {
+		return err
+	}
+	if err := s.send(localKey, CmdDPQuery33, nil, query); err != nil {
+		return fmt.Errorf("lan: 3.3 status query: %w", err)
+	}
+	unreadable := 0
+	for {
+		_, payload, err := s.recvWithKey(localKey)
+		if errors.Is(err, errBadCRC) {
+			payload = []byte{0} // damaged: no proof either way, but counted
+		} else if err != nil {
+			return fmt.Errorf("lan: 3.3 status answer: %w", err)
+		}
+		if len(payload) == 0 {
+			continue // an acknowledgement: no proof either way
+		}
+		if bytes.Contains(payload, []byte("data unvalid")) {
+			return nil
+		}
+		var doc map[string]any
+		if json.Unmarshal(bytes.TrimSpace(payload), &doc) != nil {
+			if unreadable++; unreadable >= 2 {
+				return errors.New("lan: 3.3 answers do not decrypt under the localKey: another device, or a stale key")
+			}
+			continue
+		}
+		if id, ok := doc["devId"].(string); ok && s.DeviceID != "" && id != s.DeviceID {
+			return errors.New("lan: the 3.3 answer names another device")
+		}
+		return nil
+	}
+}
+
 // sessionKey mirrors the SDK and tinytuya: encrypt the XOR of both nonces
 // under the localKey and keep 16 bytes of the result. 3.4 uses one AES-ECB
 // block; 3.5 uses GCM with the local nonce as IV.
@@ -201,17 +265,18 @@ func hmacSHA256(key, msg []byte) []byte {
 	return m.Sum(nil)
 }
 
-// Send encrypts and writes a frame under the session key.
+// Send encrypts and writes a frame under the session key, which on 3.3 is the
+// localKey.
 //
 // iv is used by 3.5 only and must be an ASCII UUID fragment for command 32;
-// see Pack6699. 3.4 frames carry no IV.
+// see Pack6699. 3.3 and 3.4 frames carry no IV.
 func (s *Session) Send(cmd uint32, iv, payload []byte) error {
 	return s.send(s.Key, cmd, iv, payload)
 }
 
 func (s *Session) sendWithKey(key []byte, cmd uint32, payload []byte) error {
 	var iv []byte
-	if s.Version != V34 {
+	if s.Version != V33 && s.Version != V34 {
 		iv = make([]byte, gcmIVLen)
 		if _, err := rand.Read(iv); err != nil {
 			return err
@@ -223,10 +288,13 @@ func (s *Session) sendWithKey(key []byte, cmd uint32, payload []byte) error {
 func (s *Session) send(key []byte, cmd uint32, iv, payload []byte) error {
 	var frame []byte
 	var err error
-	if s.Version == V34 {
+	switch s.Version {
+	case V33:
+		frame, err = Pack55AA33(key, s.seq.Add(1), cmd, payload, !noVersionHeader33[cmd])
+	case V34:
 		body := append(append([]byte{}, versionHeader34For(cmd)...), payload...)
 		frame, err = Pack55AA34(key, s.seq.Add(1), cmd, body)
-	} else {
+	default:
 		frame, err = Pack6699(key, iv, s.seq.Add(1), cmd, payload)
 	}
 	if err != nil {
@@ -256,7 +324,10 @@ func (s *Session) recvWithKey(key []byte) (Header, []byte, error) {
 			frame := s.readBuf[:h.Total]
 			s.readBuf = s.readBuf[h.Total:]
 			unpack := Unpack6699
-			if s.Version == V34 {
+			switch s.Version {
+			case V33:
+				unpack = Unpack55AA33
+			case V34:
 				unpack = Unpack55AA34
 			}
 			hdr, plain, err := unpack(key, frame)
@@ -298,8 +369,12 @@ func nextPrefix(buf []byte) int {
 	return -1
 }
 
-// Heartbeat pings the monitor so it does not drop an idle session.
+// Heartbeat pings the monitor so it does not drop an idle session. On 3.3 the
+// body is "{}", as tinytuya sends it.
 func (s *Session) Heartbeat() error {
+	if s.Version == V33 {
+		return s.sendWithKey(s.Key, CmdHeartbeat, []byte("{}"))
+	}
 	return s.sendWithKey(s.Key, CmdHeartbeat, nil)
 }
 
