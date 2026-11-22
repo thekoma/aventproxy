@@ -88,6 +88,8 @@ github.com/pion/webrtc/v4 v4.2.26 h1:RX3FUQVHhr488sgPFJWthbbtxpuYNm3XAgYDEj4RDyQ
 github.com/pion/webrtc/v4 v4.2.26/go.mod h1:vH5Fn0zOZ8LuLhIPEtsLkoYkwnvubV4TX+ZtjV5Jqgk=
 github.com/pion/webrtc/v4 v4.2.27 h1:S/bscas5vjU1CCoxdKxuE68NkQUt9PpGZLtEGf+q6Fs=
 github.com/pion/webrtc/v4 v4.2.27/go.mod h1:MP1ZQZocg9mRkfbmpQi8hxjehjWgTHgmO1w+mMSQwDM=
+github.com/pion/webrtc/v4 v4.2.29 h1:uL1F7paed+teOlkBKaO2GO3H70paTa22FeJLy5iOG74=
+github.com/pion/webrtc/v4 v4.2.29/go.mod h1:MP1ZQZocg9mRkfbmpQi8hxjehjWgTHgmO1w+mMSQwDM=
 github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
 github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 github.com/prometheus/client_model v0.0.0-20190812154241-14fe0d1b01d4/go.mod h1:xMI15A0UPsDsEKsMN9yxemIoYk6Tm2C1GtYGdfGttqA=
