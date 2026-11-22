@@ -220,7 +220,7 @@ func TestIneligibleStreamsSkipLAN(t *testing.T) {
 		{"no address", "hd", func(s *RTSPServer) {
 			s.LANTargets["testdev"] = LANTarget{LocalKey: "lk", Password: "pw", Protocol: "3.5"}
 		}},
-		// pkg/lan speaks 3.5 only: a 3.3 monitor would ignore it until the deadline.
+		// pkg/lan speaks 3.4 and 3.5: a 3.3 monitor would ignore it until the deadline.
 		{"protocol 3.3", "hd", func(s *RTSPServer) {
 			s.LANTargets["testdev"] = LANTarget{LocalKey: "lk", Password: "pw", IP: "192.0.2.10", Protocol: "3.3"}
 		}},
@@ -255,6 +255,15 @@ func TestLANProtocol35IsEligible(t *testing.T) {
 	cs, _ := newLANStream(t, newLANServer(), "hd") // the fixture's target speaks 3.5
 	if ok, reason := cs.lanEligible(); !ok {
 		t.Fatalf("lanEligible() = false, %q; want true for protocol 3.5", reason)
+	}
+}
+
+func TestLANProtocol34IsEligible(t *testing.T) {
+	server := newLANServer()
+	server.LANTargets["testdev"] = LANTarget{LocalKey: "lk", Password: "pw", IP: "192.0.2.10", Protocol: "3.4"}
+	cs, _ := newLANStream(t, server, "hd")
+	if ok, reason := cs.lanEligible(); !ok {
+		t.Fatalf("lanEligible() = false, %q; want true for protocol 3.4", reason)
 	}
 }
 

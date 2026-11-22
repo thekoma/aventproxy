@@ -15,8 +15,9 @@ import (
 	"fmt"
 )
 
-// Frame prefixes. 55AA is the classic format used up to protocol 3.3; 6699
-// carries AES-GCM and is what a 3.5 device speaks.
+// Frame prefixes. 55AA is the classic format, which a 3.4 device seals with
+// AES-ECB and an HMAC-SHA256 trailer (frame34.go); 6699 carries AES-GCM and is
+// what a 3.5 device speaks.
 const (
 	Prefix55AA = 0x000055AA
 	Prefix6699 = 0x00006699

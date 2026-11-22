@@ -42,6 +42,9 @@ type ClientConfig struct {
 	// IP is the monitor's address. The integration discovers it; the bridge
 	// never does.
 	IP string
+	// Version is the protocol the monitor speaks on 6668, as the integration's
+	// own session found it; zero is 3.5.
+	Version Version
 
 	OnVideo func(*VideoFrame)
 	OnAudio func(*AudioFrame)
@@ -156,7 +159,7 @@ func (c *Client) Start(ctx context.Context) error {
 // connect runs the handshake under setup and leaves the media and keep-alive
 // running under life.
 func (c *Client) connect(life, setup context.Context, ip net.IP) error {
-	session, err := Dial(setup, c.cfg.IP, c.cfg.DeviceID, c.cfg.LocalKey)
+	session, err := Dial(setup, c.cfg.IP, c.cfg.DeviceID, c.cfg.LocalKey, c.cfg.Version)
 	if err != nil {
 		return err
 	}

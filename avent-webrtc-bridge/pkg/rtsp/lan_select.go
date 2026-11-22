@@ -2,10 +2,10 @@ package rtsp
 
 import (
 	"context"
-	"strconv"
 	"time"
 
 	"avent-webrtc-bridge/pkg/core"
+	"avent-webrtc-bridge/pkg/lan"
 )
 
 // LAN-first selection, rebuilt from Leonard Pitzu's fork (pkg/rtsp/server.go
@@ -20,9 +20,6 @@ const (
 	// monitor whose LAN never works is not probed every 5 minutes for good.
 	lanCooldownPeriod = 5 * time.Minute
 	lanMaxCooldown    = time.Hour
-	// lanMinProtocol is the Tuya LAN protocol pkg/lan speaks. A monitor on 3.3
-	// ignores its frames, so trying would only wait out the deadline.
-	lanMinProtocol = 3.5
 )
 
 func (s *RTSPServer) lanCoolingDown(deviceID string) bool {
@@ -71,7 +68,9 @@ func (cs *CameraStream) lanEligible() (bool, string) {
 	}
 	id := cs.camera.DeviceID
 	target := s.LANTargets[id]
-	protocol, err := strconv.ParseFloat(target.Protocol, 64)
+	// pkg/lan speaks 3.4 and 3.5. A monitor on 3.3 ignores their frames, so
+	// trying would only wait out the deadline.
+	_, err := lan.ParseVersion(target.Protocol)
 	switch {
 	case s.sessionTalkback():
 		return false, "talkback on" // the LAN path carries no return audio; on demand it talks in a session of its own
@@ -83,7 +82,7 @@ func (cs *CameraStream) lanEligible() (bool, string) {
 		return false, "no address"
 	case target.Protocol == "":
 		return false, "protocol unknown"
-	case err != nil || !(protocol >= lanMinProtocol): // written so NaN fails too
+	case err != nil:
 		return false, "protocol " + target.Protocol
 	case s.lanCoolingDown(id):
 		return false, "cooling down"
