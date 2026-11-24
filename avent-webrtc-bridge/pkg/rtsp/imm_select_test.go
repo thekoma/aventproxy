@@ -295,7 +295,7 @@ func TestWebRTCFailureEndsTheIMMCooldown(t *testing.T) {
 	a := fakeIMMAttempts(t, cs, nil, func(context.Context) error {
 		return fmt.Errorf("%w: %v", lan.ErrNoAnswer, context.DeadlineExceeded)
 	})
-	cs.cloudStart = func() error {
+	cs.cloudStart = func(context.Context, *WebRTCBridge) error {
 		a.cloudStarted.Add(1)
 		return errors.New("cloud down")
 	}

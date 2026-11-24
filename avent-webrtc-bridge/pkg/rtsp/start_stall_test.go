@@ -36,8 +36,9 @@ type stallHarness struct {
 }
 
 // newStallHarness starts the server. start is every cloud attempt of every
-// stream; it runs where the real one does, with the stream's lock held.
-func newStallHarness(t *testing.T, start func(cs *CameraStream) error) *stallHarness {
+// stream; it runs where the real one does, without the stream's lock, and ctx
+// ends when the stream stops.
+func newStallHarness(t *testing.T, start func(ctx context.Context, cs *CameraStream) error) *stallHarness {
 	t.Helper()
 	t.Chdir(t.TempDir())
 	sm, err := storage.NewStorageManager()
@@ -66,7 +67,7 @@ func newStallHarness(t *testing.T, start func(cs *CameraStream) error) *stallHar
 		h.mu.Lock()
 		h.created[cs.camera.DeviceID]++
 		h.mu.Unlock()
-		cs.cloudStart = func() error { return start(cs) }
+		cs.cloudStart = func(ctx context.Context, _ *WebRTCBridge) error { return start(ctx, cs) }
 	}
 	h.server.beforeJoin = func(*RTSPClient) {
 		if gate := h.joinGate.Load(); gate != nil {
@@ -215,7 +216,7 @@ func TestTwoClientsOnAStartingCamera(t *testing.T) {
 	shortRetry(t)
 	release := make(chan struct{})
 	var cam1Attempts atomic.Int32
-	h := newStallHarness(t, func(cs *CameraStream) error {
+	h := newStallHarness(t, func(_ context.Context, cs *CameraStream) error {
 		if cs.camera.DeviceID != "cam1" {
 			return nil
 		}
@@ -255,17 +256,15 @@ func TestTwoClientsOnAStartingCamera(t *testing.T) {
 
 // Issue #89: a start that fails must close every client that came for it,
 // and the next client must get a fresh start rather than a stream that is
-// already dead. A client that came during the last attempt, its join held
-// behind that attempt's lock, never joins: the failed start takes the lock
-// back for its teardown before the woken join can run, so the join sees the
-// stop and is refused (joinStream). With that refusal disabled, this test
-// failed 40 runs out of 40.
+// already dead. A client that came during the last attempt joins the stream
+// while it is still connecting (the attempt holds no lock since #162), and
+// the failed start's teardown closes it with the first one.
 func TestClientsOfAFailedStartReconnectToAFreshOne(t *testing.T) {
 	shortRetry(t)
 	lastAttempt := make(chan struct{})
 	fail := make(chan struct{})
 	var attempts atomic.Int32
-	h := newStallHarness(t, func(cs *CameraStream) error {
+	h := newStallHarness(t, func(_ context.Context, cs *CameraStream) error {
 		switch attempts.Add(1) {
 		case 1:
 			return errors.New("no answer")
@@ -308,7 +307,7 @@ func TestClientsOfAFailedStartReconnectToAFreshOne(t *testing.T) {
 // that will never send it anything.
 func TestClientJoiningAfterATeardownIsClosed(t *testing.T) {
 	var attempts atomic.Int32
-	h := newStallHarness(t, func(cs *CameraStream) error {
+	h := newStallHarness(t, func(_ context.Context, cs *CameraStream) error {
 		attempts.Add(1)
 		return nil
 	})
@@ -345,7 +344,7 @@ func TestClientJoiningAfterATeardownIsClosed(t *testing.T) {
 // Removed first, it would be added by the late join as a dead client: the
 // stream would never empty, and its camera session would stay up for good.
 func TestClientLeavingBeforeItJoinedLeavesNoGhost(t *testing.T) {
-	h := newStallHarness(t, func(cs *CameraStream) error { return nil })
+	h := newStallHarness(t, func(_ context.Context, cs *CameraStream) error { return nil })
 	first := dialRTSP(t, h.port, "/cam1")
 	first.play(time.Second)
 	waitUntil(t, func() bool {
@@ -396,7 +395,7 @@ func (l *slowStopLAN) SetOnError(func(error))      {}
 // count, or it is accepted into a stream whose forwarder no longer has it: it
 // restarts the stream and gets nothing. Found by the dev4 review's probe.
 func TestClientRegisteredDuringATeardownIsClosed(t *testing.T) {
-	h := newStallHarness(t, func(cs *CameraStream) error { return nil })
+	h := newStallHarness(t, func(_ context.Context, cs *CameraStream) error { return nil })
 	first := dialRTSP(t, h.port, "/cam1")
 	first.play(time.Second)
 	waitUntil(t, func() bool {
@@ -462,12 +461,12 @@ func mediaStream(t *testing.T, media *sessionMedia) (*CameraStream, net.Conn) {
 		serverConn.Close()
 	})
 	cs.clients["s1"] = &RTSPClient{conn: serverConn, session: "s1", stream: cs}
-	cs.cloudStart = func() error {
+	cs.cloudStart = func(_ context.Context, bridge *WebRTCBridge) error {
 		if media.video.Load() {
-			cs.webrtcBridge.videoPackets.Add(1)
+			bridge.videoPackets.Add(1)
 		}
 		if media.audio.Load() {
-			cs.webrtcBridge.audioPackets.Add(1)
+			bridge.audioPackets.Add(1)
 		}
 		return nil
 	}
@@ -554,7 +553,7 @@ func TestSilentConnectionIsClosed(t *testing.T) {
 	old := requestReadTimeout
 	requestReadTimeout = 100 * time.Millisecond
 	t.Cleanup(func() { requestReadTimeout = old })
-	h := newStallHarness(t, func(*CameraStream) error { return nil })
+	h := newStallHarness(t, func(context.Context, *CameraStream) error { return nil })
 
 	dialRTSP(t, h.port, "/cam1").expectClosedWithin(2 * time.Second)
 }

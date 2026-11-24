@@ -12,9 +12,9 @@ import (
 
 var mqttBackoffDelays = []time.Duration{2 * time.Second, 5 * time.Second, 15 * time.Second, 30 * time.Second}
 
-// mqttHandshakeTimeout bounds the subscription that follows a connect. It runs
-// with the stream's lock held, so a broker that never acknowledges must not
-// keep the stream waiting for good.
+// mqttHandshakeTimeout bounds the subscription that follows a connect, so a
+// broker that never acknowledges does not keep a cloud attempt waiting for
+// good.
 const mqttHandshakeTimeout = 15 * time.Second
 
 // MQTTManager holds the one MQTT connection the cameras' cloud signalling
@@ -51,9 +51,11 @@ func (m *MQTTManager) GetClient(deviceId string) (*tuya.MQTTClient, error) {
 }
 
 // GetClientContext is GetClient for a caller that may give up: once ctx ends
-// it starts no connect attempt and sleeps no backoff (an attempt in flight
-// runs to its end). An imm attempt uses it, so that when the broker is down a
-// webrtc fallback does not wait behind the abandoned attempt's whole backoff.
+// it starts no connect attempt, sleeps no backoff and stops waiting for the
+// subscription (a connect in flight runs to its 10 s timeout). The imm and
+// webrtc attempts use it, so that when the broker is down a webrtc fallback
+// does not wait behind the abandoned attempt's whole backoff, and the attempt
+// of a stream that stopped lets go of the manager at once (issue #162).
 func (m *MQTTManager) GetClientContext(ctx context.Context, deviceId string) (*tuya.MQTTClient, error) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
@@ -123,7 +125,7 @@ func (m *MQTTManager) connect(ctx context.Context, deviceId string) (*tuya.MQTTC
 			continue
 		}
 
-		if err = client.Connected.WaitTimeout(mqttHandshakeTimeout); err != nil {
+		if err = client.Connected.WaitContext(ctx, mqttHandshakeTimeout); err != nil {
 			lastErr = err
 			client.Stop()
 			core.Logger.Warn().Err(err).Msgf("MQTT handshake attempt %d/%d failed for device %s", attempt+1, len(mqttBackoffDelays), deviceId)
