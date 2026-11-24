@@ -133,6 +133,30 @@ class TestFirstConnect:
         assert client.session_version == 3.5
 
 
+class TestNotFound:
+    def test_an_absent_camera_is_warned_once(self, lan, monkeypatch, caplog):
+        client = make_client(lan)
+        script_connect(monkeypatch, client, accept=lambda ip, v: False, scan=(None, None))
+        with caplog.at_level("DEBUG"):
+            for _ in range(3):
+                assert not asyncio.run(client._connect())
+        warnings = [r for r in caplog.records if r.levelname == "WARNING" and "not found on LAN" in r.getMessage()]
+        assert len(warnings) == 1
+
+    def test_finding_it_again_rearms_the_warning(self, lan, monkeypatch):
+        client = make_client(lan)
+        script_connect(monkeypatch, client, accept=lambda ip, v: True, scan=(None, None))
+        assert not asyncio.run(client._connect())
+        assert client._missing_reported
+        monkeypatch.setattr(client, "_discover_device", lambda: _found("10.0.0.7"))
+        assert asyncio.run(client._connect())
+        assert not client._missing_reported
+
+
+async def _found(ip):
+    return ip, 3.5
+
+
 class TestNoDowngradeAfterAKeyedSession:
     """A monitor that had a keyed session is never offered a bare 3.3 session again."""
 

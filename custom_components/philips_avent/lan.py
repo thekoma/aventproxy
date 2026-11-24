@@ -68,6 +68,9 @@ class TuyaLANClient:
         # Set once the live session has decrypted a frame; see `proven`.
         self._exchanged = False
         self.connected: bool = False
+        # Whether "not found on LAN" was logged since the camera was last
+        # connected: once at warning, then at debug, not every round.
+        self._missing_reported = False
 
     @property
     def ip(self) -> str | None:
@@ -204,6 +207,7 @@ class TuyaLANClient:
             if device:
                 self._device = device
                 self.connected = True
+                self._missing_reported = False
                 _LOGGER.info("LAN reconnected to %s at %s", self._device_id, self._ip)
                 return True
             self._ip = None
@@ -217,13 +221,21 @@ class TuyaLANClient:
             )
             self._announced_version = announced
         if not self._ip:
-            _LOGGER.warning("Device %s not found on LAN", self._device_id)
+            if self._missing_reported:
+                _LOGGER.debug("Device %s still not found on LAN", self._device_id)
+            else:
+                self._missing_reported = True
+                _LOGGER.warning(
+                    "Device %s not found on LAN; retrying at most a minute apart, logged at debug from here on",
+                    self._device_id,
+                )
             return False
 
         device = await self._connect_at_any_version(self._ip, scanned=True)
         if device:
             self._device = device
             self.connected = True
+            self._missing_reported = False
             _LOGGER.info("LAN connected to %s at %s", self._device_id, self._ip)
             return True
 
