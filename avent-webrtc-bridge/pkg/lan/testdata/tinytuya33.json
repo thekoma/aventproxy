@@ -1,0 +1,27 @@
+{
+ "local_key": "fake-local-key!!",
+ "client7Header": {
+  "seq": 1,
+  "cmd": 7,
+  "plain": "{\"devId\":\"dev1\",\"uid\":\"dev1\",\"t\":\"1700000000\",\"dps\":{\"201\":\"stop\"}}",
+  "frame": "000055aa000000010000000700000067332e33000000000000000000000000a7dee072ab048260bc41501a9ddb2fb1bb7669138172bcadf0a892d183325f4575ba0f1ff04ef63cb915f0f8c0045c3120fb03acfb092de63b6746515ff2e43859f9253a9c2fbd9d955fae1c9ed76d509d95b14e0000aa55"
+ },
+ "client10NoHeader": {
+  "seq": 2,
+  "cmd": 10,
+  "plain": "{\"gwId\":\"dev1\",\"devId\":\"dev1\",\"uid\":\"dev1\",\"t\":\"1700000000\"}",
+  "frame": "000055aa000000020000000a0000004841d0eb0492d38b6842a3b78a46ae4ede7bf219b841f9c5eb4eb8d99a3ba6c1378e29b566edb37047ff2ac69f9dd98c7c9e69c109d83f529f9184a7c5a030135ac98aac040000aa55"
+ },
+ "device10Retcode": {
+  "seq": 3,
+  "cmd": 10,
+  "plain": "{\"devId\":\"dev1\",\"dps\":{\"1\":true,\"246\":\"playing\"}}",
+  "frame": "000055aa000000030000000a0000004c00000000a7dee072ab048260bc41501a9ddb2fb1b4fad5d4d5dadb27d26e3c5a345ab0f7871336e64a450af603f63b0b7850c1a7e8dcd3be96d1eccc12477bb7978ab740bc42615d0000aa55"
+ },
+ "device8RetcodeHeader": {
+  "seq": 4,
+  "cmd": 8,
+  "plain": "{\"devId\":\"dev1\",\"dps\":{\"246\":\"stopping\"},\"t\":1700000001}",
+  "frame": "000055aa00000004000000080000005b00000000332e33000000000000000000000000a7dee072ab048260bc41501a9ddb2fb13e2e9d9bfbd1b18a8d4fa45d7ab642d1270adaeccdd2af2d0d814270735b9b800e3063d70a4bd4e649f0fa1a8c5928d856d89bc40000aa55"
+ }
+}

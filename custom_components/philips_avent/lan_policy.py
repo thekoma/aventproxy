@@ -320,7 +320,7 @@ class AddressPublisher:
     rediscovery. Reporting those blips would rewrite the bridge JSON, and restart
     the bridge, twice per hiccup (issue #73), so losing the address says nothing
     and a return to the last reported pair says nothing either. The protocol rides
-    along because the bridge's LAN path speaks only 3.5.
+    along because the bridge's LAN path speaks the version the monitor speaks.
     """
 
     def __init__(

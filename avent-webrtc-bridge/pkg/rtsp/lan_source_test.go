@@ -327,3 +327,21 @@ func TestLANSourceStopDuringStart(t *testing.T) {
 		t.Fatal("Start still running after Stop")
 	}
 }
+
+// The client speaks the protocol the integration published for the monitor.
+func TestLANSourcePassesTheProtocol(t *testing.T) {
+	for protocol, want := range map[string]lan.Version{"3.3": lan.V33, "3.4": lan.V34, "3.5": lan.V35} {
+		fake := &fakeLANClient{start: func(*fakeLANClient) error { return errors.New("stop here") }}
+		rf := NewRTPForwarder()
+		src := NewLANSource("dev1", "Nursery", "uid1", LANTarget{LocalKey: "lk", Password: "pw", IP: "192.0.2.10", Protocol: protocol}, rf)
+		fake.done = make(chan struct{})
+		src.newClient = func(cfg lan.ClientConfig) lanClient {
+			fake.cfg = cfg
+			return fake
+		}
+		_ = src.Start(context.Background())
+		if fake.cfg.Version != want {
+			t.Errorf("protocol %q: client speaks %v, want %v", protocol, fake.cfg.Version, want)
+		}
+	}
+}

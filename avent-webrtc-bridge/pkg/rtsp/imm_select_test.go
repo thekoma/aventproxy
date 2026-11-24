@@ -31,13 +31,13 @@ func fakeIMMAttempts(t *testing.T, cs *CameraStream, lanStart, immStart func(con
 	return a
 }
 
-// newIMMServer is a server whose camera "testdev" is a 3.3 monitor: never on
-// the LAN, and on imm when the option asks for it.
+// newIMMServer is a server whose camera "testdev" has no published LAN
+// protocol: never on the LAN, and on imm when the option asks for it.
 func newIMMServer(transport string) *RTSPServer {
 	s := NewRTSPServer(0, nil)
 	s.LanStreaming = true
 	s.CloudTransport = transport
-	s.LANTargets = map[string]LANTarget{"testdev": {LocalKey: "lk", Password: "pw", IP: "192.0.2.10", Protocol: "3.3"}}
+	s.LANTargets = map[string]LANTarget{"testdev": {LocalKey: "lk", Password: "pw", IP: "192.0.2.10"}}
 	return s
 }
 
