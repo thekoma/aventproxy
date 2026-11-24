@@ -390,7 +390,7 @@ func TestResolveBind(t *testing.T) {
 	if got := resolveBind("localhost", false, BridgeConfig{RTSPBind: "  "}); got != DefaultBind {
 		t.Errorf("blank JSON value: got %q, want %q", got, DefaultBind)
 	}
-	// run.sh passes the add-on option as --bind whatever it holds, and the
+	// supervise passes the add-on option as --bind whatever it holds, and the
 	// server trims a blank value to "", which means every interface: a blank
 	// flag must fall through instead of opening the unauthenticated server.
 	if got := resolveBind("   ", true, none); got != DefaultBind {
@@ -566,7 +566,7 @@ func TestCloudCheckWarning(t *testing.T) {
 	}
 }
 
-// The issue #72 knobs come from the Dev card's options through run.sh. A card
+// The issue #72 knobs come from the Dev card's options through supervise. A card
 // that does not define them passes no flag, and the defaults apply.
 func TestSessionFlags(t *testing.T) {
 	for _, tc := range []struct {
@@ -597,7 +597,7 @@ func TestSessionFlags(t *testing.T) {
 	}
 }
 
-// cloud_transport comes from the Dev card through run.sh. Without the flag, as
+// cloud_transport comes from the Dev card through supervise. Without the flag, as
 // on the stable and beta cards, the bridge keeps the webrtc session.
 func TestCloudTransportFlag(t *testing.T) {
 	for _, tc := range []struct {
