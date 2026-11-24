@@ -216,7 +216,7 @@ const DefaultBind = "localhost"
 // resolveBind picks the bind address: an explicit --bind flag, then the
 // rtsp_bind_address field of the config JSON, then DefaultBind. A blank value
 // falls through to the next one: the server reads "" as every interface, and
-// run.sh passes the add-on option as --bind even when it holds only spaces.
+// supervise passes the add-on option as --bind even when it holds only spaces.
 // Listening on every interface takes "0.0.0.0" or "::", written on purpose.
 func resolveBind(flagValue string, flagSet bool, cfg BridgeConfig) string {
 	if b := strings.TrimSpace(flagValue); flagSet && b != "" {
@@ -274,7 +274,7 @@ Example:
 	cmd.Flags().String("bind", DefaultBind, "Interfaces the RTSP server listens on: localhost (127.0.0.1 and ::1), "+
 		"an address or comma-separated list, or 0.0.0.0 for every interface. The server has no authentication, "+
 		"so open it to the network only when another machine must reach it")
-	// Issue #72 experiment knobs, set from the Dev card's options by run.sh.
+	// Issue #72 experiment knobs, set from the Dev card's options by supervise.
 	// Speaker-off stays off elsewhere until a tester confirms it.
 	cmd.Flags().Bool("speaker-off", false, "Ask the monitor to keep its speaker closed once a cloud session "+
 		"without talkback is up (issue #72, experimental)")

@@ -166,7 +166,7 @@ class TestBuildBridgeConfig:
         assert lan["abc123"]["local_key"] == "lk"
 
     def test_lan_off_gives_identical_json_across_restarts(self):
-        # run.sh restarts the bridge on any md5 change (issue #73).
+        # The add-on restarts the bridge on any change to the file (issue #73).
         lan = {"abc123": {"local_key": "lk", "p2p_password": "", "lan_ip": "192.168.1.9", "lan_protocol": "3.3"}}
         again = {"abc123": {"local_key": "lk", "p2p_password": "pw", "lan_ip": "192.168.1.9", "lan_protocol": "3.3"}}
         first = json.dumps(build_bridge_config(**self.BASE, lan_streaming=False, lan=lan), indent=2)
@@ -174,7 +174,7 @@ class TestBuildBridgeConfig:
         assert first == second
 
     def test_unchanged_inputs_give_identical_json(self):
-        # run.sh restarts the bridge on any md5 change (issue #73).
+        # The add-on restarts the bridge on any change to the file (issue #73).
         lan = {"abc123": {"local_key": "lk", "p2p_password": "pw", "lan_ip": "192.168.1.9", "lan_protocol": "3.3"}}
         first = json.dumps(build_bridge_config(**self.BASE, uid="u1", lan=lan), indent=2)
         second = json.dumps(build_bridge_config(**self.BASE, uid="u1", lan=lan), indent=2)

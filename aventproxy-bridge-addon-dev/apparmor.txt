@@ -22,6 +22,5 @@ profile aventproxy_bridge flags=(attach_disconnected,mediate_deleted) {
   /data/** rw,
   /config/** rw,
 
-  /run.sh ix,
   /usr/local/bin/avent-webrtc-bridge ix,
 }

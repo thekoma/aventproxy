@@ -229,8 +229,8 @@ def write_bridge_config_file(path, config: dict) -> None:
 
     The content goes to a temporary file in the same directory, owner-only
     before anything is written to it, which then replaces the old file in one
-    step. Truncating in place let run.sh's md5 poll, or the seed read at the
-    next setup, catch a half-written file: a changed md5 restarts the bridge
+    step. Truncating in place let the add-on's change poll, or the seed read at
+    the next setup, catch a half-written file: a changed file restarts the bridge
     on a config it cannot parse, and the full write then restarts it again
     (#73). The temporary name matches neither the add-on's glob nor the
     orphan cleanup, and it is removed if the write fails. One a hard crash

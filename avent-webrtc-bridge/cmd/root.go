@@ -9,6 +9,7 @@ import (
 	"avent-webrtc-bridge/cmd/cameras"
 	"avent-webrtc-bridge/cmd/direct"
 	"avent-webrtc-bridge/cmd/rtsp"
+	"avent-webrtc-bridge/cmd/supervise"
 	"avent-webrtc-bridge/pkg/storage"
 
 	"github.com/spf13/cobra"
@@ -49,6 +50,7 @@ func init() {
 	rootCmd.AddCommand(rtsp.NewRTSPCmd())
 	rootCmd.AddCommand(direct.NewDirectCmd())
 	rootCmd.AddCommand(addon.NewAddonCmd())
+	rootCmd.AddCommand(supervise.NewSuperviseCmd())
 }
 
 func initConfig() {

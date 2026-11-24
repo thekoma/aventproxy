@@ -106,7 +106,7 @@ Give that container the directory with `philips_avent_bridge.json` in it, as `do
 
 #### Who can reach the RTSP stream
 
-The bridge's RTSP server has no password. The add-on therefore listens on loopback only (`localhost`, i.e. 127.0.0.1 and ::1) by default: Home Assistant runs on the host network next to it and opens `rtsp://localhost:38554/<camera>`, so nothing else on your network can watch the nursery. If another machine must open the stream (VLC, Frigate, a separate go2rtc, or Home Assistant itself when the bridge runs elsewhere), set the add-on option **RTSP bind address** (`rtsp_bind_address`) to `0.0.0.0`, to one address, or to a comma-separated list, and restrict port 38554 on your network. Outside the add-on, pass `--bind` to `avent-webrtc-bridge addon` or set `RTSP_BIND_ADDRESS` for `run.sh` (see `docker-compose.yml`).
+The bridge's RTSP server has no password. The add-on therefore listens on loopback only (`localhost`, i.e. 127.0.0.1 and ::1) by default: Home Assistant runs on the host network next to it and opens `rtsp://localhost:38554/<camera>`, so nothing else on your network can watch the nursery. If another machine must open the stream (VLC, Frigate, a separate go2rtc, or Home Assistant itself when the bridge runs elsewhere), set the add-on option **RTSP bind address** (`rtsp_bind_address`) to `0.0.0.0`, to one address, or to a comma-separated list, and restrict port 38554 on your network. Outside the add-on, pass `--bind` to `avent-webrtc-bridge addon` or set `RTSP_BIND_ADDRESS` for `avent-webrtc-bridge supervise`, which the image runs (see `docker-compose.yml`).
 
 ### Automations
 

@@ -84,7 +84,7 @@ class TestPermissions:
 
 
 class TestAtomicReplace:
-    """run.sh polls the md5 every 10 s and restarts the bridge on any change (#73)."""
+    """The add-on hashes the file every 10 s and restarts the bridge on any change (#73)."""
 
     def test_a_reader_never_sees_a_truncated_file(self, tmp_path):
         # A reader that opened the file before the write keeps reading the whole
