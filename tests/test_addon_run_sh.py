@@ -30,14 +30,17 @@ pytestmark = pytest.mark.skipif(
 FAKE_BRIDGE = """#!/usr/bin/env bash
 dir="$(dirname "$0")"
 export LC_ALL=C
+mode="$(cat "$dir/mode" 2>/dev/null)"
+# Armed before the start is announced: a test sends SIGTERM as soon as it sees
+# the start, and a TERM that beat the trap would kill this bridge normally.
+[ "$mode" = ignoreterm ] && trap '' TERM
 echo "$EPOCHREALTIME $$ $*" >> "$dir/starts.log"
 echo $$ > "$dir/bridge.pid"
-case "$(cat "$dir/mode" 2>/dev/null)" in
+case "$mode" in
     exit1) exit 1 ;;
     exit0) exit 0 ;;
     exit143) exit 143 ;;
     ignoreterm)
-        trap '' TERM
         while true; do sleep 0.1; done ;;
     *) exec sleep 300 ;;
 esac
