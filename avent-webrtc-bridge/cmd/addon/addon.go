@@ -314,6 +314,9 @@ func sessionFlags(cmd *cobra.Command) (speakerOff bool, webrtcAudio string, err 
 }
 
 func runAddon(cmd *cobra.Command, args []string) error {
+	// The flags parsed, so any error from here on is a failed start, not a
+	// usage mistake: no flag list in the log on every restart of a crash loop.
+	cmd.SilenceUsage = true
 	cfgPath, _ := cmd.Flags().GetString("config")
 
 	cfg, err := loadConfig(cfgPath)
