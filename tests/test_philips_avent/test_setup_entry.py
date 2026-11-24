@@ -52,8 +52,8 @@ class FakeHass:
 class FakeEntry:
     entry_id = "entry1"
 
-    def __init__(self):
-        self.data = {"sid": "sid", "device_id": "dev", "cameras": CAMERAS}
+    def __init__(self, cameras=CAMERAS):
+        self.data = {"sid": "sid", "device_id": "dev", "cameras": cameras}
         self.options = {"lan_streaming": False}
 
     def async_on_unload(self, func):
@@ -99,7 +99,7 @@ def setup(monkeypatch):
         except update_failed as err:
             return err
 
-    def run(failures):
+    def run(failures, cameras=CAMERAS):
         """failures: monitor id -> the coordinator's failure in its first refresh."""
 
         class FakeCoordinator:
@@ -107,6 +107,8 @@ def setup(monkeypatch):
 
             def __init__(self, hass, api, cam_id, cam_name, **_):
                 self.camera_id = cam_id
+                # What async_setup_entry sets from the bridge's paths.
+                self.camera_name, self.display_name, self.rtsp_path = cam_name, cam_name, None
                 # What the bridge config reads.
                 self.device_info, self.local_key, self.lan_ip, self.lan_protocol = {}, None, None, None
 
@@ -127,7 +129,7 @@ def setup(monkeypatch):
                 pass
 
         monkeypatch.setattr(module, "PhilipsAventCoordinator", FakeCoordinator)
-        hass, entry = FakeHass(), FakeEntry()
+        hass, entry = FakeHass(), FakeEntry(cameras)
 
         async def scenario():
             try:
@@ -185,6 +187,21 @@ class TestMonitorWithoutAccess:
         # The first monitor's own error, as before.
         assert raised.value.__cause__ is first
         assert not _warnings(caplog)
+
+    def test_a_skipped_monitor_keeps_its_path_for_a_same_named_one(self, setup):
+        # The bridge assigns paths over every monitor in its config, the skipped one
+        # too: it keeps the plain path and the running one is served under _<id prefix>.
+        name = "Philips Avent Baby Monitor"
+        cameras = [
+            {"id": "a1b2c3d4e5", "name": name, "product_id": "pid1"},
+            {"id": "f6e5d4c3b2", "name": name, "product_id": "pid1"},
+        ]
+        ok, hass, started = setup({"a1b2c3d4e5": setup.tuya("PERMISSION_DENIED", "No access")}, cameras)
+        assert ok is True
+        assert started == ["f6e5d4c3b2"]
+        coordinator = hass.data["philips_avent"]["entry1"]["coordinators"]["f6e5d4c3b2"]
+        assert coordinator.rtsp_path == "Philips_Avent_Baby_Monitor_f6e5d4"
+        assert coordinator.display_name == "Philips Avent Baby Monitor f6e5d4"
 
     def test_a_refused_session_still_asks_for_a_new_login(self, setup):
         refused = setup.exceptions.ConfigEntryAuthFailed("Authentication failed: USER_SESSION_LOSS")

@@ -40,6 +40,7 @@ from .payload import (
     BRIDGE_CONFIG_PREFIX,
     bridge_config_filename,
     build_bridge_config,
+    build_cameras_payload,
     orphan_bridge_configs,
     previous_lan_values,
     strip_stored_password,
@@ -335,8 +336,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             raise skipped[0][2]
 
         # The bridge serves same-named cameras under suffixed paths (assignPaths in
-        # the bridge), in the order of the bridge config, which is this order.
-        paths = rtsp_paths([(cam_id, c.camera_name) for cam_id, c in coordinators.items()])
+        # the bridge), over every camera in the bridge config, including one skipped above.
+        paths = rtsp_paths([(c["camera_id"], c["camera_name"]) for c in build_cameras_payload(cameras)])
         for cam_id, coordinator in coordinators.items():
             coordinator.rtsp_path = paths.get(cam_id)
             if coordinator.rtsp_path:

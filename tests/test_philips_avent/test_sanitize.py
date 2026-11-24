@@ -62,8 +62,7 @@ class TestBuildRtspUrl:
 
 
 # rtsp_paths mirrors assignPaths in avent-webrtc-bridge/cmd/addon/addon.go; the
-# cases below are taken from the TestAssignPaths_* cases in addon_test.go (a
-# camera without an id, which the bridge skips, cannot reach a coordinator).
+# cases below are taken from the TestAssignPaths_* cases in addon_test.go.
 
 def test_paths_without_collision():
     assert rtsp_paths([("abc123", "Erik"), ("def456", "Anna")]) == {"abc123": "Erik", "def456": "Anna"}
@@ -91,6 +90,10 @@ def test_paths_suffixed_path_already_taken():
 
 def test_paths_repeated_id_skipped():
     assert rtsp_paths([("abc123", "Baby"), ("abc123", "Baby")]) == {"abc123": "Baby"}
+
+
+def test_paths_missing_id_skipped():
+    assert rtsp_paths([("", "Baby"), ("abc123", "Baby")]) == {"abc123": "Baby"}
 
 
 def test_url_uses_the_assigned_path():

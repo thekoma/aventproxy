@@ -244,14 +244,14 @@ def rtsp_paths(cameras: list[tuple[str, str]]) -> dict[str, str]:
     cameras with the same name (both left as "Philips Avent Baby Monitor")
     sanitize to the same path; the bridge then serves the later one under
     `<path>_<first 6 characters of its id>`, and `_<n>` on top if that is
-    taken too, skipping a repeated id. Mirrors `cmd/addon/addon.go`
+    taken too, skipping a camera without an id and a repeated id. Mirrors `cmd/addon/addon.go`
     (assignPaths); without it both entities pulled the first camera's stream.
     """
     seen_ids: set[str] = set()
     seen_paths: set[str] = set()
     paths: dict[str, str] = {}
     for cam_id, name in cameras:
-        if cam_id in seen_ids:
+        if not cam_id or cam_id in seen_ids:
             continue
         seen_ids.add(cam_id)
         base = sanitize_rtsp_path(name, cam_id)
