@@ -16,6 +16,8 @@ class _Coordinator:
         self.data = data
         self.device_info = {}
         self.camera_name = "Nursery"
+        # entity.build_device_info reads it once same-named cameras get their own name.
+        self.display_name = "Nursery"
 
     def async_add_listener(self, listener):
         return lambda: None
