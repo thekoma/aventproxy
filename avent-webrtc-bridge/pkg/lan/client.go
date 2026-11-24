@@ -22,8 +22,18 @@ const (
 	// before the stream counts as dead; audio alone arrives about 50 times a
 	// second.
 	mediaIdleTimeout = 3 * time.Second
-	loginPacing      = 120 * time.Millisecond
 )
+
+// DefaultStartupGap is the longest pause between two messages of the startup
+// sequence when ClientConfig.StartupGap is zero: the 120 ms this package slept
+// after every message, which came from Leonard Pitzu's fork without a reason
+// given. The monitor answers each setup message on the control conversation
+// (never the login), so the next one goes out as soon as that answer is in.
+// On an SCD951 (protocol 3.4, 22-11-2026) the first two waited the whole
+// 120 ms and the others 20-40 ms. A fixed 20 ms pause brought sessions up in
+// 0.2-0.4 s but stays unproven: once in five starts an SCD951 then sent no
+// video, which also happened once with 400 ms waits (2026-11-04).
+const DefaultStartupGap = 120 * time.Millisecond
 
 // ErrMediaIdle is a stream on which no conversation delivered a readable media
 // message for mediaIdleTimeout: after the login on a start, or at any time on a
@@ -42,6 +52,9 @@ type ClientConfig struct {
 	// IP is the monitor's address. The integration discovers it; the bridge
 	// never does.
 	IP string
+	// Version is the protocol the monitor speaks on 6668, as the integration's
+	// own session found it; zero is 3.5.
+	Version Version
 
 	OnVideo func(*VideoFrame)
 	OnAudio func(*AudioFrame)
@@ -63,6 +76,15 @@ type ClientConfig struct {
 	ICEServers []ICEServer
 	// HandshakeTimeout caps the handshake in place of startTimeout when set.
 	HandshakeTimeout time.Duration
+	// StartupGap is the longest pause between two messages of the startup
+	// sequence (the login and six setup messages): the next one goes out when
+	// the monitor has answered the previous one, or after this long. There is
+	// none after the last one. Zero means DefaultStartupGap; a negative value
+	// sends them back to back without waiting for answers.
+	StartupGap time.Duration
+	// Clarity is the video clarity the startup sequence asks for: ClarityHD
+	// or ClarityStandard, what the app asks for. Zero is ClarityStandard.
+	Clarity uint32
 	// OnControl, when set, is told the size of everything the control
 	// conversation delivers after the login. Nothing reads those messages;
 	// whether any came tells a refused login from a silent path.
@@ -88,7 +110,7 @@ type Client struct {
 	lastMedia atomic.Int64
 }
 
-// mediaReader is what consume needs from a KCP conversation.
+// mediaReader is what consume and awaitReply need from a KCP conversation.
 type mediaReader interface {
 	Read([]byte) (int, error)
 	SetReadDeadline(time.Time) error
@@ -156,7 +178,7 @@ func (c *Client) Start(ctx context.Context) error {
 // connect runs the handshake under setup and leaves the media and keep-alive
 // running under life.
 func (c *Client) connect(life, setup context.Context, ip net.IP) error {
-	session, err := Dial(setup, c.cfg.IP, c.cfg.DeviceID, c.cfg.LocalKey)
+	session, err := Dial(setup, c.cfg.IP, c.cfg.DeviceID, c.cfg.LocalKey, c.cfg.Version)
 	if err != nil {
 		return err
 	}
@@ -219,7 +241,12 @@ func (c *Client) stream(life, setup context.Context, sock *net.UDPConn, peer *ne
 	if err := c.hold(control); err != nil {
 		return err
 	}
-	if err := login(setup, control, aesKey, LoginToken(c.cfg.Password, c.cfg.LocalKey)); err != nil {
+	if err := login(setup, control, aesKey, LoginToken(c.cfg.Password, c.cfg.LocalKey), c.startupGap(), c.cfg.OnControl, c.cfg.Clarity); err != nil {
+		return err
+	}
+	// The waits left a read deadline on the conversation; drainControl reads
+	// it without one.
+	if err := control.SetReadDeadline(time.Time{}); err != nil {
 		return err
 	}
 	c.markMedia() // the idle clock starts with the stream, not with NewClient
@@ -317,24 +344,86 @@ func collectAnswer(ctx context.Context, s *Session, sessionID string) (remote ic
 	return iceCreds{}, nil, nil, errors.New("lan: monitor never completed the answer")
 }
 
-// login sends the credentials, then the messages that start the stream.
-func login(ctx context.Context, control io.Writer, aesKey []byte, token string) error {
-	msgs, err := startupSequence(token)
+// controlConn is what login needs from the control conversation.
+type controlConn interface {
+	io.Writer
+	mediaReader
+}
+
+// login sends the credentials, then the messages that start the stream (asking
+// for clarity), each
+// after the monitor answered the one before or after gap (sendPaced). What
+// those answers carry goes to onControl, when set, as drainControl's later
+// messages do.
+func login(ctx context.Context, control controlConn, aesKey []byte, token string, gap time.Duration, onControl func(int), clarity uint32) error {
+	msgs, err := startupSequence(token, clarity)
 	if err != nil {
 		return err
 	}
-	for _, msg := range msgs {
+	buf := make([]byte, maxControlMessage)
+	return sendPaced(ctx, msgs, gap, func(msg []byte) error {
 		sealed, err := seal(aesKey, msg)
 		if err != nil {
 			return err
 		}
-		if _, err := control.Write(sealed); err != nil {
-			return err
+		_, err = control.Write(sealed)
+		return err
+	}, func(ctx context.Context, d time.Duration) error {
+		n, err := awaitReply(ctx, control, buf, d)
+		if n > 0 && onControl != nil {
+			onControl(n)
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(loginPacing):
+		return err
+	})
+}
+
+// maxControlMessage bounds one message read from the control conversation
+// during the login, as consume bounds a media message.
+const maxControlMessage = 65535
+
+// awaitReply waits at most d for one message on the control conversation:
+// its size when one came, 0 when d (or ctx) ran out first. The message itself
+// is not needed; drainControl discards the later ones the same way.
+func awaitReply(ctx context.Context, r mediaReader, buf []byte, d time.Duration) (int, error) {
+	deadline := time.Now().Add(d)
+	if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
+		deadline = dl
+	}
+	if err := r.SetReadDeadline(deadline); err != nil {
+		return 0, err
+	}
+	n, err := r.Read(buf)
+	if err != nil {
+		var timeout interface{ Timeout() bool }
+		if errors.As(err, &timeout) && timeout.Timeout() {
+			return 0, ctx.Err()
+		}
+		return 0, err
+	}
+	return n, nil
+}
+
+func (c *Client) startupGap() time.Duration {
+	switch {
+	case c.cfg.StartupGap < 0:
+		return 0
+	case c.cfg.StartupGap == 0:
+		return DefaultStartupGap
+	}
+	return c.cfg.StartupGap
+}
+
+// sendPaced sends msgs in order with gap between two of them, and none after
+// the last: nothing follows it, so a pause there only delays the stream.
+func sendPaced(ctx context.Context, msgs [][]byte, gap time.Duration, send func([]byte) error, wait func(context.Context, time.Duration) error) error {
+	for i, msg := range msgs {
+		if i > 0 && gap > 0 {
+			if err := wait(ctx, gap); err != nil {
+				return err
+			}
+		}
+		if err := send(msg); err != nil {
+			return err
 		}
 	}
 	return nil

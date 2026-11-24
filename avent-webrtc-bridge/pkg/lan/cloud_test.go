@@ -379,3 +379,30 @@ func TestUsableCandidate(t *testing.T) {
 		}
 	}
 }
+
+// The login's waits leave a read deadline on the control conversation; the
+// stream clears it, or drainControl would end a live stream a gap after the
+// login.
+func TestStreamClearsTheLoginDeadline(t *testing.T) {
+	loopbackMonitors(t)
+	cloud := newFakeCloud()
+	monitor := startFakeMonitor(t)
+	videos, closed := make(chan *VideoFrame, 4), make(chan error, 4)
+	c := cloudClient(cloud, videos, closed, 5*time.Second)
+	defer c.Close()
+	go func() {
+		if _, ok := cloud.await(2 * time.Second).(SignalFrame); !ok {
+			return
+		}
+		cloud.say(TypeAnswer, answerSDP(true), "")
+		cloud.say(TypeCandidate, "", candidateLine(monitor.addr()))
+	}()
+	if err := c.Start(context.Background()); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	select {
+	case err := <-closed:
+		t.Fatalf("stream ended after the login: %v", err)
+	case <-time.After(3 * DefaultStartupGap):
+	}
+}

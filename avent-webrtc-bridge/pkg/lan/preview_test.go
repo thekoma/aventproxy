@@ -2,6 +2,7 @@ package lan
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"testing"
 )
 
@@ -14,7 +15,7 @@ const cmdTalk = 8
 // sub u16 | len u32 | payload. The login (cmd 1) and the app's StartPreview
 // commands are all a session may send.
 func TestStartupSequenceNeverTalks(t *testing.T) {
-	msgs, err := startupSequence(LoginToken("pw", "0123456789abcdef"))
+	msgs, err := startupSequence(LoginToken("pw", "0123456789abcdef"), ClarityHD)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,5 +32,39 @@ func TestStartupSequenceNeverTalks(t *testing.T) {
 		if cmd := binary.LittleEndian.Uint16(msg[12:14]); cmd == cmdTalk {
 			t.Errorf("startup message %d is the talk command: % x", i, msg)
 		}
+	}
+}
+
+// The third startup message asks for the clarity; everything else is the
+// app's, byte for byte.
+func TestStartupSequenceAsksForTheClarity(t *testing.T) {
+	standard, err := startupSequence("token", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hd, err := startupSequence("token", ClarityHD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range standard {
+		msg := standard[i]
+		if i == clarityMessage+1 { // after the login
+			if got := binary.LittleEndian.Uint32(msg[len(msg)-4:]); got != ClarityStandard {
+				t.Fatalf("default clarity %d, want %d", got, ClarityStandard)
+			}
+			if got := binary.LittleEndian.Uint32(hd[i][len(hd[i])-4:]); got != ClarityHD {
+				t.Fatalf("HD clarity %d, want %d", got, ClarityHD)
+			}
+			if string(msg[:len(msg)-4]) != string(hd[i][:len(hd[i])-4]) {
+				t.Fatal("the clarity changed more than its word")
+			}
+			continue
+		}
+		if string(msg) != string(hd[i]) {
+			t.Fatalf("message %d differs with HD", i)
+		}
+	}
+	if hex.EncodeToString(standard[clarityMessage+1]) != startupMessages[clarityMessage] {
+		t.Fatal("the default is not the app's message")
 	}
 }

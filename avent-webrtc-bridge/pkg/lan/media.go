@@ -217,13 +217,33 @@ func parseAudio(msg []byte, ts uint64, payload []byte) *AudioFrame {
 	}
 }
 
-// startupSequence returns the login followed by the stream-start messages.
-func startupSequence(token string) ([][]byte, error) {
+// clarityMessage is the startup message with command 0x00010004 (set video
+// clarity), whose last little-endian word asks for the clarity. The app sends
+// 2, which by Tuya's clarity convention is "standard"; 4 is "HD". Measured on
+// an SCD951 over protocol 3.4 (01-11-2026): with 2 the local stream is
+// 1280x720, with 4 it is 1920x1080 at 25 fps, as the cloud stream delivers.
+const clarityMessage = 2
+
+// The clarity values the startup sequence can ask for.
+const (
+	ClarityStandard uint32 = 2 // what the app asks for: 1280x720 on an SCD951
+	ClarityHD       uint32 = 4 // 1920x1080 on an SCD951
+)
+
+// startupSequence returns the login followed by the stream-start messages,
+// asking for the given clarity; zero means ClarityStandard.
+func startupSequence(token string, clarity uint32) ([][]byte, error) {
+	if clarity == 0 {
+		clarity = ClarityStandard
+	}
 	out := [][]byte{buildLogin(token)}
-	for _, h := range startupMessages {
+	for i, h := range startupMessages {
 		raw, err := hex.DecodeString(h)
 		if err != nil {
 			return nil, fmt.Errorf("lan: bad startup template: %w", err)
+		}
+		if i == clarityMessage {
+			binary.LittleEndian.PutUint32(raw[len(raw)-4:], clarity)
 		}
 		out = append(out, raw)
 	}
