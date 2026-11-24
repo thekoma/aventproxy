@@ -547,6 +547,23 @@ func TestMediaCheckOfAStoppedSessionLeavesTheRestartAlone(t *testing.T) {
 	expectOpen(t, clientConn)
 }
 
+// A TEARDOWN is the end of the connection even as its first request: it used
+// to be answered and then ignored, the connection held until the client
+// closed it or requestReadTimeout (60 s) ran out.
+func TestTeardownAsFirstRequestClosesTheConnection(t *testing.T) {
+	h := newStallHarness(t, func(context.Context, *CameraStream) error { return nil })
+	client := dialRTSP(t, h.port, "/cam1")
+	if code, _ := client.do("TEARDOWN", client.url, nil, time.Second); code != 200 {
+		t.Fatalf("TEARDOWN = %d, want 200", code)
+	}
+	client.expectClosedWithin(2 * time.Second)
+	waitUntil(t, func() bool {
+		h.server.mutex.RLock()
+		defer h.server.mutex.RUnlock()
+		return len(h.server.clients) == 0
+	}, "the torn down client is still registered")
+}
+
 // A connection that never sends its first request must not hold a goroutine
 // and a socket for good.
 func TestSilentConnectionIsClosed(t *testing.T) {

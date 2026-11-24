@@ -548,8 +548,12 @@ func (s *RTSPServer) handleConnection(conn net.Conn) {
 	s.addClient(client)
 	go s.joinStream(client, stops)
 
-	// Handle initial request
-	s.handleRTSPMethod(client, request)
+	// Handle initial request. A TEARDOWN ends the connection here as it does
+	// later on, instead of holding it until the next read times out.
+	if s.handleRTSPMethod(client, request) {
+		s.removeClient(client.session)
+		return
+	}
 
 	// Handle further requests
 	s.handleRTSPProtocol(client)
