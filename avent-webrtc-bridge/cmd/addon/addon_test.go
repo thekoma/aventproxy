@@ -390,6 +390,18 @@ func TestResolveBind(t *testing.T) {
 	if got := resolveBind("localhost", false, BridgeConfig{RTSPBind: "  "}); got != DefaultBind {
 		t.Errorf("blank JSON value: got %q, want %q", got, DefaultBind)
 	}
+	// run.sh passes the add-on option as --bind whatever it holds, and the
+	// server trims a blank value to "", which means every interface: a blank
+	// flag must fall through instead of opening the unauthenticated server.
+	if got := resolveBind("   ", true, none); got != DefaultBind {
+		t.Errorf("blank flag: got %q, want %q", got, DefaultBind)
+	}
+	if got := resolveBind(" ", true, fromJSON); got != "192.168.1.10" {
+		t.Errorf("blank flag with a JSON value: got %q, want the JSON value", got)
+	}
+	if got := resolveBind(" 192.168.1.20 ", true, none); got != "192.168.1.20" {
+		t.Errorf("padded flag: got %q, want it trimmed", got)
+	}
 }
 
 func TestLoadConfig_RTSPBind(t *testing.T) {
