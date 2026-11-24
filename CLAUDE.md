@@ -17,8 +17,8 @@ Home Assistant custom integration for Philips Avent SCD973/SCD923 baby monitors.
    than the integration can miss config fields (`api_host` landed in 2026.7.0-rc2, `talkback` in
    2026.7.0-dev1), so testers must run the card matching their integration channel. Both cards pull the same
    published image, which is built from `aventproxy-bridge-addon/` only, so the beta folder's
-   `Dockerfile` and `run.sh` are never built. Keep them byte-identical to the stable ones anyway;
-   the beta copy had silently drifted to a pre-multi-entry `run.sh`
+   `Dockerfile` is never built. Keep it and `apparmor.txt` byte-identical to the stable ones anyway;
+   the beta copy of the old `run.sh` had silently drifted to a pre-multi-entry version
 
 ## Commands
 
@@ -72,12 +72,16 @@ The monitor exposes functionality through numbered DPS codes (e.g., 138=night li
 
 ### Bridge lifecycle
 
-The HA integration writes bridge credentials to a JSON config file. The bridge container
-(`run.sh`) supervises `avent-webrtc-bridge addon --config <file>`, which parses the JSON itself, and
-restarts that child process when the file's md5 changes or the child exits. It must never exit the
-container on a config change: doing so left the add-on stopped after two Home Assistant restarts in
-quick succession (issue #73). The file only changes when something real changes, because the phone
-device id is persisted in the config entry rather than regenerated per run.
+The HA integration writes bridge credentials to a JSON config file. The add-on image is distroless,
+with no shell (issue #124), and its entrypoint is `avent-webrtc-bridge supervise`
+(`cmd/supervise/`, which replaced `run.sh`). It re-executes its own binary as
+`avent-webrtc-bridge addon --config <file>`, which parses the JSON itself, and restarts that child
+process when the file's content changes or the child exits, after a delay that doubles from 5 s to
+300 s while it keeps failing. It must never exit on a config change or a crash: doing so left the
+add-on stopped after two Home Assistant restarts in quick succession (issue #73). The file only
+changes when something real changes, because the phone device id is persisted in the config entry
+rather than regenerated per run. Its tests run the test binary as a fake bridge; keep the log lines
+(`Using bridge config: …`, `Bridge exited with status N, restarting in Xs...`), which users quote.
 
 ## CI
 

@@ -3,6 +3,13 @@
 This is the dev card: it follows builds off main, made for testing before an rc.
 Stay on the stable card unless you are testing, and use the beta card if you only want release candidates.
 
+## Unreleased (2026.12 dev)
+
+**The add-on image no longer has a shell or Debian packages ([#124](https://github.com/thekoma/aventproxy/issues/124)).** Security scanners flagged packages in the image that the bridge never used. The image now holds only the bridge, CA certificates and time zone data (distroless). The script that started the bridge, `run.sh`, is now part of the bridge itself, `avent-webrtc-bridge supervise`, and does the same job: it waits for the integration's config, restarts the bridge when it exits or the config changes, and stops it when the add-on stops.
+- The log lines and the bridge's behaviour stay the same.
+- `docker exec … sh` (or `bash`) into the add-on container no longer works, since there is no shell to run. The add-on log has everything the script used to print.
+- If the add-on does not start after the update, or its log looks different from before, please say so on #124.
+
 ## Unreleased (dev5)
 
 **Talk from Home Assistant 2026.11 without stopping the lullaby (experimental, untested on a monitor).** Update the integration to dev5 as well.
