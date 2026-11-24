@@ -86,6 +86,10 @@ class ConfigEntryAuthFailed(Exception):
     pass
 
 
+class ConfigEntryNotReady(Exception):
+    pass
+
+
 class Camera:
     """Home Assistant's Camera: `stream` is None until a viewer opened one."""
 
@@ -107,7 +111,11 @@ def _stand_in_modules() -> dict[str, types.ModuleType]:
     modules = {
         "homeassistant": module("homeassistant"),
         "homeassistant.core": module("homeassistant.core", HomeAssistant=object, callback=lambda func: func),
-        "homeassistant.exceptions": module("homeassistant.exceptions", ConfigEntryAuthFailed=ConfigEntryAuthFailed),
+        "homeassistant.exceptions": module(
+            "homeassistant.exceptions",
+            ConfigEntryAuthFailed=ConfigEntryAuthFailed,
+            ConfigEntryNotReady=ConfigEntryNotReady,
+        ),
         "homeassistant.helpers": module("homeassistant.helpers"),
         "homeassistant.helpers.event": module(
             "homeassistant.helpers.event", async_call_later=lambda hass, delay, action: lambda: None
