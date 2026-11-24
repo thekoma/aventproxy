@@ -306,8 +306,9 @@ func (s *RTSPServer) handleOptions(client *RTSPClient, request *RTSPRequest) {
 }
 
 func (s *RTSPServer) handleDescribe(client *RTSPClient, request *RTSPRequest) {
-	// Generate SDP for the camera stream
-	sdp := s.generateSDP(client.stream.camera, request.URL)
+	// Generate SDP for the camera stream. The tracks' control URLs extend the
+	// path; a query on the request would otherwise end up in front of them.
+	sdp := s.generateSDP(client.stream.camera, controlBase(request.URL))
 
 	headers := map[string]string{
 		"CSeq":          strconv.Itoa(request.CSeq),
@@ -318,6 +319,29 @@ func (s *RTSPServer) handleDescribe(client *RTSPClient, request *RTSPRequest) {
 	sendRTSPResponse(client.conn, 200, "OK", headers, sdp)
 }
 
+// controlBase is an RTSP URL without its query, fragment and trailing
+// slash, the base the tracks' control URLs are built on.
+func controlBase(rtspURL string) string {
+	parsed, err := url.Parse(rtspURL)
+	if err != nil {
+		return rtspURL
+	}
+	parsed.RawQuery, parsed.Fragment, parsed.ForceQuery = "", "", false
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	parsed.RawPath = ""
+	return parsed.String()
+}
+
+// lastPathSegment is the last segment of an RTSP URL's path ("" if none).
+func lastPathSegment(rtspURL string) string {
+	parsed, err := url.Parse(rtspURL)
+	if err != nil {
+		return ""
+	}
+	p := strings.TrimRight(parsed.Path, "/")
+	return p[strings.LastIndex(p, "/")+1:]
+}
+
 func (s *RTSPServer) handleSetup(client *RTSPClient, request *RTSPRequest) {
 	transport := request.Headers["Transport"]
 	if transport == "" {
@@ -325,9 +349,13 @@ func (s *RTSPServer) handleSetup(client *RTSPClient, request *RTSPRequest) {
 		return
 	}
 
-	isBackchannel := strings.Contains(request.URL, "/backchannel")
-	isVideoTrack := strings.Contains(request.URL, "/video")
-	isAudioTrack := strings.Contains(request.URL, "/audio")
+	// The track is the last path segment, not a substring: a camera named
+	// "audio…", "video…" or "aac…" would otherwise route its tracks wrong.
+	track := lastPathSegment(request.URL)
+	isBackchannel := track == "backchannel"
+	isVideoTrack := track == "video"
+	isAudioTrack := track == "audio"
+	isAACTrack := track == "aac" && s.AACFFmpeg != ""
 
 	core.Logger.Trace().Msgf("Setup track - Video: %v, Audio: %v, Backchannel: %v", isVideoTrack, isAudioTrack, isBackchannel)
 
@@ -368,21 +396,30 @@ func (s *RTSPServer) handleSetup(client *RTSPClient, request *RTSPRequest) {
 			} else if isBackchannel {
 				rtpChannel = 4  // Backchannel RTP
 				rtcpChannel = 5 // Backchannel RTCP
+			} else if isAACTrack {
+				rtpChannel = 6  // AAC RTP
+				rtcpChannel = 7 // AAC RTCP
 			}
 		}
 
 		if isVideoTrack {
 			client.videoRTPChannel = rtpChannel
 			client.videoRTCPChannel = rtcpChannel
+			client.videoSetUp = true
 			core.Logger.Trace().Msgf("Setup video track - RTP channel: %d, RTCP channel: %d", rtpChannel, rtcpChannel)
 		} else if isAudioTrack {
 			client.audioRTPChannel = rtpChannel
 			client.audioRTCPChannel = rtcpChannel
+			client.audioSetUp = true
 			core.Logger.Trace().Msgf("Setup audio track - RTP channel: %d, RTCP channel: %d", rtpChannel, rtcpChannel)
 		} else if isBackchannel {
 			client.backAudioRTPChannel = rtpChannel
 			client.backAudioRTCPChannel = rtcpChannel
 			core.Logger.Trace().Msgf("Setup backchannel track - RTP channel: %d, RTCP channel: %d", rtpChannel, rtcpChannel)
+		} else if isAACTrack {
+			client.aacRTPChannel = rtpChannel
+			client.aacSetUp = true
+			core.Logger.Trace().Msgf("Setup AAC track - RTP channel: %d, RTCP channel: %d", rtpChannel, rtcpChannel)
 		}
 
 		responseTransport = fmt.Sprintf("RTP/AVP/TCP;unicast;interleaved=%d-%d",
@@ -425,6 +462,10 @@ func (s *RTSPServer) handleSetup(client *RTSPClient, request *RTSPRequest) {
 			client.audioRTPPort = clientRTPPort
 			client.audioRTCPPort = clientRTCPPort
 			core.Logger.Trace().Msgf("Setup audio track - Client RTP port: %d, RTCP port: %d", clientRTPPort, clientRTCPPort)
+		} else if isAACTrack {
+			client.aacRTPPort = clientRTPPort
+			client.aacSetUp = true
+			core.Logger.Trace().Msgf("Setup AAC track - Client RTP port: %d, RTCP port: %d", clientRTPPort, clientRTCPPort)
 		} else if isBackchannel {
 			// For backchannel, setup the server listener and get actual server port
 			if client.stream != nil {
@@ -457,9 +498,12 @@ func (s *RTSPServer) handleSetup(client *RTSPClient, request *RTSPRequest) {
 			isVideoTrack, isAudioTrack, isBackchannel, client.videoRTPPort, client.audioRTPPort, client.backAudioRTPPort)
 
 		// Add/update UDP client with current ports after video and audio setup
-		if isVideoTrack || isAudioTrack {
-			err := client.stream.forwarder.AddUDPClient(client.session,
-				client.conn, client.videoRTPPort, client.audioRTPPort)
+		if isVideoTrack || isAudioTrack || isAACTrack {
+			rf := client.stream.forwarder
+			err := rf.AddUDPClient(client.session, client.conn, client.videoRTPPort, client.audioRTPPort)
+			if err == nil && isAACTrack {
+				err = rf.SetupAACTrack(client.session, 0, client.aacRTPPort)
+			}
 			if err != nil {
 				core.Logger.Error().Err(err).Msg("Error adding UDP RTP client")
 				sendRTSPResponse(client.conn, 500, "Internal Server Error", nil,
@@ -508,8 +552,13 @@ func (s *RTSPServer) handlePlay(client *RTSPClient, request *RTSPRequest) {
 	// Only now does media flow, and on TCP only behind the response above,
 	// since it shares the socket.
 	if client.transportMode == TransportTCP {
-		err := client.stream.forwarder.AddTCPClient(client.session, client.conn,
-			client.videoRTPChannel, client.audioRTPChannel, client.backAudioRTPChannel)
+		rf := client.stream.forwarder
+		err := rf.AddTCPClientTracks(client.session, client.conn,
+			client.videoRTPChannel, client.audioRTPChannel, client.backAudioRTPChannel,
+			client.videoSetUp, client.audioSetUp)
+		if err == nil && client.aacSetUp {
+			err = rf.SetupAACTrack(client.session, client.aacRTPChannel, 0)
+		}
 		if err != nil {
 			core.Logger.Error().Err(err).Msg("Error adding TCP RTP client")
 			return
@@ -640,6 +689,12 @@ func (s *RTSPServer) generateSDP(camera *storage.CameraInfo, baseURL string) str
 
 	audioSdp += fmt.Sprintf("a=control:%s/audio\r\n", baseURL)
 	audioSdp += "a=recvonly\r\n"
+
+	// The AAC copy of the audio goes before the G.711 track: Home Assistant
+	// takes the first audio track for HLS, and only AAC or MP3 (aac.go).
+	if s.AACFFmpeg != "" {
+		videoSdp += aacSDP(baseURL + "/aac")
+	}
 
 	finalSdp := sdp + videoSdp + audioSdp
 

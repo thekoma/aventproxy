@@ -13,6 +13,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 
 from .api import PhilipsAventAPI, TuyaAPIError
 from .const import (
+    CONF_AAC_AUDIO,
     CONF_API_HOST,
     CONF_BRIDGE_PORT,
     CONF_COUNTRY_CODE,
@@ -23,6 +24,7 @@ from .const import (
     CONF_SID,
     CONF_TALKBACK,
     CONF_UID,
+    DEFAULT_AAC_AUDIO,
     DEFAULT_BRIDGE_PORT,
     DEFAULT_LAN_STREAMING,
     DEFAULT_TALKBACK,
@@ -85,6 +87,7 @@ async def _write_bridge_config(
         talkback=entry.options.get(CONF_TALKBACK, DEFAULT_TALKBACK),
         uid=entry.data.get(CONF_UID, ""),
         lan_streaming=entry.options.get(CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING),
+        aac_audio=entry.options.get(CONF_AAC_AUDIO, DEFAULT_AAC_AUDIO),
         lan=lan,
         bridge_port=bridge_port,
         cameras=cameras,

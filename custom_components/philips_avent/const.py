@@ -160,6 +160,12 @@ CONF_TALKBACK = "talkback"
 DEFAULT_TALKBACK = False
 CONF_LAN_STREAMING = "lan_streaming"
 DEFAULT_LAN_STREAMING = True
+# The bridge adds an AAC copy of each camera's G.711 audio (bridge field
+# aac_audio), because Home Assistant's HLS keeps only AAC and MP3 and plays
+# the cameras without sound. Costs one ffmpeg per stream while a client takes
+# that track; off, the default, leaves the streams as the camera sends them.
+CONF_AAC_AUDIO = "aac_audio"
+DEFAULT_AAC_AUDIO = False
 
 
 def lullaby_report_id(raw: object) -> int | None:

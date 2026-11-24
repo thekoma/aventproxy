@@ -14,6 +14,7 @@ from homeassistant.helpers.selector import CountrySelector, CountrySelectorConfi
 
 from .api import PhilipsAventAPI, TuyaAPIError, classify_login_error
 from .const import (
+    CONF_AAC_AUDIO,
     CONF_API_HOST,
     CONF_BRIDGE_HOST,
     CONF_BRIDGE_PORT,
@@ -25,6 +26,7 @@ from .const import (
     CONF_SID,
     CONF_TALKBACK,
     CONF_UID,
+    DEFAULT_AAC_AUDIO,
     DEFAULT_BRIDGE_HOST,
     DEFAULT_BRIDGE_PORT,
     DEFAULT_LAN_STREAMING,
@@ -420,6 +422,7 @@ class PhilipsAventOptionsFlowHandler(config_entries.OptionsFlow):
         current_lan_streaming = self.config_entry.options.get(
             CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING
         )
+        current_aac_audio = self.config_entry.options.get(CONF_AAC_AUDIO, DEFAULT_AAC_AUDIO)
 
         return self.async_show_form(
             step_id="init",
@@ -431,6 +434,7 @@ class PhilipsAventOptionsFlowHandler(config_entries.OptionsFlow):
                     ),
                     vol.Optional(CONF_TALKBACK, default=current_talkback): bool,
                     vol.Optional(CONF_LAN_STREAMING, default=current_lan_streaming): bool,
+                    vol.Optional(CONF_AAC_AUDIO, default=current_aac_audio): bool,
                 }
             ),
         )
