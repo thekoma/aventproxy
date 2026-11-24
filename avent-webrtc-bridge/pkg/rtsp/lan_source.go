@@ -127,6 +127,11 @@ func (s *LANSource) Start(ctx context.Context) error {
 		OnAudio:  s.onAudio,
 		OnClosed: s.onClosed,
 	}
+	// lanEligible has checked it; the imm path signals over the cloud and
+	// dials nothing, so an unknown version is left at the default there.
+	if v, err := lan.ParseVersion(s.target.Protocol); err == nil {
+		cfg.Version = v
+	}
 	if s.prepare != nil {
 		s.preparing = true
 		s.mu.Unlock()
