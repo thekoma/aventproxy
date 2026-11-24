@@ -33,8 +33,9 @@ const (
 // supervisor was not asked to wait for one.
 var ErrNoConfig = errors.New("no bridge config found")
 
-// Supervisor holds the add-on's paths and timings. The command fills them from
-// flags and the environment; the tests shrink the timings.
+// Supervisor holds the add-on's paths and timings. The command takes the paths
+// from flags and the environment and the timings from the add-on's defaults;
+// the tests shrink the timings.
 type Supervisor struct {
 	ConfigDir     string   // where the integration writes philips_avent_bridge_*.json
 	AddonConfig   string   // the add-on options, /data/options.json under Supervisor
@@ -54,7 +55,15 @@ type Supervisor struct {
 
 // NewSuperviseCmd returns the command the add-on image runs as its entrypoint.
 func NewSuperviseCmd() *cobra.Command {
-	s := &Supervisor{Out: os.Stdout}
+	s := &Supervisor{
+		PollInterval:    10 * time.Second,
+		WaitInterval:    5 * time.Second,
+		RestartDelayMin: 5 * time.Second,
+		RestartDelayMax: 300 * time.Second,
+		StableRun:       60 * time.Second,
+		StopGrace:       8 * time.Second,
+		Out:             os.Stdout,
+	}
 	cmd := &cobra.Command{
 		Use:   "supervise",
 		Short: "Run the add-on bridge on the integration's config and keep it running",
@@ -67,10 +76,7 @@ as a child process, restarts it whenever it exits (after a delay that grows
 while it keeps failing) or its config changes, and stops it on SIGTERM.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := s.validate(); err != nil {
-				return err
-			}
-			cmd.SilenceUsage = true // from here on an error is not a usage mistake
+			cmd.SilenceUsage = true // a missing config is not a usage mistake
 			exe, err := os.Executable()
 			if err != nil {
 				return fmt.Errorf("find the bridge binary: %w", err)
@@ -88,12 +94,6 @@ while it keeps failing) or its config changes, and stops it on SIGTERM.`,
 		"Wait for a config at the first start instead of failing (env WAIT_FOR_CONFIG=true)")
 	f.StringVar(&s.Bind, "bind", os.Getenv("RTSP_BIND_ADDRESS"),
 		"RTSP bind address, over the add-on option rtsp_bind_address; localhost when neither is set (env RTSP_BIND_ADDRESS)")
-	f.DurationVar(&s.PollInterval, "poll-interval", 10*time.Second, "How often the running bridge's config is checked")
-	f.DurationVar(&s.WaitInterval, "wait-interval", 5*time.Second, "How often to look for a config while there is none")
-	f.DurationVar(&s.RestartDelayMin, "restart-delay-min", 5*time.Second, "Delay before restarting a bridge that exited")
-	f.DurationVar(&s.RestartDelayMax, "restart-delay-max", 300*time.Second, "The delay doubles up to this while the bridge keeps failing")
-	f.DurationVar(&s.StableRun, "stable-run", 60*time.Second, "A run this long resets the delay")
-	f.DurationVar(&s.StopGrace, "stop-grace", 8*time.Second, "Time the bridge gets to stop before it is killed")
 	return cmd
 }
 
@@ -102,28 +102,6 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
-}
-
-func (s *Supervisor) validate() error {
-	for _, d := range []struct {
-		flag  string
-		value time.Duration
-	}{
-		{"poll-interval", s.PollInterval},
-		{"wait-interval", s.WaitInterval},
-		{"restart-delay-min", s.RestartDelayMin},
-		{"restart-delay-max", s.RestartDelayMax},
-		{"stable-run", s.StableRun},
-		{"stop-grace", s.StopGrace},
-	} {
-		if d.value <= 0 {
-			return fmt.Errorf("--%s must be positive, got %s", d.flag, d.value)
-		}
-	}
-	if s.RestartDelayMin > s.RestartDelayMax {
-		return fmt.Errorf("--restart-delay-min %s is above --restart-delay-max %s", s.RestartDelayMin, s.RestartDelayMax)
-	}
-	return nil
 }
 
 // runUntilSignalled runs s until SIGTERM, which is how Supervisor stops the

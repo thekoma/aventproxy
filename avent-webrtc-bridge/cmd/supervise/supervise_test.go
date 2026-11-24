@@ -905,8 +905,6 @@ func TestCommandFlagDefaults(t *testing.T) {
 	}
 	assertFlags(t, map[string]string{
 		"config-dir": "/config", "addon-config": "/data/options.json", "wait-for-config": "false", "bind": "",
-		"poll-interval": "10s", "wait-interval": "5s", "restart-delay-min": "5s", "restart-delay-max": "5m0s",
-		"stable-run": "1m0s", "stop-grace": "8s",
 	})
 
 	// The add-on's config.yaml sets WAIT_FOR_CONFIG; docker-compose.yml sets
@@ -926,26 +924,6 @@ func assertFlags(t *testing.T, want map[string]string) {
 	for name, value := range want {
 		if got := flags.Lookup(name).Value.String(); got != value {
 			t.Errorf("--%s = %q, want %q", name, got, value)
-		}
-	}
-}
-
-func TestValidate(t *testing.T) {
-	t.Parallel()
-	if err := fastSupervisor(t.TempDir(), io.Discard).validate(); err != nil {
-		t.Errorf("valid timings refused: %v", err)
-	}
-	for name, change := range map[string]func(*Supervisor){
-		"zero poll interval":     func(s *Supervisor) { s.PollInterval = 0 },
-		"negative stop grace":    func(s *Supervisor) { s.StopGrace = -time.Second },
-		"min delay above max":    func(s *Supervisor) { s.RestartDelayMin = time.Hour },
-		"zero wait interval":     func(s *Supervisor) { s.WaitInterval = 0 },
-		"zero restart delay min": func(s *Supervisor) { s.RestartDelayMin = 0 },
-	} {
-		s := fastSupervisor(t.TempDir(), io.Discard)
-		change(s)
-		if err := s.validate(); err == nil {
-			t.Errorf("%s: accepted", name)
 		}
 	}
 }
