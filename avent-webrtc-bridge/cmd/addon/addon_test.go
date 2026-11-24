@@ -626,3 +626,10 @@ func TestCloudTransportFlag(t *testing.T) {
 		}
 	}
 }
+
+// The integration's Stream path sensor asks /status on the port after RTSP.
+func TestStatusPortIsThePortAfterRTSP(t *testing.T) {
+	if got := statusPort(38554); got != 38555 {
+		t.Fatalf("statusPort(38554) = %d", got)
+	}
+}

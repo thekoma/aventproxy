@@ -102,7 +102,9 @@ func newLANStream(t *testing.T, server *RTSPServer, resolution string) (*CameraS
 	camera := &storage.CameraInfo{DeviceID: "testdev", DeviceName: "Test Cam"}
 	cs := NewCameraStream(camera, resolution, &storage.UserSession{UserKey: "user1"}, nil, server)
 	cs.attachBridgeErrorHandler()
+	server.mutex.Lock() // a stopped stream's removal may still run
 	server.streams[cs.streamId] = cs
+	server.mutex.Unlock()
 	clientConn, serverConn := net.Pipe()
 	t.Cleanup(func() {
 		clientConn.Close()

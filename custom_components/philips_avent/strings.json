@@ -102,6 +102,15 @@
           "settling": "Settling"
         }
       },
+      "stream_path": {
+        "name": "Stream path",
+        "state": {
+          "local": "Local",
+          "imm": "imm (cloud signalling)",
+          "webrtc": "WebRTC",
+          "idle": "Idle"
+        }
+      },
       "device_errors": {
         "name": "Device errors"
       },

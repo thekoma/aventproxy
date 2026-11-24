@@ -54,6 +54,12 @@ type Camera struct {
 	LanProtocol string `json:"lan_protocol"`
 }
 
+// statusPort is where /status listens: the port after RTSP, which the
+// integration's Stream path sensor asks.
+func statusPort(rtspPort int) int {
+	return rtspPort + 1
+}
+
 func lanStreamingEnabled(cfg BridgeConfig) bool {
 	return cfg.LanStreaming == nil || *cfg.LanStreaming
 }
@@ -427,6 +433,8 @@ func runAddon(cmd *cobra.Command, args []string) error {
 
 	server := rtsp.NewRTSPServer(port, storageManager)
 	server.BindAddress = bind
+	// The status for Home Assistant's "Stream path" sensor (pkg/rtsp/status.go), on the next port.
+	server.StatusPort = statusPort(port)
 	server.MobileClient = client
 	server.Talkback = cfg.Talkback
 	server.TalkbackMode = talkbackMode

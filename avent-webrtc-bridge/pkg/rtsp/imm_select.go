@@ -104,9 +104,10 @@ func (cs *CameraStream) tryIMM(gen uint64) (done bool) {
 		cs.server.startIMMCooldown(cs.camera.DeviceID)
 		core.Logger.Warn().Msgf("imm over cloud signalling failed for %s at %s: %v; using webrtc cloud signalling, imm skipped for %v",
 			cs.camera.DeviceName, immStep(err), err, immCooldownPeriod)
+		cs.noteFallback("imm did not start (" + immStep(err) + "), webrtc cloud signalling")
 		return false
 	}
-	cs.markActive()
+	cs.markActive(PathIMM)
 	if len(cs.clients) == 0 { // the last client left during the attempt
 		cs.scheduleShutdown()
 	}
@@ -140,6 +141,7 @@ func (cs *CameraStream) immDied(source lanStreamer, err error) {
 	cs.server.startIMMCooldown(cs.camera.DeviceID)
 	core.Logger.Warn().Msgf("Stream with imm over cloud signalling for %s died: %v; using webrtc cloud signalling for %v",
 		cs.camera.DeviceName, err, immCooldownPeriod)
+	cs.noteFallback("imm died (" + immStep(err) + "), webrtc cloud signalling")
 	clients := cs.teardownLocked()
 	cs.mutex.Unlock()
 	closeClients(clients)
