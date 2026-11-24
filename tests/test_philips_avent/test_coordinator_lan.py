@@ -705,3 +705,152 @@ class TestDeafAlertsReadUnavailable:
         alerts = self._alerts(binary, coordinator)
         self._refresh(coordinator)
         assert not any(alert.available for alert in alerts)
+
+
+class TestPushedAlarmsFireWhateverTheClock:
+    """A DPS 212 record the LAN pushes fires the sensors, even stamped long ago."""
+
+    @staticmethod
+    def _record(command, stamp=1.0):
+        import base64
+        import json
+
+        payload = {"v": "4.0", "cmd": command, "alarm": True, "time": stamp}
+        return base64.b64encode(json.dumps(payload).encode()).decode()
+
+    def _sensors(self, binary, coordinator):
+        return (
+            binary.AventMotionDetected(coordinator, "cam"),
+            binary.AventSoundDetected(coordinator, "cam"),
+            binary.AventCryDetected(coordinator, "cam"),
+        )
+
+    def test_a_pushed_motion_record_fires_motion(self, make, platforms):
+        binary, _ = platforms
+        coordinator = make(3.4, data={"138": False})
+        motion, sound, cry = self._sensors(binary, coordinator)
+        coordinator._on_lan_dps_update({"212": self._record("ipc_motion")})
+        assert (motion._motion_reported(), sound._sound_reported(), cry._cry_reported()) == (
+            True, False, False,
+        )
+
+    def test_a_pushed_cry_record_fires_sound_and_crying(self, make, platforms):
+        binary, _ = platforms
+        coordinator = make(3.4, data={"138": False})
+        motion, sound, cry = self._sensors(binary, coordinator)
+        coordinator._on_lan_dps_update({"212": self._record("ipc_baby_cry")})
+        assert (motion._motion_reported(), sound._sound_reported(), cry._cry_reported()) == (
+            False, True, True,
+        )
+
+    def test_the_same_record_in_a_baseline_fires_nothing(self, make, platforms):
+        binary, _ = platforms
+        coordinator = make(3.4, data={"138": False})
+        sensors = self._sensors(binary, coordinator)
+        coordinator._on_lan_dps_update({"212": self._record("ipc_baby_cry")}, True)
+        motion, sound, cry = sensors
+        assert not any((motion._motion_reported(), sound._sound_reported(), cry._cry_reported()))
+
+    def test_a_push_without_212_does_not_refire_an_old_record(self, make, platforms):
+        binary, _ = platforms
+        coordinator = make(3.4, data={"138": False, "212": self._record("ipc_baby_cry")})
+        _, sound, cry = self._sensors(binary, coordinator)
+        coordinator._on_lan_dps_update({"207": 2400})
+        assert not sound._sound_reported()
+        assert not cry._cry_reported()
+
+    @pytest.mark.parametrize(("command", "fires"), [
+        ("ipc_motion", (True, False, False)),
+        ("ipc_baby_cry", (False, True, True)),
+    ])
+    def test_a_record_the_poll_dropped_as_stale_does_not_fire_when_pushed(
+        self, make, platforms, command, fires
+    ):
+        import time
+
+        now = time.time()
+        late = self._record(command, now - 3600)
+
+        class LateAlarmApi(FakeApi):
+            async def get_device(self, dev_id):
+                return {"dps": {"138": False, "212": late}}
+
+        binary, _ = platforms
+        coordinator = make(None, data={"138": False}, api=LateAlarmApi())
+        motion, sound, cry = self._sensors(binary, coordinator)
+
+        def reported():
+            return (motion._motion_reported(), sound._sound_reported(), cry._cry_reported())
+
+        # The sensors acted on an earlier alarm.
+        coordinator._on_lan_dps_update({"212": self._record(command, now - 7200)})
+        assert reported() == fires
+        # With the LAN session down, a poll brings a later alarm an hour late.
+        coordinator.data = asyncio.run(coordinator._async_update_data())
+        assert coordinator.data["212"] == late
+        assert reported() == (False, False, False)
+        # The session returns and hands that same record over as a push.
+        coordinator._lan_client = FakeLan(3.4)
+        coordinator._on_lan_dps_update({"212": late})
+        assert reported() == (False, False, False)
+
+    @pytest.mark.parametrize("cloud_age", [86_400, None])
+    def test_a_query_answer_handed_over_as_a_push_is_judged_by_its_age(
+        self, make, platforms, cloud_age
+    ):
+        """tinytuya took a SenseIQ push for the baseline; the full answer follows as a push."""
+        import time
+
+        now = time.time()
+        cloud = {"138": False}
+        if cloud_age is not None:
+            cloud["212"] = self._record("ipc_baby_cry", now - cloud_age)
+        binary, _ = platforms
+        coordinator = make(3.4, data=cloud)
+        motion, sound, cry = self._sensors(binary, coordinator)
+
+        def reported():
+            return (motion._motion_reported(), sound._sound_reported(), cry._cry_reported())
+
+        # Home Assistant restarted: the sensors first see the cloud's state.
+        assert reported() == (False, False, False)
+        coordinator._on_lan_dps_update({"3": '{"r":"b","br":20}'}, True)
+        assert reported() == (False, False, False)
+        # The answer to the query: the whole state, 37 keys as an SCD973/26 sent,
+        # with an alarm record an hour old.
+        answer = {str(code): 0 for code in range(100, 136)}
+        answer["212"] = self._record("ipc_baby_cry", now - 3600)
+        assert len(answer) == 37
+        coordinator._on_lan_dps_update(answer)
+        assert reported() == (False, False, False)
+        # A fresh record in such a frame still fires, as it would on a poll.
+        answer["212"] = self._record("ipc_baby_cry", now - 5)
+        coordinator._on_lan_dps_update(answer)
+        assert reported() == (False, True, True)
+
+    @pytest.mark.parametrize("pushed_again", [True, False])
+    def test_a_record_from_a_clock_that_ran_ahead_fires_once(
+        self, make, platforms, pushed_again
+    ):
+        import time
+
+        now = time.time()
+        ahead = self._record("ipc_baby_cry", now + 3600)
+        binary, _ = platforms
+        coordinator = make(3.4, data={"138": False})
+        motion, sound, cry = self._sensors(binary, coordinator)
+
+        def reported():
+            return (motion._motion_reported(), sound._sound_reported(), cry._cry_reported())
+
+        coordinator._on_lan_dps_update({"212": ahead})
+        assert reported() == (False, True, True)
+        # The clock is right again: a later alarm, stamped earlier, still fires.
+        coordinator._on_lan_dps_update({"212": self._record("ipc_baby_cry", now)})
+        assert reported() == (False, True, True)
+        # The first record turns up again, pushed or in the polled state.
+        if pushed_again:
+            coordinator._on_lan_dps_update({"212": ahead})
+        else:
+            coordinator.data = {**coordinator.data, "212": ahead}
+        assert reported() == (False, False, False)

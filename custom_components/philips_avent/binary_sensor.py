@@ -29,9 +29,10 @@ from .const import (
 from .coordinator import PhilipsAventCoordinator
 from .entity import add_entities_when_ready, build_device_info, dps_present
 from .events import (
+    alarm_fires,
     cry_event_timestamp,
-    is_new_event,
     motion_event_timestamp,
+    pushed_alarm_record,
     sound_event_timestamp,
 )
 
@@ -68,6 +69,32 @@ def _two(first, second, coordinator: PhilipsAventCoordinator, cam_id: str) -> li
     return [first(coordinator, cam_id), second(coordinator, cam_id)]
 
 
+def _judge_alarm_record(
+    coordinator: PhilipsAventCoordinator,
+    timestamp: float | None,
+    last_seen: float | None,
+    fresh_dps: dict | None,
+) -> tuple[bool, float | None]:
+    """Whether a DPS 212 record fires a sensor, and the stamp to remember after it.
+
+    The remembered stamp is the latest seen, fired or not, and never steps back.
+    So a record the poll dropped as stale does not fire later when a push carries
+    it, and a record from a clock that ran ahead fires once, not again after a
+    correctly stamped one.
+    """
+    fires = alarm_fires(
+        timestamp,
+        last_seen,
+        time.time(),
+        pushed_alarm_record(fresh_dps, DPS_ALARM_RECORD),
+        coordinator.camera_id,
+        coordinator.camera_name,
+    )
+    if timestamp is not None and (last_seen is None or timestamp > last_seen):
+        last_seen = timestamp
+    return fires, last_seen
+
+
 class AventLullabyPlaying(CoordinatorEntity, BinarySensorEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "lullaby_playing"
@@ -98,9 +125,11 @@ class AventMotionDetected(CoordinatorEntity, BinarySensorEntity):
       payload that arrived since the last look counts; otherwise every cloud poll
       replays the last alert (the same defect fixed for sound in #65).
     - DPS 212, the alarm record the SCD951 and SCD953 family posts instead, which
-      carries its own timestamp. That timestamp is what makes it usable: the value
-      stays in device state, so freshness comes from the stamp rather than from
-      catching the push.
+      carries its own timestamp. That timestamp is what makes it usable on the
+      cloud poll: the value stays in device state, so a polled record's freshness
+      comes from the stamp. A record the LAN pushes is fresh by arrival, whatever
+      the stamp says, unless the frame carries the whole state
+      (`pushed_alarm_record`, `alarm_fires`).
     """
 
     _attr_has_entity_name = True
@@ -153,17 +182,14 @@ class AventMotionDetected(CoordinatorEntity, BinarySensorEntity):
             return True
 
         timestamp = motion_event_timestamp(dps.get(DPS_ALARM_RECORD))
-        if is_new_event(timestamp, self._last_alarm_timestamp, time.time()):
-            self._last_alarm_timestamp = timestamp
+        fires, self._last_alarm_timestamp = _judge_alarm_record(
+            self.coordinator, timestamp, self._last_alarm_timestamp, fresh_dps
+        )
+        if fires:
             _LOGGER.debug(
                 "Motion alarm record for %s at %s", self.coordinator.camera_name, timestamp
             )
-            return True
-
-        # Remember a stale record so it cannot fire later as if it were new.
-        if timestamp is not None and self._last_alarm_timestamp is None:
-            self._last_alarm_timestamp = timestamp
-        return False
+        return fires
 
     @callback
     def _schedule_clear(self) -> None:
@@ -298,13 +324,10 @@ class AventSoundDetected(CoordinatorEntity, BinarySensorEntity):
 
         dps = self.coordinator.data or {}
         timestamp = sound_event_timestamp(dps.get(DPS_ALARM_RECORD))
-        if is_new_event(timestamp, self._last_alarm_timestamp, time.time()):
-            self._last_alarm_timestamp = timestamp
-            return True
-
-        if timestamp is not None and self._last_alarm_timestamp is None:
-            self._last_alarm_timestamp = timestamp
-        return False
+        fires, self._last_alarm_timestamp = _judge_alarm_record(
+            self.coordinator, timestamp, self._last_alarm_timestamp, fresh_dps
+        )
+        return fires
 
     @callback
     def _schedule_clear(self) -> None:
@@ -347,6 +370,7 @@ class AventCryDetected(CoordinatorEntity, BinarySensorEntity):
         self._attr_device_info = build_device_info(coordinator, cam_id)
         self._is_on = False
         self._clear_unsub = None
+        self._last_lan_update_sequence = coordinator.lan_update_sequence
         self._last_alarm_timestamp: float | None = None
 
     @property
@@ -368,16 +392,20 @@ class AventCryDetected(CoordinatorEntity, BinarySensorEntity):
     @callback
     def _cry_reported(self) -> bool:
         dps = self.coordinator.data or {}
+        sequence = self.coordinator.lan_update_sequence
+        fresh_dps = None
+        if sequence != self._last_lan_update_sequence:
+            self._last_lan_update_sequence = sequence
+            fresh_dps = self.coordinator.last_lan_dps
         timestamp = cry_event_timestamp(dps.get(DPS_ALARM_RECORD))
-        if is_new_event(timestamp, self._last_alarm_timestamp, time.time()):
-            self._last_alarm_timestamp = timestamp
+        fires, self._last_alarm_timestamp = _judge_alarm_record(
+            self.coordinator, timestamp, self._last_alarm_timestamp, fresh_dps
+        )
+        if fires:
             _LOGGER.debug(
                 "Cry alarm record for %s at %s", self.coordinator.camera_name, timestamp
             )
-            return True
-        if timestamp is not None and self._last_alarm_timestamp is None:
-            self._last_alarm_timestamp = timestamp
-        return False
+        return fires
 
     @callback
     def _schedule_clear(self) -> None:
