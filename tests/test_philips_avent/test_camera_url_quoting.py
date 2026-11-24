@@ -57,7 +57,7 @@ def test_snapshot_reads_the_bridge_over_tcp(monkeypatch):
         return b"jpeg"
 
     monkeypatch.setattr(module, "ffmpeg_get_image", ffmpeg_get_image)
-    entity = module.AventCamera(SimpleNamespace(camera_name="Nursery", device_info={}), "bf1camera")
+    entity = module.AventCamera(SimpleNamespace(camera_name="Nursery", display_name="Nursery", rtsp_path=None, device_info={}), "bf1camera")
     assert asyncio.run(entity.async_camera_image()) == b"jpeg"
     argv = argvs[0]
     assert argv[: argv.index("-i")] == ["-rtsp_transport", "tcp"]

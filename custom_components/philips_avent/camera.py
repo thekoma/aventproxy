@@ -96,7 +96,7 @@ class AventCamera(Camera):
             # any camera name (an apostrophe made shlex.split raise). Over TCP:
             # by default ffmpeg first has the bridge send the media over UDP to
             # the address the request came from, which is not Home Assistant's
-            # behind a NAT (a published port), and its fall back to TCP comes
+            # behind a NAT (a published port), and its fallback to TCP comes
             # after the snapshot has already timed out.
             return await ffmpeg_get_image(
                 self.hass,
