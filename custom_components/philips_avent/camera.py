@@ -93,9 +93,16 @@ class AventCamera(Camera):
             # haffmpeg runs shlex.split on the input source and passes it on
             # split when that gives more than one token, else unchanged after
             # "-i". With "-i" and the URL quoted, ffmpeg gets the exact URL for
-            # any camera name (an apostrophe made shlex.split raise).
+            # any camera name (an apostrophe made shlex.split raise). Over TCP:
+            # by default ffmpeg first has the bridge send the media over UDP to
+            # the address the request came from, which is not Home Assistant's
+            # behind a NAT (a published port), and its fall back to TCP comes
+            # after the snapshot has already timed out.
             return await ffmpeg_get_image(
-                self.hass, f"-i {shlex.quote(self._stream_url)}", width=width, height=height
+                self.hass,
+                f"-rtsp_transport tcp -i {shlex.quote(self._stream_url)}",
+                width=width,
+                height=height,
             )
         except Exception:
             _LOGGER.exception("ffmpeg snapshot failed for %s", self._stream_url)
