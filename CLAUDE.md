@@ -56,7 +56,8 @@ coordinator.py polls device state ◀──────────────�
          ├── switch.py    → night light, motion/sound alerts, privacy mode
          ├── number.py    → brightness (DPS 158), volume (DPS 209)
          ├── button.py    → lullaby play/pause/next/prev
-         ├── select.py    → lullaby track picker (15 tracks)
+         ├── select.py    → lullaby track picker (presets) + recording picker (custom), ids from audio.py
+         ├── services.py  → upload_lullaby / delete_lullaby actions (audio.py: catalogue, upload, encryption)
          └── binary_sensor.py
 
 __init__.py writes philips_avent_bridge.json ──▶ aventproxy-bridge reads it ──▶ RTSP stream
