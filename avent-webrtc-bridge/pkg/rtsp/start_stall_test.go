@@ -67,7 +67,13 @@ func newStallHarness(t *testing.T, start func(ctx context.Context, cs *CameraStr
 		h.mu.Lock()
 		h.created[cs.camera.DeviceID]++
 		h.mu.Unlock()
-		cs.cloudStart = func(ctx context.Context, _ *WebRTCBridge) error { return start(ctx, cs) }
+		cs.cloudStart = func(ctx context.Context, bridge *WebRTCBridge) error {
+			// As the real StartContext does: the bridge's own lock is held for
+			// the whole attempt, so a Stop of this bridge would wait for it.
+			bridge.mutex.Lock()
+			defer bridge.mutex.Unlock()
+			return start(ctx, cs)
+		}
 	}
 	h.server.beforeJoin = func(*RTSPClient) {
 		if gate := h.joinGate.Load(); gate != nil {

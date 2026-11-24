@@ -2,6 +2,7 @@ package rtsp
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -87,9 +88,19 @@ func TestRestartWhileAStoppedCloudAttemptLingers(t *testing.T) {
 	_, cs := newTestCameraStream(t)
 	t.Cleanup(cs.stopStream)
 	release := make(chan struct{})
+	var releaseOnce sync.Once
+	letGo := func() { releaseOnce.Do(func() { close(release) }) }
+	// Runs before stopStream: a stop that waits for the attempt fails the
+	// test above instead of hanging its cleanup.
+	t.Cleanup(letGo)
 	first := make(chan *WebRTCBridge, 1)
 	var calls atomic.Int32
 	cs.cloudStart = func(_ context.Context, bridge *WebRTCBridge) error {
+		// As the real StartContext does: the bridge's own lock is held for the
+		// whole attempt, so stopping this bridge under the stream's lock would
+		// make the stop wait for the attempt.
+		bridge.mutex.Lock()
+		defer bridge.mutex.Unlock()
 		if calls.Add(1) == 1 {
 			first <- bridge
 			<-release // an HTTP request, say
@@ -121,7 +132,7 @@ func TestRestartWhileAStoppedCloudAttemptLingers(t *testing.T) {
 			cs.active.Load(), current == stale)
 	}
 
-	close(release)
+	letGo()
 	receive(t, firstDone, "the stopped attempt never returned")
 	cs.mutex.RLock()
 	still := cs.webrtcBridge
