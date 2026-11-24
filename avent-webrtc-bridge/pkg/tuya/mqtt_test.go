@@ -1,14 +1,19 @@
 package tuya
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"avent-webrtc-bridge/pkg/core"
+
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/rs/zerolog"
 )
 
 // fakeMessage is an inbound MQTT message carrying a 302 frame.
@@ -99,5 +104,22 @@ func TestPublishIsBounded(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("SendDisconnect still waiting for a broker that never answers")
+	}
+}
+
+// A frame for a session that has ended is expected after Stop, so it is
+// logged at debug, not as a warning in the log users send.
+func TestFrameForEndedSessionIsLoggedAtDebug(t *testing.T) {
+	saved := core.Logger
+	t.Cleanup(func() { core.Logger = saved })
+	var buf bytes.Buffer
+	core.Logger = zerolog.New(&buf)
+
+	(&MQTTClient{}).consume(nil, disconnectFor(t, "gone"))
+
+	out := buf.String()
+	if strings.Count(out, "\n") != 1 || !strings.Contains(out, `"level":"debug"`) ||
+		!strings.Contains(out, "MQTT disconnect for session gone") {
+		t.Fatalf("want one debug line naming the frame type, got %q", out)
 	}
 }

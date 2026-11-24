@@ -161,11 +161,22 @@ func (wb *WebRTCBridge) SetMQTTClient(client *tuya.MQTTClient) {
 }
 
 func (wb *WebRTCBridge) Start() error {
+	return wb.StartContext(context.Background())
+}
+
+// StartContext is Start for a caller that may give up: once ctx ends, Start
+// builds no peer connection and stops waiting for the answer. A cloud call
+// already in flight runs to its own timeout. The bridge is not stopped: the
+// caller stops it, as it does after any failed Start.
+func (wb *WebRTCBridge) StartContext(ctx context.Context) error {
 	wb.mutex.Lock()
 	defer wb.mutex.Unlock()
 
 	if wb.connected {
 		return errors.New("bridge already connected")
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("start abandoned: %w", err)
 	}
 
 	core.Logger.Info().Msgf("Starting WebRTC bridge for camera: %s", wb.camera.DeviceName)
@@ -271,6 +282,12 @@ func (wb *WebRTCBridge) Start() error {
 		}
 	}
 
+	// The cloud calls above can take seconds each: a caller that gave up
+	// meanwhile gets no peer connection and no offer sent to the camera.
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("start abandoned: %w", err)
+	}
+
 	// Parse skill information (may be empty for direct mode)
 	var skill tuya.Skill
 	if webRTCConfig.Result.Skill != "" {
@@ -309,9 +326,12 @@ func (wb *WebRTCBridge) Start() error {
 		return fmt.Errorf("failed to create offer: %v", err)
 	}
 
-	if err = wb.waiter.WaitTimeout(answerTimeout); err != nil {
+	if err = wb.waiter.WaitContext(ctx, answerTimeout); err != nil {
 		if errors.Is(err, utils.ErrWaitTimeout) {
 			return fmt.Errorf("failed to establish connection: %w after %v: %s", err, answerTimeout, wb.stalledStep())
+		}
+		if ctx.Err() != nil {
+			return fmt.Errorf("start abandoned: %w", err)
 		}
 		return fmt.Errorf("failed to establish connection: %v", err)
 	}
@@ -446,6 +466,10 @@ func (wb *WebRTCBridge) setupPeerConnection(webRTCConfig *tuya.WebRTCConfig) err
 			MaxRetransmits: &maxRetransmits,
 			Ordered:        &ordered,
 		})
+		if err != nil {
+			// The peer connection stays for Stop to close, as after any failed Start.
+			return fmt.Errorf("failed to create the HEVC datachannel: %w", err)
+		}
 
 		wb.dataChannel.OnMessage(func(msg pion.DataChannelMessage) {
 			if msg.IsString {

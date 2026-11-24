@@ -380,8 +380,12 @@ func GetLoginToken(client *http.Client, serverHost, username, countryCode string
 		return nil, err
 	}
 
+	// err is nil here: returning it gave the caller no token and no error.
 	if !tokenResp.Success {
-		return nil, err
+		if tokenResp.Msg == "" {
+			return nil, errors.New("login token request refused")
+		}
+		return nil, fmt.Errorf("login token request refused: %s", tokenResp.Msg)
 	}
 
 	return &tokenResp, nil

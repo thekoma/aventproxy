@@ -10,8 +10,10 @@ from lan_policy import (
     MAX_PAYLOAD_ERRORS,
     PROTOCOL_VERSION_DEFAULT,
     RECONNECT_DELAY,
+    RECONNECT_DELAY_MAX,
     baseline_dps,
     data_stale,
+    device_answered,
     exclusive_alert_detectors,
     heartbeat_due,
     heartbeat_outcome,
@@ -74,7 +76,20 @@ class TestReconnectDelay:
 
     def test_later_failures_back_off(self):
         assert reconnect_delay(2) == RECONNECT_DELAY
-        assert reconnect_delay(7) == RECONNECT_DELAY
+        assert reconnect_delay(3) == 2 * RECONNECT_DELAY
+        assert reconnect_delay(4) == RECONNECT_DELAY_MAX
+        assert reconnect_delay(7) == RECONNECT_DELAY_MAX
+        assert reconnect_delay(1000) == RECONNECT_DELAY_MAX
+
+    def test_backoff_stays_within_a_minute(self):
+        assert RECONNECT_DELAY_MAX == 60.0
+        assert max(reconnect_delay(n) for n in range(50)) == RECONNECT_DELAY_MAX
+
+    def test_a_camera_away_for_days_still_gets_a_delay(self):
+        # The failure count of an absent camera never resets; 2 ** n would overflow
+        # a float past about a thousand rounds (17 hours at a minute each).
+        assert reconnect_delay(1100) == RECONNECT_DELAY_MAX
+        assert reconnect_delay(10**6) == RECONNECT_DELAY_MAX
 
     def test_zero_or_negative_is_treated_as_first(self):
         assert reconnect_delay(0) == 0.0
@@ -168,8 +183,39 @@ class TestHeartbeatOutcome:
     def test_an_unreadable_ack_still_proves_the_socket_is_alive(self):
         assert heartbeat_outcome({"Error": "Unexpected Payload", "Err": LAN_ERR_PAYLOAD}) == (True, None)
 
+    def test_a_heartbeat_without_an_answer_is_a_failure(self):
+        # A timeout (902) counted as alive and reset the stale-data timer, so a
+        # session whose camera stopped answering stayed "connected" for good.
+        assert heartbeat_outcome({"Error": "Timeout Waiting for Device", "Err": "902"}) == (False, None)
+        assert heartbeat_outcome({"Error": "Check device key or version", "Err": "914"}) == (False, None)
+
     def test_junk_dps_is_not_published(self):
         assert heartbeat_outcome({"dps": "not a dict"}) == (True, None)
+
+
+class TestDeviceAnswered:
+    """tinytuya returns failures as dicts instead of raising (tinytuya 1.20.0,
+    XenonDevice._send_receive); these are the shapes it returns."""
+
+    @staticmethod
+    def err(code):
+        return {"Error": "tinytuya error", "Err": code, "Payload": None}
+
+    def test_an_ack_and_a_reply_are_answers(self):
+        assert device_answered(None)
+        assert device_answered({"dps": {"101": True}, "t": 1})
+        assert device_answered({})
+
+    def test_an_unreadable_ack_is_still_an_answer(self):
+        assert device_answered(self.err("904"))
+        assert device_answered(self.err("900"))
+
+    def test_timeout_is_no_answer(self):
+        assert not device_answered(self.err("902"))
+
+    def test_no_connection_or_refused_handshake_is_no_answer(self):
+        for code in ("901", "905", "914", 901, 902):
+            assert not device_answered(self.err(code)), code
 
 
 class TestLanWriteDelivered:
@@ -290,3 +336,32 @@ class TestSessionCandidates:
         # whatever now answers at that address.
         assert session_candidates(3.5, 3.5, scanned=False) == [3.5]
         assert session_candidates(3.4, None, scanned=False) == [3.4]
+
+
+class TestNoDowngradeAfterAKeyedSession:
+    """Once 3.4 or 3.5 worked, a failed reconnect never falls back to 3.3, scanned or not."""
+
+    def test_the_proven_version_comes_first_and_3_3_never(self):
+        assert session_candidates(3.4, 3.4, scanned=True) == [3.4, 3.5]
+        assert session_candidates(3.5, 3.5, scanned=True) == [3.5, 3.4]
+        assert session_candidates(None, 3.4, scanned=True) == [3.4, 3.5]
+
+    def test_a_cached_address_gets_only_the_proven_version(self):
+        # A failed handshake there sends the client to the scan, which then
+        # offers the other keyed version as well.
+        assert session_candidates(3.4, 3.4, scanned=False) == [3.4]
+        assert session_candidates(3.5, 3.4, scanned=False) == [3.4]
+        assert session_candidates(3.3, 3.4, scanned=False) == [3.4]
+
+    def test_a_firmware_update_to_another_keyed_version_is_reachable(self):
+        # Proven on 3.4, the camera now announces 3.5: try 3.4, then 3.5.
+        assert session_candidates(3.5, 3.4, scanned=True) == [3.4, 3.5]
+
+    def test_an_announced_3_3_is_not_tried_after_a_keyed_session(self):
+        assert session_candidates(3.3, 3.4, scanned=True) == [3.4, 3.5]
+
+    def test_first_contact_keeps_the_fallback_after_a_scan(self):
+        assert session_candidates(3.5, None, scanned=True) == [3.5, PROTOCOL_VERSION_DEFAULT]
+
+    def test_a_3_3_session_changes_nothing(self):
+        assert session_candidates(3.3, 3.3, scanned=True) == [3.3]

@@ -282,7 +282,53 @@ class PhilipsAventAPI:
         )
 
     async def discover_cameras(self) -> list[dict]:
-        """Find all IPC cameras in the account."""
+        """Find all IPC cameras in the account, owned and shared to it.
+
+        A device another account shared to this one (issue #127) appears in no
+        home, room or group list, so it is asked for separately and merged in,
+        deduplicated by device id.
+        """
+        cameras = await self._discover_owned_cameras()
+        seen_ids = {d.get("devId") or d.get("deviceId") or d.get("id") for d in cameras}
+        for dev in await self._discover_shared_cameras():
+            if dev["devId"] not in seen_ids:
+                seen_ids.add(dev["devId"])
+                cameras.append(dev)
+        if not cameras:
+            _LOGGER.warning("All device discovery strategies failed")
+        return cameras
+
+    async def _discover_shared_cameras(self) -> list[dict]:
+        """Devices shared to this account by another one.
+
+        `tuya.m.my.shared.device.list` (v1.0) returns a flat list of device
+        records shaped like the home device lists (`devId`, `localKey`, ...).
+        It is the call the Tuya app makes; other Tuya integrations use it the
+        same way. A failure only logs, so it never costs the owned cameras.
+        """
+        try:
+            result = await self._call("tuya.m.my.shared.device.list")
+        except TuyaAPIError as e:
+            _LOGGER.debug("Shared device list failed: %s", e)
+            return []
+        _LOGGER.debug("Shared device list: %s", redact_secrets(result))
+        if not isinstance(result, list):
+            return []
+        found: list[dict] = []
+        seen_ids: set = set()
+        for dev in result:
+            dev_id = dev.get("devId") if isinstance(dev, dict) else None
+            if dev_id and dev_id not in seen_ids:
+                seen_ids.add(dev_id)
+                found.append(dev)
+                _LOGGER.debug(
+                    "Found device via shared list: %s (id=%s, category=%s)",
+                    dev.get("name", "?"), dev_id, dev.get("category", "?"),
+                )
+        return found
+
+    async def _discover_owned_cameras(self) -> list[dict]:
+        """Cameras in the account's own homes."""
         cameras = []
         seen_ids = set()
 
@@ -392,7 +438,6 @@ class PhilipsAventAPI:
             _LOGGER.info("Discovered %d devices via device list", len(cameras))
             return cameras
 
-        _LOGGER.warning("All device discovery strategies failed")
         return cameras
 
     # -- MQTT credentials --------------------------------------------------

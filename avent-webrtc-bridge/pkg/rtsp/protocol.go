@@ -121,7 +121,11 @@ func (s *RTSPServer) handleRTSPProtocol(client *RTSPClient) {
 		// Check for interleaved RTP (backchannel)
 		firstByte, err := client.reader.Peek(1)
 		if err != nil {
-			if client.stream.active.Load() && !errors.Is(err, syscall.ECONNRESET) {
+			// EOF here falls between two requests: the client closed its
+			// connection, as a health check does after its OPTIONS (#129).
+			if errors.Is(err, io.EOF) {
+				core.Logger.Debug().Msgf("RTSP client closed the connection, session=%s", client.session)
+			} else if client.stream.active.Load() && !errors.Is(err, syscall.ECONNRESET) {
 				core.Logger.Error().Err(err).Msg("Error peeking connection")
 			}
 			break

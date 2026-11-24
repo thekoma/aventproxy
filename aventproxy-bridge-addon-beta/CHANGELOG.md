@@ -3,6 +3,31 @@
 This is the beta card: it follows release candidates of the integration.
 Stay on the stable card unless you are testing an rc.
 
+## 2026.11.1-rc1
+
+Update the integration and this card together. This rc builds on 2026.11.0, which went out after rc4 with one more bridge fix: RTSP clients that keep their session alive with `GET_PARAMETER`, such as Ajax NVRs, get `200 OK` instead of `501 Not Implemented` ([#129](https://github.com/thekoma/aventproxy/issues/129)).
+
+**Please check on protocol 3.3.** The integration now counts a LAN heartbeat that the monitor leaves unanswered as a failure, and reconnects (Luuk Visser, [#144](https://github.com/thekoma/aventproxy/pull/144)). Before, a monitor that stopped answering kept looking connected, with its last values. This was measured on protocol 3.4. If a monitor on 3.3 never answers heartbeats, it would now reconnect every 10 to 20 seconds. With debug logging on for the integration, a few minutes of a 3.3 monitor with no `LAN heartbeat not answered` line is the check. Please post what you see on [#110](https://github.com/thekoma/aventproxy/issues/110), with your monitor model and firmware.
+
+**Add-on**
+- The add-on no longer stops when the bridge exits with an error, for example when the network is not up yet after a reboot. The bridge is restarted on any exit, with a delay that grows from 5 seconds to 5 minutes while it keeps failing. The add-on also waits for the integration's config instead of exiting without a message, and picks up an integration that was removed and added again ([#159](https://github.com/thekoma/aventproxy/issues/159)).
+- `/config` is mapped read-only, and the bridge keeps its saved session data in `/data`, so it survives a rebuilt container ([#160](https://github.com/thekoma/aventproxy/issues/160)).
+- Stopping or restarting the add-on no longer takes minutes when the Tuya MQTT broker is unreachable: a stream start still waiting for the cloud is cancelled. An MQTT connect already under way can still hold the stop for up to 10 seconds ([#162](https://github.com/thekoma/aventproxy/issues/162)).
+- Smaller bridge fixes from the same report: an RTSP client whose first request is `TEARDOWN` is disconnected at once, an `rtsp_bind_address` of only spaces means localhost instead of every interface, a refused login is reported as an error, and a failed HEVC data channel no longer crashes the bridge ([#162](https://github.com/thekoma/aventproxy/issues/162)).
+- A quieter log: a client that closes its RTSP connection after a reply is logged at debug level, not as an error ([#129](https://github.com/thekoma/aventproxy/issues/129)), and so are MQTT frames for a session that already ended (Luuk Visser, [#150](https://github.com/thekoma/aventproxy/pull/150)).
+
+**Integration**
+- A camera that another account shared to yours is found. Discovery only looked in the account's own homes ([#127](https://github.com/thekoma/aventproxy/issues/127)). Not yet tried on an account with a shared camera.
+- If the cloud refuses one monitor, the others still start (Luuk Visser, [#152](https://github.com/thekoma/aventproxy/pull/152)). A setup whose camera discovery fails on a network error is retried instead of ending with no cameras (Luuk Visser, [#148](https://github.com/thekoma/aventproxy/pull/148)).
+- Snapshots work for a monitor whose name contains an apostrophe, such as "Baby's room" (Luuk Visser, [#141](https://github.com/thekoma/aventproxy/pull/141)).
+- On the LAN (Luuk Visser):
+  - A monitor that is not on the LAN is warned about once, and the retries back off to once a minute ([#143](https://github.com/thekoma/aventproxy/pull/143)).
+  - Once a monitor has had a keyed LAN session (3.4 or 3.5), the integration no longer falls back to 3.3 for it. A monitor that later moves back to 3.3 needs the integration added again ([#146](https://github.com/thekoma/aventproxy/pull/146)).
+  - Alarms that the monitor pushes over the LAN fire even when the monitor's clock is off ([#147](https://github.com/thekoma/aventproxy/pull/147)).
+- Several commands in quick succession no longer postpone the cloud poll, and with it the alerts that only the poll brings (Luuk Visser, [#138](https://github.com/thekoma/aventproxy/pull/138)).
+- Diagnostics and debug logs hide the monitor's MAC address (Luuk Visser, [#137](https://github.com/thekoma/aventproxy/pull/137)).
+- The "no cameras" error says to reload the integration, which runs the discovery again, instead of pointing to a reconfigure step that does not exist ([#132](https://github.com/thekoma/aventproxy/pull/132)).
+
 ## 2026.11.0-rc4
 
 The bridge image now runs on Debian 13 (trixie) instead of Debian 12 (bookworm), which security scanners flagged for packages the bridge never uses (Daniel Jansen, [#124](https://github.com/thekoma/aventproxy/pull/124)). Nothing else changed since rc3, in the bridge or in the integration.

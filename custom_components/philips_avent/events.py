@@ -18,8 +18,9 @@ SCD973/26 reported every alarm in DPS 212 and left 250 and 141 empty (fork
 619981b). Both paths are read on every monitor.
 
 DPS 212 carries its own timestamp, which makes it usable on the cloud poll as
-well: the value sticks around in device state, so freshness comes from the
-timestamp rather than from having seen the push arrive.
+well: the value sticks around in device state, so a polled record's freshness
+comes from the timestamp. A pushed record is fresh by arrival, unless the frame
+carries the whole state (`pushed_alarm_record`, `alarm_fires`).
 
 No Home Assistant imports here, so the parsing is unit-tested on its own.
 """
@@ -125,6 +126,70 @@ def alarm_event_timestamp(raw: object, commands: frozenset[str]) -> float | None
     if payload.get("alarm") is False:
         return None
     return event_timestamp(payload)
+
+
+# A LAN frame with this many keys or more is the monitor's whole state, not a
+# push of news. tinytuya can hand the answer to the query a keyed session sends
+# when it comes up (`TuyaLANClient._query_baseline`) over as an ordinary push,
+# and that answer holds the alarm slot, however old. Measured: an SCD973/26
+# answered with all 37 keys (at 3.5, see lan_policy); the alarm pushes the lab
+# replays carry DPS 212 alone. A real SCD951 push of `ipc_bang` turned the sensor
+# on within a second, but its key count was not recorded. Ten sits far below the
+# answer and well above a push that carries one alarm or one status. A frame at
+# or above it is judged like a polled record, so a fresh record in it still fires.
+FULL_STATE_MIN_KEYS = 10
+
+
+def pushed_alarm_record(fresh_dps: dict | None, key: str) -> bool:
+    """Whether a LAN push carries the alarm record `key` as news rather than state."""
+    return bool(fresh_dps) and key in fresh_dps and len(fresh_dps) < FULL_STATE_MIN_KEYS
+
+
+def alarm_fires(
+    timestamp: float | None,
+    last_seen: float | None,
+    now: float,
+    pushed: bool,
+    camera_id: str,
+    camera_name: str,
+    max_age: float = EVENT_MAX_AGE_SECONDS,
+) -> bool:
+    """Whether an alarm record should fire a sensor now.
+
+    A record the LAN just pushed (`pushed_alarm_record`) is an alarm happening
+    now, whatever the monitor's clock says, so it fires when it is not the
+    record remembered last. The age check would drop it when that clock is off,
+    without a log line. A monitor that booted without reaching Tuya is expected
+    to have no time sync, which is the setup that runs on the LAN alone. A
+    record found in the polled state, or in a frame carrying the whole state, is
+    the slot's last alarm, which may be hours old, so it keeps the checks of
+    `is_new_event`. `last_seen` is the latest stamp a sensor has seen, so a
+    record from a clock that ran ahead fires once.
+    """
+    if timestamp is None:
+        return False
+    if pushed:
+        if abs(now - timestamp) > max_age:
+            note_clock_skew(camera_id, camera_name, now - timestamp)
+        return timestamp != last_seen
+    return is_new_event(timestamp, last_seen, now, max_age)
+
+
+def note_clock_skew(camera_id: str, camera_name: str, seconds_behind: float) -> None:
+    """Log, once per monitor per run, that a pushed alarm carried a stamp far from now."""
+    if camera_id in _clock_skew_noted:
+        return
+    _clock_skew_noted.add(camera_id)
+    _LOGGER.info(
+        "An alarm pushed by %s is stamped %+.0f s from now; its clock is off "
+        "(no time sync since its last boot?). Pushed alarms fire anyway",
+        camera_name,
+        -seconds_behind,
+    )
+
+
+# Monitors (by device id) whose clock skew is already logged.
+_clock_skew_noted: set[str] = set()
 
 
 def note_unmapped_command(command: str) -> None:

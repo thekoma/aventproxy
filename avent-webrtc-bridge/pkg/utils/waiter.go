@@ -3,6 +3,7 @@
 package utils
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"time"
@@ -87,6 +88,12 @@ func (w *Waiter) WaitChan() <-chan error {
 // WaitTimeout is Wait bounded by d. A timeout finishes the waiter with
 // ErrWaitTimeout, which releases the Wait goroutine and every later Wait.
 func (w *Waiter) WaitTimeout(d time.Duration) error {
+	return w.WaitContext(context.Background(), d)
+}
+
+// WaitContext is WaitTimeout that also gives up when ctx ends, finishing the
+// waiter with ctx's error the way a timeout finishes it with ErrWaitTimeout.
+func (w *Waiter) WaitContext(ctx context.Context, d time.Duration) error {
 	ch := make(chan error, 1)
 	go func() { ch <- w.Wait() }()
 
@@ -98,5 +105,8 @@ func (w *Waiter) WaitTimeout(d time.Duration) error {
 	case <-timer.C:
 		w.Done(ErrWaitTimeout)
 		return ErrWaitTimeout
+	case <-ctx.Done():
+		w.Done(ctx.Err())
+		return ctx.Err()
 	}
 }
