@@ -221,3 +221,56 @@ func TestUDPMediaWaitsForPlay(t *testing.T) {
 		}
 	}
 }
+
+// A client that closes its connection between requests, as a health check
+// does after its OPTIONS, logged "Error peeking connection" whenever its
+// camera was streaming to someone else (#129).
+func TestClientClosingBetweenRequestsIsNotAnError(t *testing.T) {
+	server, stream := newTestCameraStream(t)
+	stream.active.Store(true)
+	serverEnd, peerEnd := tcpPair(t)
+	client := &RTSPClient{conn: serverEnd, reader: bufio.NewReader(serverEnd), session: "s1", stream: stream}
+	before := len(testLog.lines("Error peeking connection"))
+
+	done := make(chan struct{})
+	go func() {
+		server.handleRTSPProtocol(client)
+		close(done)
+	}()
+	peerEnd.Close()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the protocol loop did not end when the client closed")
+	}
+	if after := testLog.lines("Error peeking connection"); len(after) != before {
+		t.Fatalf("a clean close was logged as an error: %q", after[before:])
+	}
+}
+
+// tcpPair returns both ends of a loopback TCP connection. Unlike net.Pipe, a
+// TCP end still takes a read deadline after its peer has closed, as the
+// server's connections do.
+func tcpPair(t *testing.T) (net.Conn, net.Conn) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	peerEnd, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverEnd, err := listener.Accept()
+	if err != nil {
+		peerEnd.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		peerEnd.Close()
+		serverEnd.Close()
+	})
+	return serverEnd, peerEnd
+}

@@ -58,7 +58,10 @@ class TuyaLANClient:
         self._address = AddressPublisher(on_address_change, last_ip, last_protocol)
         # A keyed pair from the last run is dialled before any scan; see seeded_session.
         self._ip, self._announced_version = seeded_session(last_ip, last_protocol)
-        self._version: float | None = None
+        # Only a session that worked publishes its version, so a keyed seed had a
+        # keyed session: it gets no 3.3 fallback either (see session_candidates).
+        self._version: float | None = self._announced_version
+        self._logged_version: float | None = None
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         self._rekeyed = False
@@ -185,10 +188,11 @@ class TuyaLANClient:
                 self._try_direct_connect, ip, version
             )
             if device:
-                if version != self._version:
+                if version != self._logged_version:
                     _LOGGER.info(
                         "LAN session with %s speaks protocol %s", self._device_id, version
                     )
+                    self._logged_version = version
                 self._version = version
                 # On the event loop, like the rest of _connect. An unconfirmed fallback keeps the last pair.
                 self._address.update(ip, confirmed_protocol(version, self._announced_version))
@@ -311,7 +315,8 @@ class TuyaLANClient:
         ignores or crashes on, a heartbeat is the plain keep-alive command.
 
         The response is consumed here (`nowait=False`) so a stray ack cannot turn
-        up in the next receive() and look like a device error.
+        up in the next receive() and look like a device error. A heartbeat the
+        camera did not answer is a failure (`heartbeat_outcome`).
         """
         try:
             result = self._device.heartbeat(nowait=False)
@@ -321,7 +326,7 @@ class TuyaLANClient:
 
         alive, pushed = heartbeat_outcome(result)
         if not alive:
-            _LOGGER.debug("LAN heartbeat unreachable: %s", result.get("Error"))
+            _LOGGER.debug("LAN heartbeat not answered: %s", result.get("Error", result.get("Err")))
         return alive, pushed
 
     async def _run(self) -> None:

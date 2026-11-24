@@ -33,7 +33,7 @@ func TestStaleStartLeavesTheNewerOneAlone(t *testing.T) {
 	})
 	firstCloudFailed := make(chan struct{})
 	var cloudCalls atomic.Int32
-	cs.cloudStart = func() error {
+	cs.cloudStart = func(context.Context, *WebRTCBridge) error {
 		a.cloudStarted.Add(1)
 		if cloudCalls.Add(1) == 1 {
 			close(firstCloudFailed)

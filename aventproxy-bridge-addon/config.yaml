@@ -37,4 +37,4 @@ boot: "auto"
 environment:
   WAIT_FOR_CONFIG: "true"
 map:
-  - config:rw
+  - config:ro

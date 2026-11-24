@@ -83,10 +83,11 @@ client.set_dps("YOUR_DEVICE_ID", {"201": "play"})   # play lullaby
 | 141 | `decibel_upload` | Sound event (read-only) | string | ro | `decibel_upload` when triggered |
 | 239 | `monitor_sensitivity` | Background monitoring | enum | rw | `0`, `1`, `2`, `3` |
 
-The monitor runs one detector at a time. Measured at protocol 3.5 on an SCD973/26 in Leonard
+A 3.5 monitor runs one detector at a time. Measured at protocol 3.5 on an SCD973/26 in Leonard
 Pitzu's fork: whichever of 134 and 139 was written last wins, and the other switch keeps
 reading `true` while it does nothing. The integration therefore turns the partner off, but only
-on a monitor whose LAN session has confirmed protocol 3.4 or newer.
+on a monitor whose LAN session has confirmed protocol 3.5 or newer: an SCD951 on 3.4 and an
+SCD923 on 3.3 ran both detectors at once ([#110](https://github.com/thekoma/aventproxy/issues/110)).
 
 ### Two-Way Audio
 

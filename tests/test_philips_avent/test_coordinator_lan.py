@@ -353,6 +353,25 @@ class TestPushesLeaveThePollAlone:
         assert coordinator.data["246"] == "playing"
         assert coordinator.scheduled_for == due
 
+    def test_commands_in_quick_succession_do_not_delay_it(self, make):
+        # Commands closer together than the poll interval: each echo moved the poll out.
+        coordinator = make(3.3)
+        clock, due = self._scheduled(coordinator)
+        for second in range(1, 30):
+            clock[0] = second
+            asyncio.run(coordinator.set_dps({"209": second}))
+        assert coordinator.scheduled_for == due
+        assert coordinator.data["209"] == 29
+        assert coordinator.listener_updates == 29
+
+    def test_a_command_echo_does_not_end_a_failed_poll(self, make):
+        # Without a session the command only went to the cloud: nothing proves it is back.
+        coordinator = make(None)
+        coordinator.last_update_success = False
+        asyncio.run(coordinator.set_dps({"138": True}))
+        assert coordinator.data["138"] is True
+        assert coordinator.last_update_success is False
+
     def test_a_push_restores_availability_after_a_failed_poll(self, make):
         # A push proves the LAN session is live (round 3: LAN whenever possible).
         coordinator = make(3.3)

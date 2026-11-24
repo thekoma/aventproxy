@@ -37,6 +37,16 @@ CONNECTION_ERRORS = frozenset({LAN_ERR_CONNECT, LAN_ERR_OFFLINE})
 LAN_ERR_TIMEOUT = "902"
 LAN_ERR_KEY_OR_VERSION = "914"
 
+# The results that say the camera did not answer a request: no connection, no
+# reply within tinytuya's retries (902; tinytuya closes the socket on each
+# timeout and opens a new one to retry), or a refused handshake on such a
+# reopen (914). Anything else counts as an answer. That includes 904, a frame
+# tinytuya could not parse: usually the camera's ack, but tinytuya also returns
+# it when the camera closed the socket and nothing arrives (_recv_all's "No
+# data received - connection closed?"). It drops that socket then and opens a
+# new one at the next request, where a camera that is gone fails.
+NO_ANSWER_ERRORS = CONNECTION_ERRORS | {LAN_ERR_TIMEOUT, LAN_ERR_KEY_OR_VERSION}
+
 # tinytuya hands a failed write back as an error dict rather than raising.
 # 905 and 914 come from opening the socket, before anything is sent: nothing to
 # connect to, or the session key refused (3.4 and up). tinytuya can also return
@@ -55,6 +65,21 @@ MAX_PAYLOAD_ERRORS = 3
 def is_connection_error(err_code: str | None) -> bool:
     """True when a tinytuya error code means the LAN socket is unusable."""
     return str(err_code or "") in CONNECTION_ERRORS
+
+
+def device_answered(result: object) -> bool:
+    """Whether a tinytuya request result shows the camera answered.
+
+    tinytuya does not raise when a request fails: it returns an error dict.
+    A heartbeat that timed out came back as {"Err": "902"}, which counted as
+    alive, so a session whose camera stopped answering stayed "connected", and
+    every such heartbeat also reset the stale-data timer. None is an ack
+    without payload, which is an answer.
+    """
+    if not isinstance(result, dict):
+        return True
+    err = result.get("Err")
+    return err is None or str(err) not in NO_ANSWER_ERRORS
 
 
 def lan_write_delivered(result: object, *, repeatable: bool) -> bool:
@@ -104,13 +129,14 @@ def heartbeat_outcome(result: object) -> tuple[bool, dict | None]:
     frame that has a payload, from the same socket the pushes arrive on. A push
     landing in that window comes back here rather than in the receive loop, and
     dropping it lost about half of a run of alarms on an SCD973/26 (fork
-    8c4fc03), so the caller publishes it. Only a connection error counts as
-    failure: an ack we cannot parse still proves the socket is alive.
+    8c4fc03), so the caller publishes it. A heartbeat the camera did not answer
+    (`device_answered`: no connection, a timeout or a refused handshake) is a
+    failure; an ack we cannot parse counts as an answer.
     """
+    if not device_answered(result):
+        return False, None
     if not isinstance(result, dict):
         return True, None
-    if is_connection_error(result.get("Err")):
-        return False, None
     dps = result.get("dps")
     return True, (dps if isinstance(dps, dict) and dps else None)
 
@@ -153,6 +179,10 @@ SUPPORTED_PROTOCOL_VERSIONS = (3.1, 3.2, 3.3, 3.4, 3.5)
 # was.
 KEYED_PROTOCOL_MIN_VERSION = 3.4
 
+# The versions that negotiate a session key, newest first: the ones a camera
+# that once had a keyed session may be offered again (no 3.3 fallback).
+KEYED_VERSIONS = (3.5, KEYED_PROTOCOL_MIN_VERSION)
+
 
 def keyed_protocol(version: float | None) -> bool:
     """Whether a session at `version` carries the monitor's state on its own."""
@@ -189,15 +219,31 @@ def seeded_session(last_ip: str | None, last_protocol: str) -> tuple[str | None,
 def session_candidates(announced: float | None, last_session: float | None, *, scanned: bool) -> list[float]:
     """Protocol versions to try at an address, best guess first.
 
-    The announced version comes before the last session's. A 3.3 fallback on a
-    monitor that announces 3.5 is a TCP connect that reads nothing (see
-    `confirmed_protocol`), and starting every reconnect from it kept such a
-    monitor on 3.3 until Home Assistant restarted.
+    The announced version comes before the last session's, unless that session
+    was keyed (see below). A 3.3 fallback on a monitor that announces 3.5 is a
+    TCP connect that reads nothing (see `confirmed_protocol`), and starting
+    every reconnect from it kept such a monitor on 3.3 until Home Assistant
+    restarted.
 
     At an address that did not just come from a scan, a keyed version gets no
     3.3 fallback: only its handshake proves the monitor is the one answering
     there, and a failure sends the client back to the scan instead.
+
+    Once a session with this camera negotiated 3.4 or later, in this run or in
+    the one that published the seeded pair, no address gets a 3.3 fallback,
+    scanned or not: a 3.3 session would check no key and miss the alarm DPS,
+    and stay on 3.3 from then on. An SCD951 that speaks only 3.4 ended up there
+    after a reload, and a simulated 3.4 monitor in a test setup after one
+    refused handshake following a scan. That version comes first, as the one
+    that worked. After a scan the other keyed versions follow, the announced
+    one first, so a firmware update that moves the camera from 3.4 to 3.5 does
+    not lock it out of the LAN.
     """
+    if keyed_protocol(last_session):
+        if not scanned:
+            return [last_session]
+        others = [v for v in (announced, *KEYED_VERSIONS) if keyed_protocol(v)]
+        return list(dict.fromkeys([last_session, *others]))
     preferred = announced if announced is not None else last_session
     if not scanned and keyed_protocol(preferred):
         return [preferred]
