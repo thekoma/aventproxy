@@ -58,7 +58,10 @@ class TuyaLANClient:
         self._address = AddressPublisher(on_address_change, last_ip, last_protocol)
         # A keyed pair from the last run is dialled before any scan; see seeded_session.
         self._ip, self._announced_version = seeded_session(last_ip, last_protocol)
-        self._version: float | None = None
+        # Only a session that worked publishes its version, so a keyed seed had a
+        # keyed session: it gets no 3.3 fallback either (see session_candidates).
+        self._version: float | None = self._announced_version
+        self._logged_version: float | None = None
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         self._rekeyed = False
@@ -182,10 +185,11 @@ class TuyaLANClient:
                 self._try_direct_connect, ip, version
             )
             if device:
-                if version != self._version:
+                if version != self._logged_version:
                     _LOGGER.info(
                         "LAN session with %s speaks protocol %s", self._device_id, version
                     )
+                    self._logged_version = version
                 self._version = version
                 # On the event loop, like the rest of _connect. An unconfirmed fallback keeps the last pair.
                 self._address.update(ip, confirmed_protocol(version, self._announced_version))

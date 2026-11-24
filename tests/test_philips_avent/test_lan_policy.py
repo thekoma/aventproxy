@@ -290,3 +290,32 @@ class TestSessionCandidates:
         # whatever now answers at that address.
         assert session_candidates(3.5, 3.5, scanned=False) == [3.5]
         assert session_candidates(3.4, None, scanned=False) == [3.4]
+
+
+class TestNoDowngradeAfterAKeyedSession:
+    """Once 3.4 or 3.5 worked, a failed reconnect never falls back to 3.3, scanned or not."""
+
+    def test_the_proven_version_comes_first_and_3_3_never(self):
+        assert session_candidates(3.4, 3.4, scanned=True) == [3.4, 3.5]
+        assert session_candidates(3.5, 3.5, scanned=True) == [3.5, 3.4]
+        assert session_candidates(None, 3.4, scanned=True) == [3.4, 3.5]
+
+    def test_a_cached_address_gets_only_the_proven_version(self):
+        # A failed handshake there sends the client to the scan, which then
+        # offers the other keyed version as well.
+        assert session_candidates(3.4, 3.4, scanned=False) == [3.4]
+        assert session_candidates(3.5, 3.4, scanned=False) == [3.4]
+        assert session_candidates(3.3, 3.4, scanned=False) == [3.4]
+
+    def test_a_firmware_update_to_another_keyed_version_is_reachable(self):
+        # Proven on 3.4, the camera now announces 3.5: try 3.4, then 3.5.
+        assert session_candidates(3.5, 3.4, scanned=True) == [3.4, 3.5]
+
+    def test_an_announced_3_3_is_not_tried_after_a_keyed_session(self):
+        assert session_candidates(3.3, 3.4, scanned=True) == [3.4, 3.5]
+
+    def test_first_contact_keeps_the_fallback_after_a_scan(self):
+        assert session_candidates(3.5, None, scanned=True) == [3.5, PROTOCOL_VERSION_DEFAULT]
+
+    def test_a_3_3_session_changes_nothing(self):
+        assert session_candidates(3.3, 3.3, scanned=True) == [3.3]

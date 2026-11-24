@@ -144,6 +144,10 @@ SUPPORTED_PROTOCOL_VERSIONS = (3.1, 3.2, 3.3, 3.4, 3.5)
 # was.
 KEYED_PROTOCOL_MIN_VERSION = 3.4
 
+# The versions that negotiate a session key, newest first: the ones a camera
+# that once had a keyed session may be offered again (no 3.3 fallback).
+KEYED_VERSIONS = (3.5, KEYED_PROTOCOL_MIN_VERSION)
+
 
 def keyed_protocol(version: float | None) -> bool:
     """Whether a session at `version` carries the monitor's state on its own."""
@@ -180,15 +184,31 @@ def seeded_session(last_ip: str | None, last_protocol: str) -> tuple[str | None,
 def session_candidates(announced: float | None, last_session: float | None, *, scanned: bool) -> list[float]:
     """Protocol versions to try at an address, best guess first.
 
-    The announced version comes before the last session's. A 3.3 fallback on a
-    monitor that announces 3.5 is a TCP connect that reads nothing (see
-    `confirmed_protocol`), and starting every reconnect from it kept such a
-    monitor on 3.3 until Home Assistant restarted.
+    The announced version comes before the last session's, unless that session
+    was keyed (see below). A 3.3 fallback on a monitor that announces 3.5 is a
+    TCP connect that reads nothing (see `confirmed_protocol`), and starting
+    every reconnect from it kept such a monitor on 3.3 until Home Assistant
+    restarted.
 
     At an address that did not just come from a scan, a keyed version gets no
     3.3 fallback: only its handshake proves the monitor is the one answering
     there, and a failure sends the client back to the scan instead.
+
+    Once a session with this camera negotiated 3.4 or later, in this run or in
+    the one that published the seeded pair, no address gets a 3.3 fallback,
+    scanned or not: a 3.3 session would check no key and miss the alarm DPS,
+    and stay on 3.3 from then on. An SCD951 that speaks only 3.4 ended up there
+    after a reload, and a simulated 3.4 monitor in a test setup after one
+    refused handshake following a scan. That version comes first, as the one
+    that worked. After a scan the other keyed versions follow, the announced
+    one first, so a firmware update that moves the camera from 3.4 to 3.5 does
+    not lock it out of the LAN.
     """
+    if keyed_protocol(last_session):
+        if not scanned:
+            return [last_session]
+        others = [v for v in (announced, *KEYED_VERSIONS) if keyed_protocol(v)]
+        return list(dict.fromkeys([last_session, *others]))
     preferred = announced if announced is not None else last_session
     if not scanned and keyed_protocol(preferred):
         return [preferred]
