@@ -28,6 +28,9 @@ SECRET_KEYS = frozenset({
     # Location. tuya.m.device.get reports the household's public address as
     # "ip", which kept a reporter from attaching the dump (issue #91).
     "lat", "lon", "lng", "latitude", "longitude", "ip",
+    # The camera's hardware address, also in tuya.m.device.get: it identifies
+    # the device on the reporter's network and has no use in a bug report.
+    "mac",
 })
 
 

@@ -9,8 +9,9 @@ import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 
-from .api import PhilipsAventAPI
+from .api import PhilipsAventAPI, TuyaAPIError
 from .const import (
     CONF_API_HOST,
     CONF_BRIDGE_PORT,
@@ -150,6 +151,21 @@ def _purge_stored_password(hass: HomeAssistant, entry: ConfigEntry) -> None:
     _LOGGER.info("Removed the stored account password from the config entry; it was never used")
 
 
+def _no_access(err: BaseException) -> TuyaAPIError | None:
+    """The cloud's refusal when it says this account has no access to the monitor.
+
+    Home Assistant raises ConfigEntryNotReady with the coordinator's
+    UpdateFailed as its cause, which has the TuyaAPIError as its own.
+    `tuya.m.device.get` answers PERMISSION_DENIED ("No access") for a device
+    the account cannot reach.
+    """
+    while err is not None:
+        if isinstance(err, TuyaAPIError):
+            return err if err.code == "PERMISSION_DENIED" else None
+        err = err.__cause__
+    return None
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Philips Avent from a config entry."""
     _purge_stored_password(hass, entry)
@@ -223,6 +239,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Fallback: re-discover via API
         try:
             cameras = await api.discover_cameras()
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            # A network or HTTP-level failure is retried: returning False
+            # leaves the entry unloaded until a restart or reload. Home
+            # Assistant shows the reason on the entry and retries with backoff,
+            # logging it only below the default warning level; a traceback of
+            # our own on every retry would repeat for as long as it fails.
+            _LOGGER.debug("Camera discovery failed", exc_info=True)
+            await session.close()
+            raise ConfigEntryNotReady(f"camera discovery failed: {err!r}") from err
         except Exception:
             _LOGGER.exception("Camera discovery failed")
             cameras = []
@@ -283,6 +308,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if _live():
             entry.async_create_background_task(hass, _rewrite_bridge_config(), "philips_avent_bridge_config")
 
+    skipped: list[tuple[str, TuyaAPIError, ConfigEntryNotReady]] = []
     try:
         for cam in cameras:
             cam_id = cam.get("deviceId") or cam.get("devId")
@@ -290,11 +316,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             local_key = cam.get("localKey")
 
             coordinator = PhilipsAventCoordinator(hass, api, cam_id, cam_name, local_key=local_key)
-            await coordinator.async_config_entry_first_refresh()
+            try:
+                await coordinator.async_config_entry_first_refresh()
+            except ConfigEntryNotReady as err:
+                # The entry stores its monitors, so one the account cannot reach
+                # would keep the others in setup-retry. Any other error retries the entry.
+                if (denied := _no_access(err)) is None:
+                    raise
+                skipped.append((cam_name, denied, err))
+                continue
 
             coordinators[cam_id] = coordinator
             seed = previous.get(cam_id, {})
             await coordinator.start_lan(_on_address_change, seed.get("lan_ip") or None, seed.get("lan_protocol", ""))
+        if not coordinators:
+            raise skipped[0][2]
 
         # With LAN streaming off the bridge file carries no P2P password, so there is nothing to fetch.
         if entry.options.get(CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING):
@@ -314,6 +350,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await coordinator.stop_lan()
         await session.close()
         raise
+
+    for cam_name, denied, _ in skipped:
+        _LOGGER.warning(
+            "%s did not start: the cloud gives this account no access to it (%s). "
+            "The other monitors run; reloading the integration or restarting Home Assistant tries it again",
+            cam_name, denied,
+        )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     await async_setup_services(hass)

@@ -19,6 +19,7 @@ services:
     network_mode: host
     volumes:
       - ha_config:/config:ro
+      - bridge_data:/data
     environment:
       - WAIT_FOR_CONFIG=true
       - BRIDGE_PORT=38554
@@ -30,3 +31,4 @@ services:
 
 volumes:
   ha_config:
+  bridge_data:

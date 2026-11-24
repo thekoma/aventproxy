@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -39,5 +40,25 @@ func TestWaitTimeoutReturnsDoneError(t *testing.T) {
 	}()
 	if err := w.WaitTimeout(time.Second); err != want {
 		t.Fatalf("WaitTimeout = %v, want %v", err, want)
+	}
+}
+
+// A caller that gives up (a stream that stopped) is not held for the rest of d.
+func TestWaitContextEndsWithTheContext(t *testing.T) {
+	var w Waiter
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+	start := time.Now()
+	if err := w.WaitContext(ctx, time.Minute); !errors.Is(err, context.Canceled) {
+		t.Fatalf("WaitContext = %v, want context.Canceled", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatalf("WaitContext took %v after its context ended", time.Since(start))
+	}
+	if err := w.Wait(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Wait after the cancel = %v, want the waiter finished with context.Canceled", err)
 	}
 }

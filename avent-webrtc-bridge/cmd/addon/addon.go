@@ -214,10 +214,13 @@ func assignPaths(cams []Camera) []CameraWithPath {
 const DefaultBind = "localhost"
 
 // resolveBind picks the bind address: an explicit --bind flag, then the
-// rtsp_bind_address field of the config JSON, then DefaultBind.
+// rtsp_bind_address field of the config JSON, then DefaultBind. A blank value
+// falls through to the next one: the server reads "" as every interface, and
+// run.sh passes the add-on option as --bind even when it holds only spaces.
+// Listening on every interface takes "0.0.0.0" or "::", written on purpose.
 func resolveBind(flagValue string, flagSet bool, cfg BridgeConfig) string {
-	if flagSet {
-		return flagValue
+	if b := strings.TrimSpace(flagValue); flagSet && b != "" {
+		return b
 	}
 	if b := strings.TrimSpace(cfg.RTSPBind); b != "" {
 		return b
@@ -311,6 +314,9 @@ func sessionFlags(cmd *cobra.Command) (speakerOff bool, webrtcAudio string, err 
 }
 
 func runAddon(cmd *cobra.Command, args []string) error {
+	// The flags parsed, so any error from here on is a failed start, not a
+	// usage mistake: no flag list in the log on every restart of a crash loop.
+	cmd.SilenceUsage = true
 	cfgPath, _ := cmd.Flags().GetString("config")
 
 	cfg, err := loadConfig(cfgPath)

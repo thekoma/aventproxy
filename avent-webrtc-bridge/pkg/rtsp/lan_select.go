@@ -155,19 +155,33 @@ func (cs *CameraStream) runLANAttempt(src lanStreamer) (stopped bool, err error)
 
 // runAttempt is runLANAttempt with its own deadline.
 func (cs *CameraStream) runAttempt(src lanStreamer, deadline time.Duration) (stopped bool, err error) {
-	// Only stopStreamInternal cancels this while src starts.
+	stopped, err = cs.runUnlocked(func(stoppedCtx context.Context) error {
+		ctx, cancel := context.WithTimeout(stoppedCtx, deadline)
+		defer cancel()
+		return src.Start(ctx)
+	})
+	if stopped {
+		src.Stop()
+	}
+	return stopped, err
+}
+
+// runUnlocked runs attempt without cs.mutex, with a context that only
+// stopStreamInternal cancels (through attemptCancel), so a Stop ends the
+// attempt instead of waiting for it. Called with cs.mutex held; returns with
+// it held. stopped means the stream stopped meanwhile: a restart may own
+// attemptCancel now, so the caller must leave the stream alone and clean up
+// only what its attempt built.
+func (cs *CameraStream) runUnlocked(attempt func(context.Context) error) (stopped bool, err error) {
 	stoppedCtx, stop := context.WithCancel(context.Background())
 	defer stop()
 	cs.attemptCancel = stop
 	cs.mutex.Unlock()
 
-	ctx, cancel := context.WithTimeout(stoppedCtx, deadline)
-	err = src.Start(ctx)
-	cancel()
+	err = attempt(stoppedCtx)
 
 	cs.mutex.Lock()
 	if stoppedCtx.Err() != nil {
-		src.Stop()
 		return true, err
 	}
 	cs.attemptCancel = nil

@@ -113,7 +113,7 @@ The bridge's RTSP server has no password. The add-on therefore listens on loopba
 
 The integration exposes `binary_sensor.<camera>_sound_detected` and `binary_sensor.<camera>_motion_detected` that turn on for ~30 seconds when the monitor reports an event. They are the trigger points for any automation.
 
-Note: detection must be enabled on the device side via the `🔊 Detect sound` / `🏃 Detect motion` switches — otherwise the monitor never sends the event. On a monitor whose LAN session has confirmed protocol 3.4 or newer, only one detector runs at a time. Turning one switch on there turns the other off, and turning one off leaves the other alone.
+Note: detection must be enabled on the device side via the `🔊 Detect sound` / `🏃 Detect motion` switches — otherwise the monitor never sends the event. On a monitor whose LAN session has confirmed protocol 3.5 or newer, only one detector runs at a time (measured on an SCD973/26 at 3.5). Turning one switch on there turns the other off, and turning one off leaves the other alone. Below 3.5 the switches are independent: an SCD951 on 3.4 and an SCD923 on 3.3 ran both detectors at once ([#110](https://github.com/thekoma/aventproxy/issues/110)).
 
 ```yaml
 # Mobile notification when sound is detected

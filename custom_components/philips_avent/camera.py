@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import shlex
 
 from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.components.ffmpeg import async_get_image as ffmpeg_get_image
@@ -89,8 +90,12 @@ class AventCamera(Camera):
         load on the camera itself.
         """
         try:
+            # haffmpeg runs shlex.split on the input source and passes it on
+            # split when that gives more than one token, else unchanged after
+            # "-i". With "-i" and the URL quoted, ffmpeg gets the exact URL for
+            # any camera name (an apostrophe made shlex.split raise).
             return await ffmpeg_get_image(
-                self.hass, self._stream_url, width=width, height=height
+                self.hass, f"-i {shlex.quote(self._stream_url)}", width=width, height=height
             )
         except Exception:
             _LOGGER.exception("ffmpeg snapshot failed for %s", self._stream_url)
