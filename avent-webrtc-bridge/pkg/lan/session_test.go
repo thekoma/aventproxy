@@ -32,7 +32,7 @@ func TestSessionKeyMatchesSDK(t *testing.T) {
 	// Go's Seal returns ciphertext||tag with no IV prefix, so the key is the first 16 bytes.
 	want := gcm.Seal(nil, localNonce[:gcmIVLen], mixed, nil)[:nonceLen]
 
-	got, err := sessionKey(testKey, localNonce, remoteNonce)
+	got, err := sessionKey(V35, testKey, localNonce, remoteNonce)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestDialHonoursContextDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	if _, err := Dial(ctx, "127.0.0.1", "dev", string(testKey)); err == nil {
+	if _, err := Dial(ctx, "127.0.0.1", "dev", string(testKey), V35); err == nil {
 		t.Fatal("expected an error from a silent monitor")
 	}
 	if d := time.Since(start); d > time.Second {
@@ -118,7 +118,7 @@ func TestDialReturnsTheContextErrorWhenCancelled(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(100*time.Millisecond, cancel)
-	_, err = Dial(ctx, "127.0.0.1", "dev", string(testKey))
+	_, err = Dial(ctx, "127.0.0.1", "dev", string(testKey), V35)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Dial = %v, want context.Canceled", err)
 	}
