@@ -16,6 +16,10 @@ services:
       context: .
       dockerfile: docker/Dockerfile.bridge
     restart: unless-stopped
+    # Docker's init runs as PID 1, forwards the stop signal and reaps, so the
+    # bridge's supervisor does not have to. Supervisor does the same for the
+    # add-on, whose config.yaml leaves init at its default, true.
+    init: true
     network_mode: host
     volumes:
       - ha_config:/config:ro

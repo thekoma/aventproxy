@@ -5,16 +5,12 @@ COPY avent-webrtc-bridge/ .
 RUN go mod download && CGO_ENABLED=0 go build -o /avent-webrtc-bridge .
 
 # Keep the base in step with aventproxy-bridge-addon/Dockerfile, which builds the published image.
-FROM debian:13-slim
-
-RUN apt-get update && apt-get install -y --no-install-recommends jq ca-certificates && rm -rf /var/lib/apt/lists/*
+FROM gcr.io/distroless/static-debian13
 
 COPY --from=builder /avent-webrtc-bridge /usr/local/bin/avent-webrtc-bridge
-COPY aventproxy-bridge-addon/run.sh /run.sh
-RUN chmod a+x /run.sh
 
 # .tuya-data lands under the working directory; docker-compose.yml mounts a
 # volume on /data so that it survives a recreated container.
 WORKDIR /data
 
-CMD [ "/run.sh" ]
+ENTRYPOINT ["/usr/local/bin/avent-webrtc-bridge", "supervise"]
