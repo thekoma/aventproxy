@@ -133,12 +133,47 @@ class TestFirstConnect:
         assert client.session_version == 3.5
 
 
+class TestNoDowngradeAfterAKeyedSession:
+    """A monitor that had a keyed session is never offered a bare 3.3 session again."""
+
+    def test_a_reconnect_after_a_keyed_session(self, lan, monkeypatch):
+        client = make_client(lan)
+        works = {"3.4": True}
+        attempts, _ = script_connect(
+            monkeypatch, client, accept=lambda ip, v: v == 3.3 or (v == 3.4 and works["3.4"]), scan=("10.0.0.7", 3.4)
+        )
+        assert asyncio.run(client._connect())
+        assert client.session_version == 3.4
+        client._disconnect()
+        works["3.4"] = False
+        attempts.clear()
+        assert not asyncio.run(client._connect())
+        assert ("10.0.0.7", 3.3) not in attempts
+
+    def test_a_reload_with_a_keyed_seed(self, lan, monkeypatch):
+        # A fresh client after a restart or reload knows the keyed session only
+        # from the pair it was seeded with.
+        client = make_client(lan, last_ip="10.0.0.7", last_protocol="3.4")
+        attempts, scans = script_connect(
+            monkeypatch, client, accept=lambda ip, v: v == 3.3, scan=("10.0.0.7", 3.4)
+        )
+        assert not asyncio.run(client._connect())
+        assert scans == [True]
+        assert ("10.0.0.7", 3.3) not in attempts
+
+
 class TestKeepAlive:
     def test_a_push_read_by_the_keep_alive_is_returned(self, lan):
         client = make_client(lan)
         client._device = FakeDevice("dev", "10.0.0.7", "key")
         client._device.heartbeat_result = {"dps": {"212": "record"}}
         assert client._send_heartbeat() == (True, {"212": "record"})
+
+    def test_an_unanswered_keep_alive_is_a_failure(self, lan):
+        client = make_client(lan)
+        client._device = FakeDevice("dev", "10.0.0.7", "key")
+        client._device.heartbeat_result = {"Error": "Timeout Waiting for Device", "Err": "902"}
+        assert client._send_heartbeat() == (False, None)
 
     def test_a_dead_socket_is_reported(self, lan):
         client = make_client(lan)

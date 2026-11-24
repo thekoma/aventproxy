@@ -14,4 +14,9 @@ COPY --from=builder /avent-webrtc-bridge /usr/local/bin/avent-webrtc-bridge
 COPY run.sh /
 RUN chmod a+x /run.sh
 
+# The bridge keeps its Tuya session cache in .tuya-data under its working
+# directory. /data is the add-on's persistent volume; without this the cache
+# landed in / and was lost whenever the container was recreated (issue #160).
+WORKDIR /data
+
 CMD [ "/run.sh" ]

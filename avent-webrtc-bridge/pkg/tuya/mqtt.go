@@ -199,7 +199,9 @@ func (c *MQTTClient) consume(client mqtt.Client, msg mqtt.Message) {
 	sessionId := rmqtt.Data.Header.SessionID
 	cameraClient, ok := c.cameraClient(sessionId)
 	if !ok {
-		core.Logger.Warn().Msgf("No camera client found for sessionId: %s", sessionId)
+		// The camera can still answer a session that Stop has just ended;
+		// that is not a fault.
+		core.Logger.Debug().Msgf("MQTT %s for session %s, which has ended or is not ours", rmqtt.Data.Header.Type, sessionId)
 		return
 	}
 

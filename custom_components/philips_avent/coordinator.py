@@ -340,7 +340,11 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
             optimistic[DPS_LULLABY_STATE] = LULLABY_STATE_MAP[lullaby_cmd]
         if extra:
             optimistic.update(extra)
-        self.async_set_updated_data({**self.data, **optimistic})
+        # Not async_set_updated_data: that also plans the next poll a whole
+        # interval out, so commands closer together than the poll interval
+        # postponed the poll and the alerts only it brings (see _show_lan_state).
+        self.data = {**self.data, **optimistic}
+        self.async_update_listeners()
 
     async def set_dps(self, dps: dict, *, optimistic: dict | None = None) -> dict:
         """Send a DPS command, over the LAN when there is a session for it.

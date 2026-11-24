@@ -239,6 +239,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Fallback: re-discover via API
         try:
             cameras = await api.discover_cameras()
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            # A network or HTTP-level failure is retried: returning False
+            # leaves the entry unloaded until a restart or reload. Home
+            # Assistant shows the reason on the entry and retries with backoff,
+            # logging it only below the default warning level; a traceback of
+            # our own on every retry would repeat for as long as it fails.
+            _LOGGER.debug("Camera discovery failed", exc_info=True)
+            await session.close()
+            raise ConfigEntryNotReady(f"camera discovery failed: {err!r}") from err
         except Exception:
             _LOGGER.exception("Camera discovery failed")
             cameras = []

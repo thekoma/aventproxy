@@ -58,7 +58,10 @@ class TuyaLANClient:
         self._address = AddressPublisher(on_address_change, last_ip, last_protocol)
         # A keyed pair from the last run is dialled before any scan; see seeded_session.
         self._ip, self._announced_version = seeded_session(last_ip, last_protocol)
-        self._version: float | None = None
+        # Only a session that worked publishes its version, so a keyed seed had a
+        # keyed session: it gets no 3.3 fallback either (see session_candidates).
+        self._version: float | None = self._announced_version
+        self._logged_version: float | None = None
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         self._rekeyed = False
@@ -182,10 +185,11 @@ class TuyaLANClient:
                 self._try_direct_connect, ip, version
             )
             if device:
-                if version != self._version:
+                if version != self._logged_version:
                     _LOGGER.info(
                         "LAN session with %s speaks protocol %s", self._device_id, version
                     )
+                    self._logged_version = version
                 self._version = version
                 # On the event loop, like the rest of _connect. An unconfirmed fallback keeps the last pair.
                 self._address.update(ip, confirmed_protocol(version, self._announced_version))
@@ -238,13 +242,17 @@ class TuyaLANClient:
         tinytuya's status() returns the first frame with a payload whatever its
         command, so a push landing between the query and its answer (a SenseIQ
         status comes every few seconds) is taken for the baseline, and the
-        answer then arrives as an ordinary push. That swap is harmless only
-        because the alert keys are absent from the answer, as both the #51
-        capture and the fork's SCD973/26 show: the answer arriving as a push
-        fires nothing. A DPS 212 alarm taken for the baseline still fires, since
-        the sensors judge 212 by its own timestamp; a 250 or 141 marker would be
-        lost, and on 3.4+ those stayed empty. Telling the frames apart would
-        mean reading tinytuya's raw messages for their command.
+        answer then arrives as an ordinary push. That swap is harmless because
+        the answer carries the whole state: 250 and 141 are absent from it, as
+        both the #51 capture and the fork's SCD973/26 show, and the sensors
+        judge a DPS 212 record in a frame that size by its age, as on a poll
+        (`events.FULL_STATE_MIN_KEYS`). So the answer arriving as a push fires
+        only what a poll would. A DPS 212 alarm taken for the baseline still
+        fires, since the sensors judge 212 by its own timestamp, but only while
+        that stamp passes the age check: on a monitor whose clock is off it is
+        dropped as a polled record would be. A 250 or 141 marker would be lost,
+        and on 3.4+ those stayed empty. Telling the frames apart would mean
+        reading tinytuya's raw messages for their command.
         """
         try:
             result = self._device.status()
@@ -299,7 +307,8 @@ class TuyaLANClient:
         ignores or crashes on, a heartbeat is the plain keep-alive command.
 
         The response is consumed here (`nowait=False`) so a stray ack cannot turn
-        up in the next receive() and look like a device error.
+        up in the next receive() and look like a device error. A heartbeat the
+        camera did not answer is a failure (`heartbeat_outcome`).
         """
         try:
             result = self._device.heartbeat(nowait=False)
@@ -309,7 +318,7 @@ class TuyaLANClient:
 
         alive, pushed = heartbeat_outcome(result)
         if not alive:
-            _LOGGER.debug("LAN heartbeat unreachable: %s", result.get("Error"))
+            _LOGGER.debug("LAN heartbeat not answered: %s", result.get("Error", result.get("Err")))
         return alive, pushed
 
     async def _run(self) -> None:
