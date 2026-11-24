@@ -466,6 +466,10 @@ func (wb *WebRTCBridge) setupPeerConnection(webRTCConfig *tuya.WebRTCConfig) err
 			MaxRetransmits: &maxRetransmits,
 			Ordered:        &ordered,
 		})
+		if err != nil {
+			// The peer connection stays for Stop to close, as after any failed Start.
+			return fmt.Errorf("failed to create the HEVC datachannel: %w", err)
+		}
 
 		wb.dataChannel.OnMessage(func(msg pion.DataChannelMessage) {
 			if msg.IsString {
