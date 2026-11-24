@@ -75,13 +75,13 @@ func fakeAttempts(t *testing.T, cs *CameraStream, lanStart func(context.Context)
 		a.lanFwd = fwd
 		return a.lan
 	}
-	cs.cloudStart = func() error {
-		if cs.webrtcBridge.errorHandler() == nil {
+	cs.cloudStart = func(_ context.Context, bridge *WebRTCBridge) error {
+		if bridge.errorHandler() == nil {
 			t.Error("cloud attempt on a bridge with no error handler")
 		}
 		a.cloudStarted.Add(1)
-		a.cloudFwd = cs.webrtcBridge.rtpForwarder
-		a.cloudBridge = cs.webrtcBridge
+		a.cloudFwd = bridge.rtpForwarder
+		a.cloudBridge = bridge
 		return nil
 	}
 	return a
@@ -436,7 +436,7 @@ func TestCloudFailureEndsTheCooldown(t *testing.T) {
 			server.lanCooldowns["testdev"] = time.Now().Add(lanCooldownPeriod)
 			cs, clientConn := newLANStream(t, server, "hd")
 			a := fakeAttempts(t, cs, nil)
-			cs.cloudStart = func() error {
+			cs.cloudStart = func(context.Context, *WebRTCBridge) error {
 				a.cloudStarted.Add(1)
 				return errors.New("cloud down")
 			}

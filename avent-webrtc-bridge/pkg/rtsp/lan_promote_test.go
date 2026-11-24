@@ -267,7 +267,7 @@ func TestPromotionDueDuringTheCloudAttempt(t *testing.T) {
 		signal(probed)
 		return errors.New("still down")
 	})
-	cs.cloudStart = func() error {
+	cs.cloudStart = func(context.Context, *WebRTCBridge) error {
 		a.cloudStarted.Add(1)
 		time.Sleep(700 * time.Millisecond) // a slow answer outlasts the cool-down
 		return nil
