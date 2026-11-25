@@ -292,7 +292,7 @@ func collectAnswer(ctx context.Context, s *Session, sessionID string) (remote ic
 	for time.Now().Before(deadline) {
 		frame, err := ReadSignal(s, sessionID, time.Until(deadline))
 		if err != nil {
-			return iceCreds{}, nil, nil, err
+			return iceCreds{}, nil, nil, stepError{"waiting for the answer to the offer", err}
 		}
 		switch frame.Header.Type {
 		case TypeAnswer:
@@ -480,3 +480,17 @@ func parseCandidate(line string) (*net.UDPAddr, error) {
 	}
 	return &net.UDPAddr{IP: ip, Port: port}, nil
 }
+
+// stepError names the step a wait ended in, as "lan: <step>: <cause>", with
+// the cause's own "lan: " left out so the text says it once; errors.Is and
+// errors.As still see the cause.
+type stepError struct {
+	step string
+	err  error
+}
+
+func (e stepError) Error() string {
+	return "lan: " + e.step + ": " + strings.TrimPrefix(e.err.Error(), "lan: ")
+}
+
+func (e stepError) Unwrap() error { return e.err }
