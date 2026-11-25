@@ -573,9 +573,9 @@ func TestTeardownAsFirstRequestClosesTheConnection(t *testing.T) {
 // A connection that never sends its first request must not hold a goroutine
 // and a socket for good.
 func TestSilentConnectionIsClosed(t *testing.T) {
-	old := requestReadTimeout
-	requestReadTimeout = 100 * time.Millisecond
-	t.Cleanup(func() { requestReadTimeout = old })
+	old := requestReadTimeout.Load()
+	requestReadTimeout.Store(int64(100 * time.Millisecond))
+	t.Cleanup(func() { requestReadTimeout.Store(old) })
 	h := newStallHarness(t, func(context.Context, *CameraStream) error { return nil })
 
 	dialRTSP(t, h.port, "/cam1").expectClosedWithin(2 * time.Second)

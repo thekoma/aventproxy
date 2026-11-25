@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -108,13 +109,18 @@ func generateSessionID() string {
 
 // requestReadTimeout bounds the wait for a client's next request, its first
 // one included.
-var requestReadTimeout = 60 * time.Second
+//
+// It holds a time.Duration and is atomic because a test shortens it while
+// connections that earlier tests opened may still be reading it.
+var requestReadTimeout atomic.Int64
+
+func init() { requestReadTimeout.Store(int64(60 * time.Second)) }
 
 func (s *RTSPServer) handleRTSPProtocol(client *RTSPClient) {
 	defer s.removeClient(client.session)
 
 	for {
-		if err := client.conn.SetReadDeadline(time.Now().Add(requestReadTimeout)); err != nil {
+		if err := client.conn.SetReadDeadline(time.Now().Add(time.Duration(requestReadTimeout.Load()))); err != nil {
 			break
 		}
 
