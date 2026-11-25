@@ -36,7 +36,7 @@ If you have multiple Philips Avent monitors on one account, the file already cov
 
 This step is needed when the bug is something like:
 - "motion detection should fire when someone walks in front of the camera, but the sensor never turns on"
-- "the sound alert switch is on, but `binary_sensor.…_sound_detected` doesn't react when the baby cries"
+- "the Detect sound switch is on, but `binary_sensor.…_sound_detected` doesn't react when the baby cries"
 - "the night light command takes 30 seconds to take effect"
 
 If your bug is just a constant wrong value (e.g. the RSSI sensor always shows -75 dBm), skip this step — the diagnostics dump already has it.

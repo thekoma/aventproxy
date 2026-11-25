@@ -146,10 +146,10 @@
         "name": "Night Light"
       },
       "motion_alert": {
-        "name": "Motion Alert"
+        "name": "Detect motion"
       },
       "sound_alert": {
-        "name": "Sound Alert"
+        "name": "Detect sound"
       },
       "privacy_mode": {
         "name": "Privacy Mode"
@@ -161,7 +161,7 @@
         "name": "Awake Alert"
       },
       "cry_alert": {
-        "name": "Cry Alert"
+        "name": "Detect crying"
       }
     },
     "number": {

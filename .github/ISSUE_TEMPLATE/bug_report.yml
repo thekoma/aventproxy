@@ -87,7 +87,7 @@ body:
       description: |
         Smaller is better. If the bug is "a thing doesn't fire when I trigger it", describe what you do to trigger it (walk in front, clap loudly, etc.).
       placeholder: |
-        1. Make sure the "Motion Alert" switch is on.
+        1. Make sure the "Detect motion" switch is on.
         2. Walk slowly in front of the camera for 5-10 seconds.
         3. Check binary_sensor.babycam_motion_detected — it stays off.
     validations:

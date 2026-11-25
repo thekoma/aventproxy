@@ -50,8 +50,8 @@ body:
         - label: Wi-Fi signal sensor reads a sensible value (not stuck at a constant)
         - label: Night light switch + brightness
         - label: Lullaby playback (play / pause / next / prev / volume)
-        - label: Motion Alert switch toggles
-        - label: Sound Alert switch toggles
+        - label: Detect motion switch toggles
+        - label: Detect sound switch toggles
         - label: binary_sensor.<cam>_motion_detected fires when motion is in view
         - label: binary_sensor.<cam>_sound_detected fires on loud noise
         - label: Privacy mode switch
