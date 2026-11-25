@@ -31,6 +31,8 @@ from .const import (
     TUYA_DEFAULT_COUNTRY_CODE,
     TUYA_PACKAGE_NAME,
     TUYA_SIGNING_KEY,
+    rtsp_paths,
+    unique_camera_name,
 )
 from .coordinator import PhilipsAventCoordinator
 from .lan_credentials import fetch_missing_passwords, fetch_p2p_passwords, lan_credentials
@@ -38,6 +40,7 @@ from .payload import (
     BRIDGE_CONFIG_PREFIX,
     bridge_config_filename,
     build_bridge_config,
+    build_cameras_payload,
     orphan_bridge_configs,
     previous_lan_values,
     strip_stored_password,
@@ -331,6 +334,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await coordinator.start_lan(_on_address_change, seed.get("lan_ip") or None, seed.get("lan_protocol", ""))
         if not coordinators:
             raise skipped[0][2]
+
+        # The bridge serves same-named cameras under suffixed paths (assignPaths in
+        # the bridge), over every camera in the bridge config, including one skipped above.
+        paths = rtsp_paths([(c["camera_id"], c["camera_name"]) for c in build_cameras_payload(cameras)])
+        for cam_id, coordinator in coordinators.items():
+            coordinator.rtsp_path = paths.get(cam_id)
+            if coordinator.rtsp_path:
+                coordinator.display_name = unique_camera_name(coordinator.camera_name, cam_id, coordinator.rtsp_path)
 
         # With LAN streaming off the bridge file carries no P2P password, so there is nothing to fetch.
         if entry.options.get(CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING):

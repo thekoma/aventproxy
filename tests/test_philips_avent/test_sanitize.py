@@ -1,4 +1,4 @@
-from const import DEFAULT_BRIDGE_HOST, build_rtsp_url, sanitize_rtsp_path
+from const import DEFAULT_BRIDGE_HOST, build_rtsp_url, rtsp_paths, sanitize_rtsp_path, unique_camera_name
 
 
 def test_simple_name():
@@ -59,3 +59,59 @@ class TestBuildRtspUrl:
 
     def test_unnamed_camera_falls_back_to_the_id(self):
         assert build_rtsp_url("host", 38554, "", "dev1") == "rtsp://host:38554/dev1"
+
+
+# rtsp_paths mirrors assignPaths in avent-webrtc-bridge/cmd/addon/addon.go; the
+# cases below are taken from the TestAssignPaths_* cases in addon_test.go.
+
+def test_paths_without_collision():
+    assert rtsp_paths([("abc123", "Erik"), ("def456", "Anna")]) == {"abc123": "Erik", "def456": "Anna"}
+
+
+def test_paths_colliding_names_get_the_id_prefix():
+    assert rtsp_paths([("abc123", "Baby"), ("def456", "Baby")]) == {"abc123": "Baby", "def456": "Baby_def456"}
+
+
+def test_paths_short_id_used_in_full():
+    assert rtsp_paths([("ab", "X"), ("cd", "X")])["cd"] == "X_cd"
+
+
+def test_paths_cascading_fallback():
+    paths = rtsp_paths([("abcdef01", "Baby"), ("abcdef02", "Baby"), ("abcdef03", "Baby")])
+    assert list(paths.values()) == ["Baby", "Baby_abcdef", "Baby_abcdef_2"]
+
+
+def test_paths_suffixed_path_already_taken():
+    # Not a case in addon_test.go, but the same loop in assignPaths: "Baby def456"
+    # already holds Baby_def456, so the third camera goes on to _2.
+    paths = rtsp_paths([("c1", "Baby def456"), ("abc", "Baby"), ("def456xx", "Baby")])
+    assert paths["def456xx"] == "Baby_def456_2"
+
+
+def test_paths_repeated_id_skipped():
+    assert rtsp_paths([("abc123", "Baby"), ("abc123", "Baby")]) == {"abc123": "Baby"}
+
+
+def test_paths_missing_id_skipped():
+    assert rtsp_paths([("", "Baby"), ("abc123", "Baby")]) == {"abc123": "Baby"}
+
+
+def test_url_uses_the_assigned_path():
+    url = build_rtsp_url("192.0.2.10", 38554, "Baby", "def456", "Baby_def456")
+    assert url == "rtsp://192.0.2.10:38554/Baby_def456"
+
+
+def test_name_of_a_same_named_camera_carries_the_path_suffix():
+    name = "Philips Avent Baby Monitor"
+    paths = rtsp_paths([("a1b2c3d4e5", name), ("f6e5d4c3b2", name)])
+    assert unique_camera_name(name, "a1b2c3d4e5", paths["a1b2c3d4e5"]) == name
+    assert unique_camera_name(name, "f6e5d4c3b2", paths["f6e5d4c3b2"]) == "Philips Avent Baby Monitor f6e5d4"
+
+
+def test_cascading_suffix_in_the_name():
+    assert unique_camera_name("Baby", "abcdef03", "Baby_abcdef_2") == "Baby abcdef 2"
+
+
+def test_unique_names_are_kept():
+    assert unique_camera_name("Erik", "abc123", "Erik") == "Erik"
+    assert unique_camera_name("Baby Room", "abc123", "Baby_Room") == "Baby Room"

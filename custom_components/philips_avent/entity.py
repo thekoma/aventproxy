@@ -27,7 +27,7 @@ def build_device_info(coordinator, cam_id: str) -> dict:
     product_id = (coordinator.device_info or {}).get("productId") or ""
     info = {
         "identifiers": {(DOMAIN, cam_id)},
-        "name": coordinator.camera_name,
+        "name": coordinator.display_name,
         "manufacturer": "Philips",
         "model": PRODUCT_ID_TO_MODEL.get(product_id, DEFAULT_MODEL),
     }

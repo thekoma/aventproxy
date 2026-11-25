@@ -5,8 +5,8 @@ from entity import build_device_info
 from const import DOMAIN, PRODUCT_ID_TO_MODEL
 
 
-def _coordinator(device_info, name="Nursery"):
-    return SimpleNamespace(camera_name=name, device_info=device_info)
+def _coordinator(device_info, name="Nursery", display_name=None):
+    return SimpleNamespace(camera_name=name, display_name=display_name or name, device_info=device_info)
 
 
 class TestBuildDeviceInfo:
@@ -43,3 +43,9 @@ class TestBuildDeviceInfo:
         """Coordinator.device_info could be reset to None; don't crash."""
         info = build_device_info(_coordinator(None), "cam1")
         assert info["model"] == "Avent Baby Monitor"
+
+    def test_same_named_camera_shows_its_display_name(self):
+        coordinator = _coordinator(
+            {}, name="Philips Avent Baby Monitor", display_name="Philips Avent Baby Monitor f6e5d4"
+        )
+        assert build_device_info(coordinator, "f6e5d4c3b2")["name"] == "Philips Avent Baby Monitor f6e5d4"

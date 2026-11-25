@@ -39,7 +39,7 @@ def test_any_camera_name_reaches_ffmpeg_whole(monkeypatch, name):
         return b"jpeg"
 
     monkeypatch.setattr(module, "ffmpeg_get_image", ffmpeg_get_image)
-    entity = module.AventCamera(SimpleNamespace(camera_name=name, device_info={}), "bf1camera")
+    entity = module.AventCamera(SimpleNamespace(camera_name=name, display_name=name, rtsp_path=None, device_info={}), "bf1camera")
     assert asyncio.run(entity.async_camera_image()) == b"jpeg"
     argv = argvs[0]
     assert argv[argv.index("-i") + 1] == entity._stream_url
