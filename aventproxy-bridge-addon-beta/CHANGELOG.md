@@ -3,6 +3,22 @@
 This is the beta card: it follows release candidates of the integration.
 Stay on the stable card unless you are testing an rc.
 
+## 2026.11.2-rc1
+
+Update the integration and this card together. This rc builds on 2026.11.1. The bridge has one small change; the rest is in the integration.
+
+**Please check on protocol 3.3.** While the cloud is failing, a command that reached the monitor over the LAN is no longer copied to the cloud, and a copy that fails no longer turns that command into an error (Luuk Visser, [#173](https://github.com/thekoma/aventproxy/pull/173)). A command made just after the cloud comes back, before the next poll, is not copied either. If the monitor does not report a LAN change to the cloud on its own, the switch could flip back on that poll. If you can cut Home Assistant off from the Tuya cloud for a minute, toggle the night light, then reconnect it and toggle again before the next poll: does the switch stay where you put it? Please post what you see on [#110](https://github.com/thekoma/aventproxy/issues/110), with your monitor model and firmware.
+
+**Integration**
+- Two monitors with the same name each show their own stream. Before, both camera entities pulled the first monitor's stream. The second monitor's device name gets the suffix the bridge already gives its stream path, such as "Philips Avent Baby Monitor f6e5d4"; entity ids do not change (Luuk Visser, [#140](https://github.com/thekoma/aventproxy/pull/140)).
+- Snapshots read the bridge over TCP, so they also work when Home Assistant reaches the bridge through a published Docker port (Luuk Visser, [#172](https://github.com/thekoma/aventproxy/pull/172)).
+- Calls to the Tuya cloud give up after 30 seconds instead of 5 minutes, and the outage warning names the error when it has no text (Luuk Visser, [#173](https://github.com/thekoma/aventproxy/pull/173)).
+- A login the cloud no longer accepts gets its own warning, `Tuya session for <camera> is no longer valid`, instead of the generic outage line (Luuk Visser, [#175](https://github.com/thekoma/aventproxy/pull/175)).
+- A reauthentication reloads the integration once instead of twice, and saving the options without a change no longer reloads it (Luuk Visser, [#174](https://github.com/thekoma/aventproxy/pull/174)).
+
+**Add-on**
+- A failed bridge start logs its error without the bridge's full list of options after it ([#170](https://github.com/thekoma/aventproxy/pull/170)).
+
 ## 2026.11.1-rc1
 
 Update the integration and this card together. This rc builds on 2026.11.0, which went out after rc4 with one more bridge fix: RTSP clients that keep their session alive with `GET_PARAMETER`, such as Ajax NVRs, get `200 OK` instead of `501 Not Implemented` ([#129](https://github.com/thekoma/aventproxy/issues/129)).
