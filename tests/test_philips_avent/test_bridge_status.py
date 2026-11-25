@@ -91,10 +91,11 @@ class FakeResponse:
 
 class FakeSession:
     def __init__(self, response):
-        self.response, self.urls = response, []
+        self.response, self.urls, self.headers = response, [], []
 
-    def get(self, url):
+    def get(self, url, headers=None):
         self.urls.append(url)
+        self.headers.append(headers)
         return self.response
 
 

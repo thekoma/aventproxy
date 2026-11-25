@@ -18,7 +18,9 @@ from .const import (
     DEFAULT_BRIDGE_PORT,
     DEFAULT_TALKBACK,
     DOMAIN,
+    active_rtsp_password,
     build_rtsp_url,
+    redact_rtsp_url,
 )
 from .coordinator import PhilipsAventCoordinator
 from .entity import build_device_info
@@ -40,7 +42,10 @@ async def async_setup_entry(
     talkback = entry.options.get(CONF_TALKBACK, DEFAULT_TALKBACK)
     entities = []
     for cam_id, coordinator in data["coordinators"].items():
-        entities.append(AventCamera(coordinator, cam_id, bridge_port, bridge_host, talkback))
+        entities.append(AventCamera(
+            coordinator, cam_id, bridge_port, bridge_host, talkback,
+            rtsp_password=active_rtsp_password(entry.options),
+        ))
     async_add_entities(entities)
 
 
@@ -58,13 +63,22 @@ class AventCamera(Camera):
         bridge_port: int = DEFAULT_BRIDGE_PORT,
         bridge_host: str = DEFAULT_BRIDGE_HOST,
         talkback: bool = DEFAULT_TALKBACK,
+        *,
+        rtsp_password: str | None = None,
     ):
         super().__init__()
         self.coordinator = coordinator
         self._cam_id = cam_id
         self._attr_unique_id = f"{cam_id}_camera"
+        # It carries the RTSP password while that option is on: log
+        # redact_rtsp_url of it.
         self._stream_url = build_rtsp_url(
-            bridge_host, bridge_port, coordinator.camera_name, cam_id, coordinator.rtsp_path
+            bridge_host,
+            bridge_port,
+            coordinator.camera_name,
+            cam_id,
+            coordinator.rtsp_path,
+            password=rtsp_password,
         )
         self._attr_device_info = build_device_info(coordinator, cam_id)
         if talkback and CameraEntityCapabilities is not None:
@@ -105,5 +119,5 @@ class AventCamera(Camera):
                 height=height,
             )
         except Exception:
-            _LOGGER.exception("ffmpeg snapshot failed for %s", self._stream_url)
+            _LOGGER.exception("ffmpeg snapshot failed for %s", redact_rtsp_url(self._stream_url))
             return None

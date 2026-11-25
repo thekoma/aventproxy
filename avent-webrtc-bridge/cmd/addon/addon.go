@@ -37,6 +37,12 @@ type BridgeConfig struct {
 	// LanStreaming is a pointer so an absent field means enabled.
 	LanStreaming *bool `json:"lan_streaming"`
 	BridgePort   int   `json:"bridge_port"`
+	// RTSPPassword makes every RTSP request authenticate (Digest, user
+	// rtsp.RTSPUser), and APIToken guards /status; the integration generates
+	// both and sends them only with its "Password on the RTSP streams" option
+	// on. Absent: neither asks for anything, as before.
+	RTSPPassword string `json:"rtsp_password,omitempty"`
+	APIToken     string `json:"api_token,omitempty"`
 	// RTSPBind is optional: the --bind flag wins when it is given.
 	RTSPBind string   `json:"rtsp_bind_address"`
 	Cameras  []Camera `json:"cameras"`
@@ -215,8 +221,16 @@ func assignPaths(cams []Camera) []CameraWithPath {
 	return out
 }
 
-// DefaultBind keeps the unauthenticated RTSP server off the LAN. Home Assistant
-// runs on the host network next to the add-on, so loopback is enough for it.
+// configureServer copies the bridge config's settings that need no flags or
+// cloud client onto the server.
+func configureServer(server *rtsp.RTSPServer, cfg BridgeConfig) {
+	server.RTSPPassword = cfg.RTSPPassword
+	server.StatusToken = cfg.APIToken
+}
+
+// DefaultBind keeps the RTSP server off the LAN, which matters most without
+// rtsp_password, when it has no authentication. Home Assistant runs on the
+// host network next to the add-on, so loopback is enough for it.
 const DefaultBind = "localhost"
 
 // resolveBind picks the bind address: an explicit --bind flag, then the
@@ -278,8 +292,8 @@ Example:
 	}
 	cmd.Flags().String("config", "", "Path to the bridge config JSON written by the HA integration")
 	cmd.Flags().String("bind", DefaultBind, "Interfaces the RTSP server listens on: localhost (127.0.0.1 and ::1), "+
-		"an address or comma-separated list, or 0.0.0.0 for every interface. The server has no authentication, "+
-		"so open it to the network only when another machine must reach it")
+		"an address or comma-separated list, or 0.0.0.0 for every interface. Without rtsp_password in the config "+
+		"the server has no authentication, so open it to the network only when another machine must reach it")
 	// Issue #72 experiment knobs, set from the Dev card's options by run.sh.
 	// Speaker-off stays off elsewhere until a tester confirms it.
 	cmd.Flags().Bool("speaker-off", false, "Ask the monitor to keep its speaker closed once a cloud session "+
@@ -435,6 +449,10 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	server.BindAddress = bind
 	// The status for Home Assistant's "Stream path" sensor (pkg/rtsp/status.go), on the next port.
 	server.StatusPort = statusPort(port)
+	configureServer(server, cfg)
+	if cfg.RTSPPassword != "" {
+		core.Logger.Info().Msgf("RTSP streams need a password (Digest, user %s)", rtsp.RTSPUser)
+	}
 	server.MobileClient = client
 	server.Talkback = cfg.Talkback
 	server.TalkbackMode = talkbackMode

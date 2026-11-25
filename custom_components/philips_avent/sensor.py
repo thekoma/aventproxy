@@ -34,6 +34,7 @@ from .const import (
     DPS_SENSEIQ_STATUS,
     DPS_SLEEP_SESSION,
     DPS_TEMPERATURE,
+    active_api_token,
 )
 from .coordinator import PhilipsAventCoordinator
 from .entity import add_entities_when_ready, build_device_info, dps_present
@@ -57,6 +58,7 @@ async def async_setup_entry(
             entry.options.get(CONF_BRIDGE_HOST, DEFAULT_BRIDGE_HOST),
             entry.options.get(CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT),
         ),
+        token=active_api_token(entry.options),
     )
     for cam_id, coordinator in data["coordinators"].items():
         entities.append(AventTemperatureSensor(coordinator, cam_id))
@@ -463,17 +465,21 @@ class BridgeStatusCoordinator(DataUpdateCoordinator):
     one restarting) makes only those sensors unavailable.
     """
 
-    def __init__(self, hass: HomeAssistant, session: aiohttp.ClientSession, url: str) -> None:
+    def __init__(
+        self, hass: HomeAssistant, session: aiohttp.ClientSession, url: str, *, token: str | None = None
+    ) -> None:
         super().__init__(
             hass, _LOGGER, name="Philips Avent bridge status", update_interval=timedelta(seconds=STATUS_POLL_SECONDS)
         )
         self._session = session
         self._url = url
+        # The bridge's /status asks for it while the RTSP streams have a password.
+        self._headers = {"Authorization": f"Bearer {token}"} if token else None
 
     async def _async_update_data(self) -> dict[str, dict]:
         try:
             async with asyncio.timeout(STATUS_TIMEOUT):
-                async with self._session.get(self._url) as response:
+                async with self._session.get(self._url, headers=self._headers) as response:
                     response.raise_for_status()
                     document = await response.json(content_type=None)
         except (aiohttp.ClientError, TimeoutError, ValueError) as err:

@@ -22,14 +22,17 @@ from .const import (
     CONF_ECODE,
     CONF_LAN_STREAMING,
     CONF_PARTNER,
+    CONF_RTSP_AUTH,
     CONF_SID,
     CONF_TALKBACK,
     CONF_UID,
     DEFAULT_BRIDGE_HOST,
     DEFAULT_BRIDGE_PORT,
     DEFAULT_LAN_STREAMING,
+    DEFAULT_RTSP_AUTH,
     DEFAULT_TALKBACK,
     DOMAIN,
+    rtsp_auth_options,
 )
 from .payload import strip_stored_password
 from .region import (
@@ -406,7 +409,9 @@ class PhilipsAventOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None):
         """Manage the options."""
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            return self.async_create_entry(
+                title="", data=rtsp_auth_options(user_input, self.config_entry.options)
+            )
 
         current_port = self.config_entry.options.get(
             CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT
@@ -420,6 +425,7 @@ class PhilipsAventOptionsFlowHandler(config_entries.OptionsFlow):
         current_lan_streaming = self.config_entry.options.get(
             CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING
         )
+        current_rtsp_auth = self.config_entry.options.get(CONF_RTSP_AUTH, DEFAULT_RTSP_AUTH)
 
         return self.async_show_form(
             step_id="init",
@@ -431,6 +437,7 @@ class PhilipsAventOptionsFlowHandler(config_entries.OptionsFlow):
                     ),
                     vol.Optional(CONF_TALKBACK, default=current_talkback): bool,
                     vol.Optional(CONF_LAN_STREAMING, default=current_lan_streaming): bool,
+                    vol.Optional(CONF_RTSP_AUTH, default=current_rtsp_auth): bool,
                 }
             ),
         )

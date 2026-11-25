@@ -71,9 +71,16 @@ type RTSPServer struct {
 	// before the webrtc one (experimental, Dev card only; see tryIMM).
 	CloudTransport string
 
-	// BindAddress limits the interfaces the RTSP server listens on. The server
-	// has no authentication, so anyone who can reach the port can watch the
-	// camera. Accepted values (see bindHosts):
+	// RTSPPassword, when set, makes every RTSP request authenticate with
+	// Digest as RTSPUser (auth.go). Without it the server has no
+	// authentication, as before, and anyone who can reach the port can watch
+	// the camera. Set it before Start.
+	RTSPPassword string
+	auth         *digestAuth
+
+	// BindAddress limits the interfaces the RTSP server listens on. Without
+	// RTSPPassword the server has no authentication, so anyone who can reach
+	// the port can watch the camera. Accepted values (see bindHosts):
 	//   - "" (default for library callers): all interfaces, the old behavior;
 	//   - "localhost": 127.0.0.1 and ::1 (the add-on default);
 	//   - one address or a comma-separated list, e.g. "127.0.0.1,192.168.1.10";
@@ -88,8 +95,10 @@ type RTSPServer struct {
 	LANTargets   map[string]LANTarget
 
 	// StatusPort serves /status (status.go) on the RTSP bind addresses; 0
-	// leaves it off. Set it before Start.
+	// leaves it off. With StatusToken set, /status asks for it as a bearer
+	// token. Set both before Start.
 	StatusPort    int
+	StatusToken   string
 	status        statusBoard
 	statusServers []*http.Server
 
@@ -331,6 +340,9 @@ func (s *RTSPServer) Start() error {
 	}
 
 	s.listeners = listeners
+	if s.RTSPPassword != "" {
+		s.auth = newDigestAuth(RTSPUser, s.RTSPPassword)
+	}
 	s.startStatus(hosts)
 	s.running = true
 
@@ -486,15 +498,19 @@ func (s *RTSPServer) handleConnection(conn net.Conn) {
 
 	reader := bufio.NewReader(conn)
 
-	// Parse initial RTSP request. A client that connects and never sends
-	// one would otherwise hold this goroutine and its socket for good: it is
-	// not in the client map yet, so not even Stop closes it.
+	// The first authorized request picks the camera: nothing is looked up and
+	// no stream starts for a connection that has not proved the password. A
+	// client that connects and never sends one would otherwise hold this
+	// goroutine and its socket for good: it is not in the client map yet, so
+	// not even Stop closes it.
 	if err := conn.SetReadDeadline(time.Now().Add(requestReadTimeout)); err != nil {
 		return
 	}
-	request, err := s.parseRTSPRequestFromReader(reader)
+	request, err := s.firstAuthorizedRequest(conn, session, reader)
 	if err != nil {
-		core.Logger.Error().Err(err).Msg("Error parsing initial RTSP request")
+		if !errors.Is(err, errNoCredentials) {
+			core.Logger.Error().Err(err).Msg("Error parsing initial RTSP request")
+		}
 		return
 	}
 

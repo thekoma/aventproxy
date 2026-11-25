@@ -31,6 +31,8 @@ from .const import (
     TUYA_DEFAULT_COUNTRY_CODE,
     TUYA_PACKAGE_NAME,
     TUYA_SIGNING_KEY,
+    active_api_token,
+    active_rtsp_password,
     rtsp_paths,
     unique_camera_name,
 )
@@ -86,6 +88,8 @@ async def _write_bridge_config(
         uid=entry.data.get(CONF_UID, ""),
         lan_streaming=entry.options.get(CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING),
         lan=lan,
+        rtsp_password=active_rtsp_password(entry.options),
+        api_token=active_api_token(entry.options),
         bridge_port=bridge_port,
         cameras=cameras,
     )

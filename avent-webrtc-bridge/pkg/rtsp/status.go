@@ -2,6 +2,7 @@ package rtsp
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -21,8 +23,9 @@ import (
 // takes now (local, imm, webrtc or idle), since when, and the last time it
 // left the LAN path and why. Without it Home Assistant cannot tell whether a
 // monitor streams over the LAN. Served read-only as JSON on StatusPort, on the
-// same addresses as RTSP (which, unauthenticated, already gives anyone who
-// reaches it the stream itself). It carries no keys, passwords or addresses.
+// same addresses as RTSP: open like RTSP itself without a password, and only
+// for StatusToken when the streams have one. It carries no keys, passwords or
+// addresses.
 
 const (
 	PathLocal  = "local"  // LAN signalling, media over the LAN
@@ -219,10 +222,25 @@ func (s *RTSPServer) statusHandler() http.Handler {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
+		// With a password on the streams, the status is for the integration
+		// only: it names each camera's device id and when someone watches it.
+		if s.StatusToken != "" && !bearerTokenOK(r, s.StatusToken) {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(s.statusDocument())
 	})
 	return mux
+}
+
+// bearerTokenOK reports whether the request carries "Authorization: Bearer
+// <token>", compared in constant time.
+func bearerTokenOK(r *http.Request, token string) bool {
+	scheme, got, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+	return ok && strings.EqualFold(scheme, "Bearer") &&
+		subtle.ConstantTimeCompare([]byte(strings.TrimSpace(got)), []byte(token)) == 1
 }
 
 // startStatus serves /status on StatusPort at every RTSP bind host. A host it

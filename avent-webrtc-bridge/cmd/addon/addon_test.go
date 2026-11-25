@@ -633,3 +633,27 @@ func TestStatusPortIsThePortAfterRTSP(t *testing.T) {
 		t.Fatalf("statusPort(38554) = %d", got)
 	}
 }
+
+func TestLoadConfigRTSPPasswordAndToken(t *testing.T) {
+	cfg := writeCfg(t, `{
+	  "signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P",
+	  "app_key": "AK", "device_id": "D", "rtsp_password": "pw", "api_token": "tok",
+	  "cameras": [{"camera_id": "abc123", "camera_name": "A"}]
+	}`)
+	if cfg.RTSPPassword != "pw" || cfg.APIToken != "tok" {
+		t.Errorf("rtsp_password %q, api_token %q", cfg.RTSPPassword, cfg.APIToken)
+	}
+}
+
+func TestConfigureServerSetsThePasswordAndToken(t *testing.T) {
+	cfg := writeCfg(t, `{
+	  "signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P",
+	  "app_key": "AK", "device_id": "D", "rtsp_password": "pw", "api_token": "tok",
+	  "cameras": [{"camera_id": "abc123", "camera_name": "A"}]
+	}`)
+	server := rtsp.NewRTSPServer(0, nil)
+	configureServer(server, cfg)
+	if server.RTSPPassword != "pw" || server.StatusToken != "tok" {
+		t.Fatalf("password %q, token %q", server.RTSPPassword, server.StatusToken)
+	}
+}

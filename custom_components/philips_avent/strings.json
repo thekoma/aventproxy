@@ -61,13 +61,15 @@
           "bridge_host": "Bridge host",
           "bridge_port": "Bridge RTSP port",
           "talkback": "Two-way audio (talkback)",
-          "lan_streaming": "LAN streaming"
+          "lan_streaming": "LAN streaming",
+          "rtsp_auth": "Password on the RTSP streams"
         },
         "data_description": {
           "bridge_host": "Where Home Assistant can reach the WebRTC bridge. Leave it as localhost when you use the add-on; set the container name or IP address if you run the bridge yourself, elsewhere.",
           "bridge_port": "Port the WebRTC bridge listens on (default: 38554)",
           "talkback": "Turn this on to talk to the room, from Home Assistant 2026.11 (Labs preview, HTTPS and WebRTC) or another client that sends audio on the stream. With the bridge's Dev card the monitor is asked for two-way audio only while someone talks; elsewhere every stream asks for it, which makes the monitor stop a playing lullaby and restart it from the beginning when you close the stream.",
-          "lan_streaming": "Stream over the local network when the monitor allows it. Turn it off if your stream stopped working after updating."
+          "lan_streaming": "Stream over the local network when the monitor allows it. Turn it off if your stream stopped working after updating.",
+          "rtsp_auth": "Off by default. On: the bridge asks every RTSP client for a password, which Home Assistant makes once and puts in the camera's stream URL, and its status endpoint asks for a token. Turn it on when other processes on this host, or the network if you changed the bridge's listen address, can reach the bridge's port. It protects the bridge's port only: Home Assistant's own go2rtc restreams a camera on this host without a password. An RTSP client of your own then needs the password too (user homeassistant)."
         }
       }
     }

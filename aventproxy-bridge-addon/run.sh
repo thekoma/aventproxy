@@ -39,7 +39,8 @@ warn_on_extra_configs() {
     fi
 }
 
-# Where the RTSP server listens. It has no authentication, so it stays on
+# Where the RTSP server listens. Without the integration's "Password on the
+# RTSP streams" option it has no authentication, so it stays on
 # loopback unless the user opens it on purpose: Home Assistant shares the host
 # network with the add-on and reaches it at rtsp://localhost:<port>. The add-on
 # option rtsp_bind_address wins over the default; RTSP_BIND_ADDRESS (env) wins
@@ -188,8 +189,9 @@ echo "=============================="
 case "$RTSP_BIND" in
     localhost|127.0.0.1|::1|"127.0.0.1,::1") ;;
     *)
-        echo "WARNING: the RTSP server listens on '$RTSP_BIND' and has no password:"
-        echo "anyone who can reach this port can watch and hear the camera."
+        echo "WARNING: the RTSP server listens on '$RTSP_BIND'. Unless 'Password on the RTSP"
+        echo "streams' is on in the integration, anyone who can reach this port can watch"
+        echo "and hear the camera."
         ;;
 esac
 

@@ -28,8 +28,10 @@ it, the ability to watch and control your baby monitor. Things worth reporting:
 Two known properties that are **not** vulnerabilities, because they're the
 documented design:
 
-- The RTSP stream has no authentication and the add-on runs with
-  `host_network: true`, so anything on your LAN can watch it. Isolate the
+- The RTSP stream has no authentication unless the integration's option
+  "Password on the RTSP streams" is on, and the add-on runs with
+  `host_network: true`, so without it anything that reaches the port can watch
+  it (the add-on listens on localhost by default). Isolate the
   monitor on its own network segment if that matters to you.
 - `const.py` carries identifiers extracted from the Philips Avent APK — the
   package name, certificate hash, app key and signing key. They're identical
