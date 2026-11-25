@@ -44,3 +44,20 @@ def test_any_camera_name_reaches_ffmpeg_whole(monkeypatch, name):
     argv = argvs[0]
     assert argv[argv.index("-i") + 1] == entity._stream_url
     assert entity._stream_url.endswith("/" + name.replace(" ", "_"))
+
+
+def test_snapshot_reads_the_bridge_over_tcp(monkeypatch):
+    # With ffmpeg's default transport the media comes over UDP, which a NAT
+    # between Home Assistant and the bridge does not deliver.
+    module = load(monkeypatch, "camera")
+    argvs: list[list[str]] = []
+
+    async def ffmpeg_get_image(hass, input_source, width=None, height=None):
+        argvs.append(put_input(input_source))
+        return b"jpeg"
+
+    monkeypatch.setattr(module, "ffmpeg_get_image", ffmpeg_get_image)
+    entity = module.AventCamera(SimpleNamespace(camera_name="Nursery", display_name="Nursery", rtsp_path=None, device_info={}), "bf1camera")
+    assert asyncio.run(entity.async_camera_image()) == b"jpeg"
+    argv = argvs[0]
+    assert argv[: argv.index("-i")] == ["-rtsp_transport", "tcp"]
