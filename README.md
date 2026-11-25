@@ -187,6 +187,8 @@ The monitor must speak Tuya LAN protocol 3.5. Monitors on 3.3 (seen on an SCD973
 
 If no H.264 video arrives within 4 seconds of a LAN attempt, the same start falls back to cloud signalling and that camera skips the LAN for 5 minutes. An HEVC monitor ends up here. A LAN stream that dies restarts on the cloud with the same 5-minute wait. Each further LAN failure in a row doubles the wait, up to an hour, so a monitor whose LAN never works is not probed every 5 minutes for good; a LAN stream that works ends the streak. If cloud signalling fails as well, the wait is cleared, so the next start tries the LAN again. Once the wait is over, a stream on the cloud checks the LAN in the background and moves its viewers back, with one short reconnect. RTSP clients see the same H.264 video and PCMU/8000 audio either way.
 
+To see which way a camera streams, enable its **Stream path** sensor (a diagnostic entity, off by default): `local`, `imm`, `webrtc` or `idle`, with attributes for since when and the last time the bridge left the LAN, or did not try it, and why ("no video", "connection refused", "protocol unknown"). The bridge serves this as read-only JSON on `/status`, on the port after the RTSP port and on the same addresses, without keys, passwords or addresses; Home Assistant polls it every 30 s while a sensor is enabled.
+
 The **LAN streaming** option in the integration options is on by default. Turn it off if a stream stopped working after an update, and open an issue with your monitor model and the bridge log. While it is off, the bridge config holds no local key or P2P password.
 
 #### imm over cloud signalling (experimental)

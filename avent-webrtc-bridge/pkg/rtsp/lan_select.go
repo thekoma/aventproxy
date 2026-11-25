@@ -91,6 +91,19 @@ func (cs *CameraStream) lanEligible() (bool, string) {
 	return true, ""
 }
 
+// lanSkipIsAFallback says whether a reason lanEligible gives is worth the
+// status's last fallback: what the monitor or its configuration lacks. LAN
+// streaming off, the sd stream and talkback in session mode are the design,
+// and a cool-down follows a failure the status already names, which a skip
+// during the cool-down must not overwrite.
+func lanSkipIsAFallback(reason string) bool {
+	switch reason {
+	case "disabled", "sd stream", "talkback on", "cooling down":
+		return false
+	}
+	return true
+}
+
 // newLANSource is the default lanFactory. Callers hold cs.mutex.
 func (cs *CameraStream) newLANSource(forwarder *RTPForwarder) lanStreamer {
 	s := cs.server
@@ -104,6 +117,9 @@ func (cs *CameraStream) newLANSource(forwarder *RTPForwarder) lanStreamer {
 func (cs *CameraStream) tryLAN(gen uint64) (done bool) {
 	if ok, reason := cs.lanEligible(); !ok {
 		core.Logger.Info().Msgf("Not using LAN signalling for %s: %s", cs.camera.DeviceName, reason)
+		if lanSkipIsAFallback(reason) {
+			cs.noteFallback("local stream not tried (" + reason + "), cloud signalling")
+		}
 		return false
 	}
 
@@ -133,10 +149,11 @@ func (cs *CameraStream) tryLAN(gen uint64) (done bool) {
 		cs.forwarder.ResetMedia() // the cloud is a new source on the same clients
 		cs.server.startLANCooldown(cs.camera.DeviceID)
 		core.Logger.Warn().Msgf("Streaming with LAN signalling failed for %s: %v, trying cloud signalling", cs.camera.DeviceName, err)
+		cs.noteFallback("local stream did not start (" + fallbackCause(err) + "), cloud signalling")
 		return false
 	}
 	cs.server.lanWorked(cs.camera.DeviceID)
-	cs.markActive()
+	cs.markActive(PathLocal)
 	if len(cs.clients) == 0 { // the last client left during the attempt
 		cs.scheduleShutdown()
 	}
@@ -199,6 +216,7 @@ func (cs *CameraStream) lanDied(source lanStreamer, err error) {
 	}
 	period := cs.server.startLANCooldown(cs.camera.DeviceID)
 	core.Logger.Warn().Msgf("Stream with LAN signalling for %s died: %v; using cloud signalling for %v", cs.camera.DeviceName, err, period)
+	cs.noteFallback("local stream died (" + fallbackCause(err) + "), cloud signalling")
 	clients := cs.teardownLocked()
 	cs.mutex.Unlock()
 	closeClients(clients)

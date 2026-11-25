@@ -1,8 +1,11 @@
 """Sensor entities for Philips Avent Baby Monitor."""
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import asyncio
+import logging
+from datetime import UTC, datetime, timedelta
 
+import aiohttp
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -17,10 +20,15 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpdateCoordinator, UpdateFailed
 
 from . import senseiq
+from .bridge_status import STATUS_POLL_SECONDS, STATUS_TIMEOUT, STREAM_PATHS, parse_status, status_url
 from .const import (
+    CONF_BRIDGE_HOST,
+    CONF_BRIDGE_PORT,
+    DEFAULT_BRIDGE_HOST,
+    DEFAULT_BRIDGE_PORT,
     DOMAIN,
     DPS_DEVICE_ERRORS,
     DPS_SENSEIQ_STATUS,
@@ -30,7 +38,10 @@ from .const import (
 from .coordinator import PhilipsAventCoordinator
 from .entity import add_entities_when_ready, build_device_info, dps_present
 
+_LOGGER = logging.getLogger(__name__)
+
 SLEEP_STAGE_OPTIONS = list(senseiq.SLEEP_STAGES)
+STREAM_PATH_OPTIONS = list(STREAM_PATHS)
 
 
 async def async_setup_entry(
@@ -39,8 +50,17 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     entities = []
 
+    status = BridgeStatusCoordinator(
+        hass,
+        data["session"],
+        status_url(
+            entry.options.get(CONF_BRIDGE_HOST, DEFAULT_BRIDGE_HOST),
+            entry.options.get(CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT),
+        ),
+    )
     for cam_id, coordinator in data["coordinators"].items():
         entities.append(AventTemperatureSensor(coordinator, cam_id))
+        entities.append(AventStreamPathSensor(status, coordinator, cam_id))
         entities.append(AventWifiSignalSensor(coordinator, cam_id))
         add_entities_when_ready(
             coordinator, async_add_entities, _senseiq_sensors(coordinator, cam_id), entry.async_on_unload
@@ -432,4 +452,76 @@ class AventNightSleepSensor(AventNightDurationSensor):
             "in_bed_from": _dt(day.get("start")),
             "in_bed_to": _dt(day.get("end")),
             "session_count": day.get("session_count"),
+        }
+
+
+class BridgeStatusCoordinator(DataUpdateCoordinator):
+    """Polls the bridge's /status (bridge_status.py) for the Stream path sensors.
+
+    One per entry. It polls only while a Stream path sensor is enabled (they
+    are off by default), and a bridge that does not answer (an older one, or
+    one restarting) makes only those sensors unavailable.
+    """
+
+    def __init__(self, hass: HomeAssistant, session: aiohttp.ClientSession, url: str) -> None:
+        super().__init__(
+            hass, _LOGGER, name="Philips Avent bridge status", update_interval=timedelta(seconds=STATUS_POLL_SECONDS)
+        )
+        self._session = session
+        self._url = url
+
+    async def _async_update_data(self) -> dict[str, dict]:
+        try:
+            async with asyncio.timeout(STATUS_TIMEOUT):
+                async with self._session.get(self._url) as response:
+                    response.raise_for_status()
+                    document = await response.json(content_type=None)
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            raise UpdateFailed(f"bridge status at {self._url} unreachable: {err}") from err
+        return parse_status(document)
+
+
+class AventStreamPathSensor(CoordinatorEntity, SensorEntity):
+    """The path the bridge streams this camera over now: local, imm, WebRTC or idle.
+
+    From the bridge's /status, polled every 30 s while the sensor is enabled.
+    The attributes say since when, and the last time the bridge left the LAN
+    path (or did not try it) and why. Unavailable while the bridge does not
+    answer.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "stream_path"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = STREAM_PATH_OPTIONS
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+    _attr_icon = "mdi:video-wireless-outline"
+
+    def __init__(self, status: BridgeStatusCoordinator, coordinator: PhilipsAventCoordinator, cam_id: str):
+        super().__init__(status)
+        self._cam_id = cam_id
+        self._attr_unique_id = f"{cam_id}_stream_path"
+        self._attr_device_info = build_device_info(coordinator, cam_id)
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        # The first poll at once rather than an interval after the sensor is enabled.
+        await self.coordinator.async_request_refresh()
+
+    @property
+    def _camera(self) -> dict:
+        return (self.coordinator.data or {}).get(self._cam_id) or {}
+
+    @property
+    def native_value(self) -> str | None:
+        return self._camera.get("path")
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        camera = self._camera
+        return {
+            "since": camera.get("since"),
+            "last_fallback": camera.get("last_fallback"),
+            "last_fallback_at": camera.get("last_fallback_at"),
         }

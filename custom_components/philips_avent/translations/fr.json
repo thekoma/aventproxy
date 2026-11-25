@@ -102,6 +102,15 @@
           "settling": "Initialisation"
         }
       },
+      "stream_path": {
+        "name": "Chemin du flux",
+        "state": {
+          "local": "Local",
+          "imm": "imm (signalisation cloud)",
+          "webrtc": "WebRTC",
+          "idle": "Inactif"
+        }
+      },
       "device_errors": {
         "name": "Erreurs de l'appareil"
       },

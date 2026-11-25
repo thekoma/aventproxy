@@ -70,6 +70,7 @@ func (cs *CameraStream) promote() {
 	if err != nil {
 		cs.server.startLANCooldown(cs.camera.DeviceID)
 		core.Logger.Info().Msgf("LAN signalling still unavailable for %s: %v", cs.camera.DeviceName, err)
+		cs.noteFallback("local stream check failed (" + fallbackCause(err) + "), staying on cloud signalling")
 		cs.armPromotion()
 		cs.mutex.Unlock()
 		return

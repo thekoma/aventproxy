@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -85,6 +86,12 @@ type RTSPServer struct {
 	LanStreaming bool
 	UID          string
 	LANTargets   map[string]LANTarget
+
+	// StatusPort serves /status (status.go) on the RTSP bind addresses; 0
+	// leaves it off. Set it before Start.
+	StatusPort    int
+	status        statusBoard
+	statusServers []*http.Server
 
 	cooldownMutex sync.Mutex
 	lanCooldowns  map[string]time.Time // device id -> end of its LAN cool-down
@@ -324,6 +331,7 @@ func (s *RTSPServer) Start() error {
 	}
 
 	s.listeners = listeners
+	s.startStatus(hosts)
 	s.running = true
 
 	if s.MobileClient != nil {
@@ -366,6 +374,7 @@ func (s *RTSPServer) Stop() error {
 	for _, ln := range s.listeners {
 		ln.Close()
 	}
+	s.stopStatus()
 
 	// Close all client connections
 	for _, client := range s.clients {
@@ -835,11 +844,15 @@ func (cs *CameraStream) inUse() bool {
 	return cs.pending.Load() > 0 || cs.connecting.Load() || cs.active.Load()
 }
 
-// markActive commits a successful start; see inUse for the order. Callers
+// markActive commits a successful start on path (PathLocal, PathIMM or
+// PathWebRTC, for the status); see inUse for the order. Callers
 // hold mutex.
-func (cs *CameraStream) markActive() {
+func (cs *CameraStream) markActive(path string) {
 	cs.active.Store(true)
 	cs.connecting.Store(false)
+	if cs.server != nil {
+		cs.server.status.streamActive(cs, path)
+	}
 }
 
 // clientArrived takes one client off pending. A client attached without
@@ -963,7 +976,7 @@ func (cs *CameraStream) startStream(gen uint64) {
 		}
 		cs.cloudBridge = nil
 		if err == nil {
-			cs.markActive()
+			cs.markActive(PathWebRTC)
 			if len(cs.clients) == 0 { // the last client left during a LAN attempt or the retry wait
 				cs.scheduleShutdown()
 			}
@@ -1165,6 +1178,9 @@ func (cs *CameraStream) stopStreamInternal() {
 	wasActive := cs.active.Load()
 	cs.active.Store(false)
 	cs.connecting.Store(false)
+	if wasActive && cs.server != nil {
+		cs.server.status.streamStopped(cs)
+	}
 
 	// Cancel any pending shutdown
 	if cs.shutdownTimer != nil {
