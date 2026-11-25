@@ -7,13 +7,21 @@ Stay on the stable card unless you are testing an rc.
 
 Update the integration and this card together. This rc builds on 2026.11.1. The bridge has one small change; the rest is in the integration.
 
-**Please check on protocol 3.3.** While the cloud is failing, a command that reached the monitor over the LAN is no longer copied to the cloud, and a copy that fails no longer turns that command into an error (Luuk Visser, [#173](https://github.com/thekoma/aventproxy/pull/173)). A command made just after the cloud comes back, before the next poll, is not copied either. If the monitor does not report a LAN change to the cloud on its own, the switch could flip back on that poll. If you can cut Home Assistant off from the Tuya cloud for a minute, toggle the night light, then reconnect it and toggle again before the next poll: does the switch stay where you put it? Please post what you see on [#110](https://github.com/thekoma/aventproxy/issues/110), with your monitor model and firmware.
+**Please check on protocol 3.3.** While the cloud is failing, a command that reached the monitor over the LAN is no longer copied to the cloud, and a copy that fails no longer turns that command into an error (Luuk Visser, [#173](https://github.com/thekoma/aventproxy/pull/173)). A command made just after the cloud comes back, before the next poll, is not copied either. If the monitor does not report a LAN change to the cloud on its own, the switch could flip back on that poll.
+
+If you can cut Home Assistant off from the Tuya cloud (a firewall or DNS block on your region's API host, a1.tuyaeu.com in Europe), this is the check:
+1. Block it and wait for the warning `Cloud for <camera> failed (…); its LAN session keeps it available…`. If the entities go unavailable instead, the monitor has no LAN session and the check does not apply.
+2. Turn the night light on. It should change at once, with no error.
+3. Remove the block and wait two minutes. Is the switch still on?
+4. Block again until the warning comes back, then remove the block and, within a few seconds, turn the night light off. Wait two minutes. Is the switch still off?
+
+Please post what you see on [#110](https://github.com/thekoma/aventproxy/issues/110), with your monitor model and firmware.
 
 **Integration**
 - Two monitors with the same name each show their own stream. Before, both camera entities pulled the first monitor's stream. The second monitor's device name gets the suffix the bridge already gives its stream path, such as "Philips Avent Baby Monitor f6e5d4"; entity ids do not change (Luuk Visser, [#140](https://github.com/thekoma/aventproxy/pull/140)).
 - Snapshots read the bridge over TCP, so they also work when Home Assistant reaches the bridge through a published Docker port (Luuk Visser, [#172](https://github.com/thekoma/aventproxy/pull/172)).
-- Calls to the Tuya cloud give up after 30 seconds instead of 5 minutes, and the outage warning names the error when it has no text (Luuk Visser, [#173](https://github.com/thekoma/aventproxy/pull/173)).
-- A login the cloud no longer accepts gets its own warning, `Tuya session for <camera> is no longer valid`, instead of the generic outage line (Luuk Visser, [#175](https://github.com/thekoma/aventproxy/pull/175)).
+- The integration's polls and commands to the Tuya cloud give up after 30 seconds instead of 5 minutes, and the outage warning names the error type when the error has no message (Luuk Visser, [#173](https://github.com/thekoma/aventproxy/pull/173)).
+- A login the cloud no longer accepts, while a LAN session keeps the monitor available, gets its own warning, `Tuya session for <camera> is no longer valid`, instead of the generic outage line (Luuk Visser, [#175](https://github.com/thekoma/aventproxy/pull/175)).
 - A reauthentication reloads the integration once instead of twice, and saving the options without a change no longer reloads it (Luuk Visser, [#174](https://github.com/thekoma/aventproxy/pull/174)).
 
 **Add-on**
