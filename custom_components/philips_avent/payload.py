@@ -97,6 +97,7 @@ def build_bridge_config(
     uid: str = "",
     lan_streaming: bool = True,
     lan: dict[str, dict] | None = None,
+    webrtc_lan_only: bool = False,
 ) -> dict:
     """Build the bridge JSON the add-on reads.
 
@@ -107,6 +108,8 @@ def build_bridge_config(
     defaults to off (issue #72).
     `uid` and `lan_streaming` steer the LAN path; `lan` maps a camera id to its
     `local_key`, `p2p_password`, `lan_ip` and `lan_protocol`.
+    `webrtc_lan_only` keeps the WebRTC path's media on the local network (no
+    STUN/TURN, LAN host candidates only).
 
     With LAN streaming off the bridge never uses the local key or the P2P
     password, so they stay out of a file that every backup copies. The address
@@ -130,6 +133,7 @@ def build_bridge_config(
         "talkback": talkback,
         "uid": uid,
         "lan_streaming": lan_streaming,
+        "webrtc_lan_only": webrtc_lan_only,
         "bridge_port": bridge_port,
         "cameras": build_cameras_payload(cameras, lan),
     }

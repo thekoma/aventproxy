@@ -125,8 +125,8 @@ class TestBuildBridgeConfig:
         config = build_bridge_config(**self.BASE)
         assert set(config) == {
             "signing_key", "sid", "ecode", "partner", "app_key", "device_id",
-            "package_name", "api_host", "talkback", "uid", "lan_streaming", "bridge_port",
-            "cameras",
+            "package_name", "api_host", "talkback", "uid", "lan_streaming",
+            "webrtc_lan_only", "bridge_port", "cameras",
         }
 
     def test_cameras_use_the_shared_payload_builder(self):

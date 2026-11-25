@@ -222,6 +222,11 @@ func (cs *CameraStream) openTalkSession(onError func(error)) (talkSession, error
 	}
 	wb := NewWebRTCBridge(cs.camera, "sd", cs.user, storageManager, nil)
 	wb.Talkback = true
+	if cs.server != nil {
+		// LAN-only WebRTC keeps a talk's media on the local network too.
+		wb.LANOnly = cs.server.WebRTCLANOnly
+		wb.LANHost = cs.server.CameraLANHosts[cs.camera.DeviceID]
+	}
 	if cs.server != nil && cs.server.MobileClient != nil {
 		wb.SetMobileClient(cs.server.MobileClient)
 	}

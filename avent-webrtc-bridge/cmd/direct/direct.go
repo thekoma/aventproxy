@@ -15,6 +15,7 @@ import (
 	"avent-webrtc-bridge/pkg/storage"
 	"avent-webrtc-bridge/pkg/tuya"
 	"avent-webrtc-bridge/pkg/utils"
+	"avent-webrtc-bridge/pkg/webrtc"
 )
 
 var storageManager *storage.StorageManager
@@ -53,6 +54,8 @@ Example:
 	cmd.Flags().String("camera-id", "", "Camera device ID")
 	cmd.Flags().String("camera-name", "", "Camera display name (used in RTSP path)")
 	cmd.Flags().Int("port", 8554, "RTSP server port")
+	cmd.Flags().Bool("webrtc-lan-only", false, "Keep WebRTC media on the local network: no STUN/TURN servers, only the camera's LAN host candidates")
+	cmd.Flags().String("lan-ip", "", "The camera's LAN address: with --webrtc-lan-only, a candidate on a public address or an mDNS name is kept on it")
 	cmd.Flags().Bool("talkback", false, "Ask the camera for two-way audio. Off by default: it makes the camera stop and restart a playing lullaby (issue #72)")
 
 	cmd.MarkFlagRequired("signing-key")
@@ -79,7 +82,6 @@ func runDirect(cmd *cobra.Command, args []string) error {
 	cameraID, _ := cmd.Flags().GetString("camera-id")
 	cameraName, _ := cmd.Flags().GetString("camera-name")
 	port, _ := cmd.Flags().GetInt("port")
-	talkback, _ := cmd.Flags().GetBool("talkback")
 
 	rtspPath := storage.SanitizeRTSPPath(cameraName, cameraID)
 
@@ -142,7 +144,7 @@ func runDirect(cmd *cobra.Command, args []string) error {
 
 	server := rtsp.NewRTSPServer(port, storageManager)
 	server.MobileClient = client
-	server.Talkback = talkback
+	configureServer(server, cmd, cameraID)
 
 	if err := server.Start(); err != nil {
 		return fmt.Errorf("failed to start RTSP server: %v", err)
@@ -159,4 +161,16 @@ func runDirect(cmd *cobra.Command, args []string) error {
 	core.Logger.Info().Msg("Shutting down...")
 	server.Stop()
 	return nil
+}
+
+// configureServer copies the flags that need no cloud client onto the server.
+func configureServer(server *rtsp.RTSPServer, cmd *cobra.Command, cameraID string) {
+	server.Talkback, _ = cmd.Flags().GetBool("talkback")
+	server.WebRTCLANOnly, _ = cmd.Flags().GetBool("webrtc-lan-only")
+	if ip, _ := cmd.Flags().GetString("lan-ip"); ip != "" {
+		server.CameraLANHosts = map[string]string{cameraID: ip}
+		if problem := webrtc.LANIPProblem(ip); server.WebRTCLANOnly && problem != "" {
+			core.Logger.Warn().Msgf("LAN-only WebRTC: --lan-ip is %s, so no candidate is rewritten onto it", problem)
+		}
+	}
 }
