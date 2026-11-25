@@ -455,6 +455,17 @@ class TestCloudFailureBehindALanSession:
             assert asyncio.run(coordinator._async_update_data()) == STATE
         assert coordinator.config_entry.reauths == 1
 
+    def test_a_refused_session_says_so_in_one_warning(self, make, caplog):
+        caplog.set_level("DEBUG")
+        coordinator = make(3.3)
+        coordinator.config_entry = FakeEntry()
+        coordinator.api.device_error = self._module(coordinator).TuyaAPIError("SID_INVALID", "session invalid")
+        for _ in range(3):
+            asyncio.run(coordinator._async_update_data())
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "Tuya session for Nursery is no longer valid" in warnings[0]
+
     def test_without_a_lan_session_the_failure_raises_as_before(self, make, caplog):
         caplog.set_level("DEBUG")
         coordinator = make(None, api=FakeApi(device_error=aiohttp.ClientError("cloud down")))

@@ -578,12 +578,19 @@ class PhilipsAventCoordinator(DataUpdateCoordinator):
         The maintainer's rule is LAN whenever possible: temperature and the
         controls keep working during a cloud outage, and the failure is logged
         once when it starts rather than on every poll. A refused session still
-        starts the reauth flow, once, as Home Assistant would.
+        starts the reauth flow, once, as Home Assistant would, and says so in
+        its own warning.
         """
         if isinstance(err, ConfigEntryAuthFailed) and not self._reauth_requested:
             self._reauth_requested = True
             if entry := getattr(self, "config_entry", None):
                 entry.async_start_reauth(self.hass)
+            self._cloud_failing = True
+            _LOGGER.warning(
+                "Tuya session for %s is no longer valid (%s); asking to log in again, "
+                "its LAN session keeps it available meanwhile", self.camera_name, err,
+            )
+            return
         if self._cloud_failing:
             _LOGGER.debug("Cloud for %s still failing: %s", self.camera_name, err)
             return
