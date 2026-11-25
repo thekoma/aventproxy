@@ -307,7 +307,9 @@ func (s *RTSPServer) handleOptions(client *RTSPClient, request *RTSPRequest) {
 
 func (s *RTSPServer) handleDescribe(client *RTSPClient, request *RTSPRequest) {
 	// Generate SDP for the camera stream
-	sdp := s.generateSDP(client.stream.camera, request.URL)
+	// The local path carries no return audio: talkback rides a cloud
+	// session, which the local path never opens.
+	sdp := s.describeSDP(client.stream.camera, request.URL, s.Talkback && !client.stream.localOnly)
 
 	headers := map[string]string{
 		"CSeq":          strconv.Itoa(request.CSeq),
@@ -328,6 +330,11 @@ func (s *RTSPServer) handleSetup(client *RTSPClient, request *RTSPRequest) {
 	isBackchannel := strings.Contains(request.URL, "/backchannel")
 	isVideoTrack := strings.Contains(request.URL, "/video")
 	isAudioTrack := strings.Contains(request.URL, "/audio")
+	if isBackchannel && client.stream != nil && client.stream.localOnly {
+		// Not in the local path's description: talkback needs a cloud session.
+		sendRTSPResponse(client.conn, 404, "Not Found", map[string]string{"CSeq": strconv.Itoa(request.CSeq)}, "")
+		return
+	}
 
 	core.Logger.Trace().Msgf("Setup track - Video: %v, Audio: %v, Backchannel: %v", isVideoTrack, isAudioTrack, isBackchannel)
 
@@ -554,6 +561,11 @@ func (s *RTSPServer) handleUnsupportedMethod(client *RTSPClient, request *RTSPRe
 }
 
 func (s *RTSPServer) generateSDP(camera *storage.CameraInfo, baseURL string) string {
+	return s.describeSDP(camera, baseURL, s.Talkback)
+}
+
+// describeSDP is generateSDP with the return channel offered or not.
+func (s *RTSPServer) describeSDP(camera *storage.CameraInfo, baseURL string, backchannel bool) string {
 	sdp := "v=0\r\n"
 	sdp += fmt.Sprintf("o=- %d %d IN IP4 0.0.0.0\r\n", time.Now().Unix(), time.Now().Unix())
 	sdp += "s=Tuya Camera Stream\r\n"
@@ -648,7 +660,7 @@ func (s *RTSPServer) generateSDP(camera *storage.CameraInfo, baseURL string) str
 	// and without talkback nothing would use it. It is not what interrupts a
 	// playing lullaby (issue #72): DPS 253 flipped without it as well, which
 	// points at the webrtc session itself (see WebRTCBridge.SpeakerOff).
-	if s.Talkback {
+	if backchannel {
 		finalSdp += backchannelAudio
 	}
 

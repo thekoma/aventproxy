@@ -187,6 +187,13 @@
       },
       "night_light_timer": {
         "name": "Night Light Timer"
+      },
+      "stream_source": {
+        "name": "Stream source",
+        "state": {
+          "auto": "Automatic (local first)",
+          "local": "Local only"
+        }
       }
     },
     "button": {

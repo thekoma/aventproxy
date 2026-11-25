@@ -187,6 +187,13 @@
       },
       "night_light_timer": {
         "name": "Minuterie veilleuse"
+      },
+      "stream_source": {
+        "name": "Source du flux",
+        "state": {
+          "auto": "Automatique (local d'abord)",
+          "local": "Local uniquement"
+        }
       }
     },
     "button": {

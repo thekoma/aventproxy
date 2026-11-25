@@ -99,8 +99,18 @@ func newLANServer() *RTSPServer {
 // end of that client's connection.
 func newLANStream(t *testing.T, server *RTSPServer, resolution string) (*CameraStream, net.Conn) {
 	t.Helper()
+	return newPathStream(t, server, resolution, false)
+}
+
+// newPathStream is newLANStream for the automatic path or, with local, the
+// local path, built as getOrCreatePathStream builds it.
+func newPathStream(t *testing.T, server *RTSPServer, resolution string, local bool) (*CameraStream, net.Conn) {
+	t.Helper()
 	camera := &storage.CameraInfo{DeviceID: "testdev", DeviceName: "Test Cam"}
-	cs := NewCameraStream(camera, resolution, &storage.UserSession{UserKey: "user1"}, nil, server)
+	cs := newCameraStream(camera, resolution, &storage.UserSession{UserKey: "user1"}, nil, server, local)
+	if local {
+		cs.streamId += "-local"
+	}
 	cs.attachBridgeErrorHandler()
 	server.streams[cs.streamId] = cs
 	clientConn, serverConn := net.Pipe()
@@ -137,7 +147,7 @@ func TestLANSuccessSkipsCloud(t *testing.T) {
 	if !active || connecting {
 		t.Fatalf("active=%v connecting=%v, want an active stream", active, connecting)
 	}
-	if lan != a.lan {
+	if h, ok := lan.(*heldSource); !ok || h.lanStreamer != a.lan {
 		t.Fatal("cs.lan is not the LAN source that started")
 	}
 	if n := a.cloudStarted.Load(); n != 0 {

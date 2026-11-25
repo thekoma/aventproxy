@@ -299,6 +299,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "coordinators": coordinators,
         "config": entry.data,
         "options": dict(entry.options),
+        "stream_sources": {},  # cam_id -> the "Stream source" select's option
     }
     ready = False
 
