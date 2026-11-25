@@ -140,7 +140,16 @@ async def _remove_orphan_bridge_configs(hass: HomeAssistant) -> None:
 
 
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload integration when options change."""
+    """Reload integration when options change.
+
+    Home Assistant calls this on every update of the entry, its data too. A
+    reauth stores the new session and reloads the entry itself, so it was
+    reloaded twice. An update that leaves the options as setup saw them no
+    longer reloads here.
+    """
+    loaded = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if loaded is not None and loaded.get("options") == dict(entry.options):
+        return
     await hass.config_entries.async_reload(entry.entry_id)
 
 
@@ -289,6 +298,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "session": session,
         "coordinators": coordinators,
         "config": entry.data,
+        "options": dict(entry.options),
     }
     ready = False
 

@@ -31,9 +31,13 @@ class FakeConfig:
 class FakeConfigEntries:
     def __init__(self):
         self.forwarded = []
+        self.reloaded = []
 
     def async_update_entry(self, entry, data=None, **_):
         entry.data = data
+
+    async def async_reload(self, entry_id):
+        self.reloaded.append(entry_id)
 
     async def async_forward_entry_setups(self, entry, platforms):
         self.forwarded.append(entry.entry_id)
@@ -142,6 +146,7 @@ def setup(monkeypatch):
         return asyncio.run(scenario()), hass, FakeCoordinator.started
 
     run.tuya = tuya
+    run.module = module
     run.exceptions = exceptions
     return run
 
@@ -214,3 +219,28 @@ class TestMonitorWithoutAccess:
         refused = setup.exceptions.ConfigEntryAuthFailed("Authentication failed: USER_SESSION_LOSS")
         with pytest.raises(setup.exceptions.ConfigEntryAuthFailed):
             setup({"cam2": refused})
+
+
+class TestUpdateListener:
+    """Home Assistant calls the update listener on every update of the entry, its data too."""
+
+    @staticmethod
+    def _updated(setup, options):
+        ok, hass, _ = setup({})
+        assert ok is True
+        entry = type("Entry", (), {"entry_id": "entry1", "options": options})()
+        asyncio.run(setup.module._async_options_updated(hass, entry))
+        return hass.config_entries.reloaded
+
+    def test_an_update_of_the_data_alone_does_not_reload(self, setup):
+        # A reauth stores the new session and reloads the entry itself.
+        assert self._updated(setup, {"lan_streaming": False}) == []
+
+    def test_an_options_change_reloads(self, setup):
+        assert self._updated(setup, {"lan_streaming": True}) == ["entry1"]
+
+    def test_an_entry_that_is_not_loaded_reloads_as_before(self, setup):
+        hass = FakeHass()
+        entry = type("Entry", (), {"entry_id": "entry1", "options": {}})()
+        asyncio.run(setup.module._async_options_updated(hass, entry))
+        assert hass.config_entries.reloaded == ["entry1"]
