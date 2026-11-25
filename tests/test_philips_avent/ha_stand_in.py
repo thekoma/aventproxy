@@ -12,6 +12,7 @@ is stubbed only when it is missing, as it is in CI.
 """
 from __future__ import annotations
 
+import asyncio
 import importlib
 import importlib.util
 import sys
@@ -96,6 +97,13 @@ class Camera:
     def __init__(self):
         self.hass = None
         self.stream = None
+
+
+class Hass:
+    """What the camera entity uses of HomeAssistant: a task for the grab through the bridge."""
+
+    def async_create_background_task(self, target, name, eager_start=True):
+        return asyncio.get_running_loop().create_task(target, name=name)
 
 
 async def _no_ffmpeg(*args, **kwargs):

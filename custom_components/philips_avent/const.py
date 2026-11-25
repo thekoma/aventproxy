@@ -160,6 +160,12 @@ CONF_TALKBACK = "talkback"
 DEFAULT_TALKBACK = False
 CONF_LAN_STREAMING = "lan_streaming"
 DEFAULT_LAN_STREAMING = True
+# Minutes between snapshots taken through the bridge while Home Assistant's own
+# stream does not run. Such a snapshot starts the camera's stream when none
+# runs on the bridge, which keeps it for half a minute (PR #142). 0, the
+# default, takes every snapshot through the bridge, as before the option.
+CONF_SNAPSHOT_INTERVAL = "snapshot_interval"
+DEFAULT_SNAPSHOT_INTERVAL = 0
 
 
 def lullaby_report_id(raw: object) -> int | None:

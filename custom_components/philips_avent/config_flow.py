@@ -23,11 +23,13 @@ from .const import (
     CONF_LAN_STREAMING,
     CONF_PARTNER,
     CONF_SID,
+    CONF_SNAPSHOT_INTERVAL,
     CONF_TALKBACK,
     CONF_UID,
     DEFAULT_BRIDGE_HOST,
     DEFAULT_BRIDGE_PORT,
     DEFAULT_LAN_STREAMING,
+    DEFAULT_SNAPSHOT_INTERVAL,
     DEFAULT_TALKBACK,
     DOMAIN,
 )
@@ -420,6 +422,9 @@ class PhilipsAventOptionsFlowHandler(config_entries.OptionsFlow):
         current_lan_streaming = self.config_entry.options.get(
             CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING
         )
+        current_snapshot_interval = self.config_entry.options.get(
+            CONF_SNAPSHOT_INTERVAL, DEFAULT_SNAPSHOT_INTERVAL
+        )
 
         return self.async_show_form(
             step_id="init",
@@ -431,6 +436,9 @@ class PhilipsAventOptionsFlowHandler(config_entries.OptionsFlow):
                     ),
                     vol.Optional(CONF_TALKBACK, default=current_talkback): bool,
                     vol.Optional(CONF_LAN_STREAMING, default=current_lan_streaming): bool,
+                    vol.Optional(CONF_SNAPSHOT_INTERVAL, default=current_snapshot_interval): vol.All(
+                        int, vol.Range(min=0, max=1440)
+                    ),
                 }
             ),
         )
