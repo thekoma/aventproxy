@@ -32,6 +32,12 @@ _LOGGER = logging.getLogger(__name__)
 
 SOCKET_TIMEOUT = 5
 SCAN_MAXRETRY = 5
+# The listener restarted after an unexpected error (see _run): of the failures
+# in a row, the first LISTENER_WARNINGS are logged (the first with its
+# traceback), the rest at debug. A run of LISTENER_STEADY seconds before a
+# failure starts the count again.
+LISTENER_WARNINGS = 3
+LISTENER_STEADY = 600
 
 
 class TuyaLANClient:
@@ -334,6 +340,37 @@ class TuyaLANClient:
         return alive, pushed
 
     async def _run(self) -> None:
+        """The listener, restarted after anything unexpected instead of ending.
+
+        An exception that escaped would end the monitor's LAN session for good.
+        The first one is logged in full, the next two in one line each, later
+        ones at debug, so an error that comes back every attempt does not fill
+        the log. The pause before a restart grows as for failed connects (15,
+        30, then 60 s); a listener that ran LISTENER_STEADY seconds before it
+        failed starts that count again.
+        """
+        restarts = 0
+        while not self._stop_event.is_set():
+            started = time.monotonic()
+            try:
+                await self._listen()
+                return
+            except Exception as ex:  # not a cancel, which is a BaseException
+                if time.monotonic() - started >= LISTENER_STEADY:
+                    restarts = 0
+                restarts += 1
+                if restarts == 1:
+                    _LOGGER.exception("LAN listener of %s failed; reconnecting", self._device_id)
+                else:
+                    _LOGGER.log(
+                        logging.WARNING if restarts <= LISTENER_WARNINGS else logging.DEBUG,
+                        "LAN listener of %s failed again (%s: %s); reconnecting",
+                        self._device_id, type(ex).__name__, ex,
+                    )
+                self._disconnect()
+                await self._interruptible_sleep(reconnect_delay(restarts + 1))
+
+    async def _listen(self) -> None:
         last_data = time.monotonic()
         last_heartbeat = last_data
         failures = 0
