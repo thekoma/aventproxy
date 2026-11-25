@@ -86,6 +86,13 @@ type RTSPServer struct {
 	UID          string
 	LANTargets   map[string]LANTarget
 
+	// WebRTCLANOnly keeps every WebRTC stream (the cloud fallback and talk on
+	// demand) on the local network; see WebRTCBridge.LANOnly. CameraLANHosts
+	// holds each camera's LAN address for it, also for a camera without LAN
+	// credentials. Set both before Start.
+	WebRTCLANOnly  bool
+	CameraLANHosts map[string]string
+
 	cooldownMutex sync.Mutex
 	lanCooldowns  map[string]time.Time // device id -> end of its LAN cool-down
 	lanFailures   map[string]int       // device id -> LAN failures in a row; made on first use
@@ -1042,6 +1049,8 @@ func (cs *CameraStream) configureBridge() {
 	cs.webrtcBridge.Talkback = cs.server.sessionTalkback()
 	cs.webrtcBridge.SpeakerOff = cs.server.SpeakerOff
 	cs.webrtcBridge.WebRTCAudio = cs.server.WebRTCAudio
+	cs.webrtcBridge.LANOnly = cs.server.WebRTCLANOnly
+	cs.webrtcBridge.LANHost = cs.server.CameraLANHosts[cs.camera.DeviceID]
 	if cs.talk != nil {
 		// A new bridge takes the backchannel; on demand it goes to the talker.
 		cs.forwarder.SetBackchannelSink(cs.talk.packet)

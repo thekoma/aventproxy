@@ -1,15 +1,20 @@
 package addon
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/rs/zerolog"
+
+	"avent-webrtc-bridge/pkg/core"
 	"avent-webrtc-bridge/pkg/rtsp"
 	"avent-webrtc-bridge/pkg/storage"
 	"avent-webrtc-bridge/pkg/tuya"
@@ -457,6 +462,23 @@ func TestLoadConfigWithLANFields(t *testing.T) {
 	}
 }
 
+func TestCameraLANHostsAlsoWithoutCredentials(t *testing.T) {
+	cfg := writeCfg(t, `{
+	  "signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P",
+	  "app_key": "AK", "device_id": "D", "webrtc_lan_only": true,
+	  "cameras": [
+	    {"camera_id": "a", "camera_name": "A", "lan_ip": "192.0.2.7"},
+	    {"camera_id": "b", "camera_name": "B"}]
+	}`)
+	if !cfg.WebRTCLANOnly {
+		t.Error("webrtc_lan_only not read")
+	}
+	hosts := cameraLANHosts(cfg.Cameras)
+	if !reflect.DeepEqual(hosts, map[string]string{"a": "192.0.2.7"}) {
+		t.Errorf("hosts = %v", hosts)
+	}
+}
+
 func TestLoadConfigWithoutLANFields(t *testing.T) {
 	cfg := writeCfg(t, `{
 	  "signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P",
@@ -624,5 +646,67 @@ func TestCloudTransportFlag(t *testing.T) {
 		if err != nil || got != tc.want {
 			t.Errorf("%v: got %q, %v; want %q", tc.args, got, err, tc.want)
 		}
+	}
+}
+
+func TestConfigureServerSetsWebRTCLANOnly(t *testing.T) {
+	cfg := writeCfg(t, `{
+	  "signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P",
+	  "app_key": "AK", "device_id": "D", "webrtc_lan_only": true,
+	  "cameras": [{"camera_id": "a", "camera_name": "A", "lan_ip": "192.0.2.7"}]
+	}`)
+	server := rtsp.NewRTSPServer(0, nil)
+	configureServer(server, cfg)
+	if !server.WebRTCLANOnly || server.CameraLANHosts["a"] != "192.0.2.7" {
+		t.Fatalf("LAN only %v, hosts %v", server.WebRTCLANOnly, server.CameraLANHosts)
+	}
+	off := rtsp.NewRTSPServer(0, nil)
+	configureServer(off, writeCfg(t, `{"signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P",
+	  "app_key": "AK", "device_id": "D", "cameras": [{"camera_id": "a", "camera_name": "A"}]}`))
+	if off.WebRTCLANOnly {
+		t.Fatal("LAN only without webrtc_lan_only")
+	}
+}
+
+// With webrtc_lan_only on, a lan_ip the rewrite cannot use is named in one
+// warning per camera at start, without the address.
+func TestConfigureServerWarnsOfAnUnusableLANIP(t *testing.T) {
+	body := `{"signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P", "app_key": "AK", "device_id": "D",
+	  %s "cameras": [
+	    {"camera_id": "a", "camera_name": "Public", "lan_ip": "203.0.113.9"},
+	    {"camera_id": "b", "camera_name": "Zoned", "lan_ip": "fe80::1%%eth0"},
+	    {"camera_id": "c", "camera_name": "Name", "lan_ip": "camera.local"},
+	    {"camera_id": "d", "camera_name": "Good", "lan_ip": "192.168.1.20"},
+	    {"camera_id": "e", "camera_name": "None"}]}`
+	on, off := writeCfg(t, fmt.Sprintf(body, `"webrtc_lan_only": true,`)), writeCfg(t, fmt.Sprintf(body, ""))
+	saved := core.Logger
+	t.Cleanup(func() { core.Logger = saved })
+	var buf bytes.Buffer
+	core.Logger = zerolog.New(&buf)
+
+	configureServer(rtsp.NewRTSPServer(0, nil), on)
+	out := buf.String()
+	for _, want := range []string{
+		"LAN-only WebRTC for Public: its lan_ip is not a LAN address",
+		"LAN-only WebRTC for Zoned: its lan_ip is an IPv6 address with a zone",
+		"LAN-only WebRTC for Name: its lan_ip is not an IP address",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no warning %q in %q", want, out)
+		}
+	}
+	if strings.Count(out, `"level":"warn"`) != 3 || strings.Count(out, "\n") != 3 {
+		t.Errorf("want three warnings, got %q", out)
+	}
+	for _, addr := range []string{"203.0.113.9", "fe80", "camera.local", "192.168.1.20"} {
+		if strings.Contains(out, addr) {
+			t.Errorf("the log carries %q: %q", addr, out)
+		}
+	}
+
+	buf.Reset()
+	configureServer(rtsp.NewRTSPServer(0, nil), off)
+	if buf.Len() != 0 {
+		t.Errorf("warned without webrtc_lan_only: %q", buf.String())
 	}
 }

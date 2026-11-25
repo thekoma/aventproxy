@@ -25,10 +25,12 @@ from .const import (
     CONF_SID,
     CONF_TALKBACK,
     CONF_UID,
+    CONF_WEBRTC_LAN_ONLY,
     DEFAULT_BRIDGE_HOST,
     DEFAULT_BRIDGE_PORT,
     DEFAULT_LAN_STREAMING,
     DEFAULT_TALKBACK,
+    DEFAULT_WEBRTC_LAN_ONLY,
     DOMAIN,
 )
 from .payload import strip_stored_password
@@ -420,6 +422,9 @@ class PhilipsAventOptionsFlowHandler(config_entries.OptionsFlow):
         current_lan_streaming = self.config_entry.options.get(
             CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING
         )
+        current_webrtc_lan_only = self.config_entry.options.get(
+            CONF_WEBRTC_LAN_ONLY, DEFAULT_WEBRTC_LAN_ONLY
+        )
 
         return self.async_show_form(
             step_id="init",
@@ -431,6 +436,7 @@ class PhilipsAventOptionsFlowHandler(config_entries.OptionsFlow):
                     ),
                     vol.Optional(CONF_TALKBACK, default=current_talkback): bool,
                     vol.Optional(CONF_LAN_STREAMING, default=current_lan_streaming): bool,
+                    vol.Optional(CONF_WEBRTC_LAN_ONLY, default=current_webrtc_lan_only): bool,
                 }
             ),
         )

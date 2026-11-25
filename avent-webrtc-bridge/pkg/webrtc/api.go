@@ -28,6 +28,35 @@ type Filters struct {
 	IPs        []string `yaml:"ips"`
 	Networks   []string `yaml:"networks"`
 	UDPPorts   []uint16 `yaml:"udp_ports"`
+	// LANOnly keeps ICE on the local network: the bridge offers only its own
+	// LAN addresses, and the agent ignores every remote candidate, signalled
+	// or peer-reflexive, whose address is not a LAN address (IsLANAddress).
+	// The caller must also leave the STUN/TURN servers out; see lanonly.go.
+	LANOnly bool `yaml:"lan_only"`
+}
+
+// lanOnlyIPFilter narrows the filter for the bridge's own addresses (nil is
+// every address) to the LAN addresses among them.
+func lanOnlyIPFilter(gather func(ip net.IP) bool) func(ip net.IP) bool {
+	return func(ip net.IP) bool {
+		return IsLANAddress(ip) && (gather == nil || gather(ip))
+	}
+}
+
+// lanOnlyFilters is the filter for the bridge's own addresses and the remote
+// one, given the gather filter NewServerAPI made so far: with LANOnly the
+// own addresses narrowed to LAN ones and IsLANAddress for remote candidates,
+// otherwise the gather filter unchanged and no remote filter.
+func lanOnlyFilters(filters *Filters, gather func(ip net.IP) bool) (local, remote func(ip net.IP) bool) {
+	if filters == nil || !filters.LANOnly {
+		return gather, nil
+	}
+	return lanOnlyIPFilter(gather), IsLANAddress
+}
+
+// NewLANOnlyAPI is NewAPI with Filters.LANOnly set.
+func NewLANOnlyAPI() (*webrtc.API, error) {
+	return NewServerAPI("", "", &Filters{LANOnly: true})
 }
 
 func NewServerAPI(network, address string, filters *Filters) (*webrtc.API, error) {
@@ -79,6 +108,10 @@ func NewServerAPI(network, address string, filters *Filters) (*webrtc.API, error
 		if nets, _ := xnet.IPNets(ipFilter); len(nets) == 0 {
 			ipFilter = nil
 		}
+	}
+	ipFilter, remoteFilter := lanOnlyFilters(filters, ipFilter)
+	if remoteFilter != nil {
+		s.SetRemoteIPFilter(remoteFilter)
 	}
 	s.SetIPFilter(ipFilter)
 

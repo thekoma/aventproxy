@@ -18,6 +18,7 @@ import (
 	"avent-webrtc-bridge/pkg/storage"
 	"avent-webrtc-bridge/pkg/tuya"
 	"avent-webrtc-bridge/pkg/utils"
+	"avent-webrtc-bridge/pkg/webrtc"
 )
 
 // BridgeConfig is the JSON shape written by the HA integration
@@ -36,7 +37,10 @@ type BridgeConfig struct {
 	UID string `json:"uid"`
 	// LanStreaming is a pointer so an absent field means enabled.
 	LanStreaming *bool `json:"lan_streaming"`
-	BridgePort   int   `json:"bridge_port"`
+	// WebRTCLANOnly keeps WebRTC media on the local network: no STUN/TURN,
+	// only the cameras' LAN host candidates. Absent (an older integration) is off.
+	WebRTCLANOnly bool `json:"webrtc_lan_only"`
+	BridgePort    int  `json:"bridge_port"`
 	// RTSPBind is optional: the --bind flag wins when it is given.
 	RTSPBind string   `json:"rtsp_bind_address"`
 	Cameras  []Camera `json:"cameras"`
@@ -65,6 +69,33 @@ func lanTargets(cams []Camera) map[string]rtsp.LANTarget {
 	for _, c := range cams {
 		if c.LocalKey != "" && c.P2PPassword != "" {
 			out[c.ID] = rtsp.LANTarget{LocalKey: c.LocalKey, Password: c.P2PPassword, IP: c.LanIP, Protocol: c.LanProtocol}
+		}
+	}
+	return out
+}
+
+// configureServer copies the bridge config's settings that need no flags or
+// cloud client onto the server.
+func configureServer(server *rtsp.RTSPServer, cfg BridgeConfig) {
+	server.WebRTCLANOnly = cfg.WebRTCLANOnly
+	server.CameraLANHosts = cameraLANHosts(cfg.Cameras)
+	if cfg.WebRTCLANOnly {
+		for _, c := range cfg.Cameras {
+			if problem := webrtc.LANIPProblem(c.LanIP); c.LanIP != "" && problem != "" {
+				core.Logger.Warn().Msgf("LAN-only WebRTC for %s: its lan_ip is %s, so no candidate is rewritten onto it",
+					c.Name, problem)
+			}
+		}
+	}
+}
+
+// cameraLANHosts is each camera's LAN address for its LAN-only WebRTC
+// streams: also for a camera without LAN credentials.
+func cameraLANHosts(cams []Camera) map[string]string {
+	out := make(map[string]string)
+	for _, c := range cams {
+		if c.LanIP != "" {
+			out[c.ID] = c.LanIP
 		}
 	}
 	return out
@@ -430,6 +461,7 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	server.MobileClient = client
 	server.Talkback = cfg.Talkback
 	server.TalkbackMode = talkbackMode
+	configureServer(server, cfg)
 	server.SpeakerOff = speakerOff
 	server.WebRTCAudio = webrtcAudio
 	server.CloudTransport = cloudTransport
@@ -441,6 +473,9 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	server.UID = uid
 	server.LANTargets = targets
 	core.Logger.Info().Msgf("LAN streaming %t, %d cameras with LAN targets", server.LanStreaming, len(targets))
+	if cfg.WebRTCLANOnly {
+		core.Logger.Info().Msg("WebRTC is LAN-only: no STUN/TURN, only the cameras' LAN host candidates")
+	}
 	if cfg.Talkback && talkbackMode == rtsp.TalkbackOnDemand {
 		core.Logger.Info().Msg("Two-way audio on demand (experimental): camera sessions stay one-way, and a " +
 			"two-way session opens only while a client sends audio on the backchannel")
