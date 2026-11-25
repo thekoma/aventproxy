@@ -480,7 +480,7 @@ func (s *RTSPServer) handleConnection(conn net.Conn) {
 	// Parse initial RTSP request. A client that connects and never sends
 	// one would otherwise hold this goroutine and its socket for good: it is
 	// not in the client map yet, so not even Stop closes it.
-	if err := conn.SetReadDeadline(time.Now().Add(requestReadTimeout)); err != nil {
+	if err := conn.SetReadDeadline(time.Now().Add(time.Duration(requestReadTimeout.Load()))); err != nil {
 		return
 	}
 	request, err := s.parseRTSPRequestFromReader(reader)
