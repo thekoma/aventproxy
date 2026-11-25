@@ -30,19 +30,35 @@ class FakeDevice:
         self.heartbeat_result = None
         self.status_result = None
         self.status_calls = 0
+        self.retry_limit = None
+        # tinytuya's defaults: a 5 s socket timeout, retries on.
+        self.timeout = 5
+        self.retry = True
         FakeDevice.instances.append(self)
 
     def set_socketPersistent(self, value):
         pass
 
     def set_socketTimeout(self, value):
-        pass
+        self.timeout = value
+
+    def set_socketRetryLimit(self, value):
+        self.retry_limit = value
+
+    def set_retry(self, retry):
+        self.retry = retry
+
+    def _get_socket(self, renew):
+        return True
 
     def heartbeat(self, nowait=True):
+        self.heartbeat_timeout = self.timeout
         return self.heartbeat_result
 
     def status(self):
         self.status_calls += 1
+        self.status_timeout = self.timeout
+        self.status_retry = self.retry
         return self.status_result
 
     def set_value(self, key, value, nowait=False):
@@ -205,6 +221,16 @@ class TestKeepAlive:
         client._device.heartbeat_result = {"Error": "Network Error", "Err": "905"}
         assert client._send_heartbeat() == (False, None)
 
+    def test_the_keep_alive_waits_the_socket_timeout_for_its_answer(self, lan):
+        # The session reads at RECEIVE_POLL; the heartbeat's answer gets the full
+        # SOCKET_TIMEOUT, and the session reads at RECEIVE_POLL again after it.
+        client = make_client(lan)
+        client._device = client._try_direct_connect("10.0.0.7", 3.5)
+        assert client._device.timeout == lan.RECEIVE_POLL
+        client._send_heartbeat()
+        assert client._device.heartbeat_timeout == lan.SOCKET_TIMEOUT
+        assert client._device.timeout == lan.RECEIVE_POLL
+
 
 class TestBaseline:
     def test_the_answer_is_published_as_a_baseline(self, lan):
@@ -220,6 +246,37 @@ class TestBaseline:
         client._device.status_result = {"Error": "Timeout Waiting for Device", "Err": "902"}
         asyncio.run(client._load_baseline())
         assert client.published == []
+
+    def test_the_query_reads_past_an_empty_ack(self, lan):
+        # The session itself returns at the first message (retry off) and reads
+        # at RECEIVE_POLL; the baseline query reads on to the answer within
+        # SOCKET_TIMEOUT, and the session is left as it was.
+        client = make_client(lan)
+        client._device = client._try_direct_connect("10.0.0.7", 3.5)
+        client._device.status_result = {"dps": {"207": 2570}}
+        asyncio.run(client._load_baseline())
+        assert client._device.status_retry is True
+        assert client._device.status_timeout == lan.SOCKET_TIMEOUT
+        assert client._device.retry is False
+        assert client._device.timeout == lan.RECEIVE_POLL
+
+
+class TestQuickerGiveUp:
+    # tinytuya's default is five retries after a 5 s timeout each, and five
+    # attempts to open a socket 5 s apart: a minute to notice a camera that is gone.
+    def test_the_session_socket_retries_once_and_reads_briefly(self, lan):
+        client = make_client(lan)
+        device = client._try_direct_connect("10.0.0.7", 3.5)
+        assert device.retry_limit == 1
+        assert device.retry is False
+        assert device.timeout == lan.RECEIVE_POLL
+
+    def test_a_command_socket_retries_once(self, lan):
+        client = make_client(lan)
+        client._ip, client._version = "10.0.0.7", 3.5
+        asyncio.run(client.set_dps({"138": True}))
+        assert FakeDevice.instances[-1].retry_limit == 1
+        assert FakeDevice.instances[-1].timeout == lan.SOCKET_TIMEOUT
 
 
 class TestWrites:
