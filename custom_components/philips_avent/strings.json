@@ -119,6 +119,12 @@
       },
       "night_awake": {
         "name": "Awake (night)"
+      },
+      "lullaby_time_left": {
+        "name": "Lullaby time left"
+      },
+      "night_light_time_left": {
+        "name": "Night light time left"
       }
     },
     "binary_sensor": {
