@@ -75,7 +75,7 @@ class SetupEntry:
 def _setup_with_discovery(monkeypatch, discover):
     setup = _load_setup(monkeypatch)
     session = FakeSession()
-    monkeypatch.setattr(setup.aiohttp, "ClientSession", lambda: session)
+    monkeypatch.setattr(setup.aiohttp, "ClientSession", lambda **_: session)
     monkeypatch.setattr(setup.PhilipsAventAPI, "discover_cameras", discover)
     return setup, session
 
