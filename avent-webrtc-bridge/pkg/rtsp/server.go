@@ -93,6 +93,11 @@ type RTSPServer struct {
 
 	lanHolders lanHolders // which LAN source holds each camera's LAN session; see local_path.go
 
+	// NoWebRTC leaves only the local path: every request is served as
+	// /<camera>/local, so nothing streams through the cloud, and no MQTT
+	// client is made. Set before Start.
+	NoWebRTC bool
+
 	// newStream, if set, prepares every stream getOrCreateStream creates,
 	// before any client can reach it (tests only).
 	newStream func(*CameraStream)
@@ -330,7 +335,7 @@ func (s *RTSPServer) Start() error {
 	s.listeners = listeners
 	s.running = true
 
-	if s.MobileClient != nil {
+	if s.MobileClient != nil && !s.NoWebRTC {
 		s.mqttManager = NewMQTTManager(s.MobileClient)
 	}
 
@@ -496,6 +501,7 @@ func (s *RTSPServer) handleConnection(conn net.Conn) {
 	// Extract camera path from URL
 	cameraPath, streamResolution := extractCameraPath(request.URL)
 	cameraPath, local := splitLocal(cameraPath)
+	local = local || s.NoWebRTC
 	if cameraPath == "" {
 		core.Logger.Error().Msg("Invalid RTSP URL")
 		sendRTSPResponse(conn, 400, "Bad Request", nil, "")

@@ -160,6 +160,23 @@ CONF_TALKBACK = "talkback"
 DEFAULT_TALKBACK = False
 CONF_LAN_STREAMING = "lan_streaming"
 DEFAULT_LAN_STREAMING = True
+# Use WebRTC. Off leaves only the bridge's local path: no stream goes through
+# the cloud, a camera without a LAN path has none, and there is no talkback.
+CONF_WEBRTC = "webrtc"
+DEFAULT_WEBRTC = True
+
+
+def options_error(options: dict) -> str | None:
+    """The options form's error for these options, or None.
+
+    Without WebRTC only the bridge's local path is left, which needs LAN
+    streaming: with both off, no camera could stream.
+    """
+    if options.get(CONF_WEBRTC, DEFAULT_WEBRTC) or options.get(CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING):
+        return None
+    return "webrtc_needs_lan"
+
+
 # A camera's "Stream source" select: "auto" is the bridge's /<camera> path (the
 # LAN first, the cloud as fallback), "local" its /<camera>/local path (the LAN
 # only, never the cloud).

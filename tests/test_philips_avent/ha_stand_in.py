@@ -3,8 +3,8 @@
 The rest of the suite keeps Home Assistant out by testing pure helpers. A few
 decisions live in the coordinator itself, where a wrong one changes what a
 monitor on protocol 3.3 does, so those tests load the real module here. The
-stand-in covers only the names the coordinator, the LAN client and the camera
-entity import.
+stand-in covers only the names the coordinator, the LAN client, the entities
+and the options flow import.
 
 Never used where Home Assistant is installed: the stand-in must not shadow the
 real package, so those tests are reported as skipped there, not run. tinytuya
@@ -135,6 +135,44 @@ class RestoreEntity:
         return self.last_state
 
 
+class ConfigFlow:
+    """Home Assistant's ConfigFlow, as far as a subclass declaration needs it."""
+
+    def __init_subclass__(cls, domain=None, **kwargs):
+        super().__init_subclass__(**kwargs)
+
+
+class OptionsFlow:
+    """Home Assistant's OptionsFlow: forms and entries come back as dicts.
+
+    `add_suggested_values_to_schema` is Home Assistant 2026.11.2's
+    (data_entry_flow.py) without sections: a copy of the schema whose markers
+    found in `suggested_values` carry them as their `suggested_value`.
+    """
+
+    config_entry = None
+
+    def async_show_form(self, **kwargs):
+        return {"type": "form", **kwargs}
+
+    def async_create_entry(self, *, title, data):
+        return {"type": "create_entry", "title": title, "data": data}
+
+    def add_suggested_values_to_schema(self, data_schema, suggested_values):
+        import copy
+
+        import voluptuous as vol
+
+        schema = {}
+        for key, val in data_schema.schema.items():
+            new_key = key
+            if suggested_values and key in suggested_values and isinstance(key, vol.Marker):
+                new_key = copy.copy(key)
+                new_key.description = {"suggested_value": suggested_values[key.schema]}
+            schema[new_key] = val
+        return vol.Schema(schema)
+
+
 class Dispatcher:
     """Home Assistant's dispatcher, synchronous: `sent` lists every signal sent."""
 
@@ -191,9 +229,25 @@ def _stand_in_modules() -> dict[str, types.ModuleType]:
         ),
         "homeassistant.helpers.restore_state": module("homeassistant.helpers.restore_state", RestoreEntity=RestoreEntity),
         "homeassistant.components.select": module("homeassistant.components.select", SelectEntity=SelectEntity),
-        "homeassistant.config_entries": module("homeassistant.config_entries", ConfigEntry=object),
+        "homeassistant.config_entries": module(
+            "homeassistant.config_entries",
+            ConfigEntry=object,
+            ConfigFlow=ConfigFlow,
+            OptionsFlow=OptionsFlow,
+            callback=lambda func: func,
+        ),
+        "homeassistant.data_entry_flow": module("homeassistant.data_entry_flow", AbortFlow=type("AbortFlow", (Exception,), {})),
+        "homeassistant.helpers.aiohttp_client": module(
+            "homeassistant.helpers.aiohttp_client", async_get_clientsession=lambda hass: None
+        ),
+        "homeassistant.helpers.selector": module(
+            "homeassistant.helpers.selector", CountrySelector=lambda config: str, CountrySelectorConfig=dict
+        ),
         "homeassistant.const": module(
             "homeassistant.const",
+            CONF_COUNTRY="country",
+            CONF_EMAIL="email",
+            CONF_PASSWORD="password",
             SIGNAL_STRENGTH_DECIBELS_MILLIWATT="dBm",
             EntityCategory=_Names(),
             UnitOfTemperature=_Names(),

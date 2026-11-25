@@ -15,9 +15,11 @@ from .const import (
     CONF_BRIDGE_HOST,
     CONF_BRIDGE_PORT,
     CONF_TALKBACK,
+    CONF_WEBRTC,
     DEFAULT_BRIDGE_HOST,
     DEFAULT_BRIDGE_PORT,
     DEFAULT_TALKBACK,
+    DEFAULT_WEBRTC,
     DOMAIN,
     SIGNAL_STREAM_SOURCE,
     STREAM_SOURCE_AUTO,
@@ -40,7 +42,8 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     bridge_port = entry.options.get(CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT)
     bridge_host = entry.options.get(CONF_BRIDGE_HOST, DEFAULT_BRIDGE_HOST)
-    talkback = entry.options.get(CONF_TALKBACK, DEFAULT_TALKBACK)
+    # Two-way audio rides a cloud session: with Use WebRTC off the bridge has none.
+    talkback = entry.options.get(CONF_TALKBACK, DEFAULT_TALKBACK) and entry.options.get(CONF_WEBRTC, DEFAULT_WEBRTC)
     entities = []
     for cam_id, coordinator in data["coordinators"].items():
         entities.append(AventCamera(

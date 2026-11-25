@@ -15,7 +15,9 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     CONF_LAN_STREAMING,
+    CONF_WEBRTC,
     DEFAULT_LAN_STREAMING,
+    DEFAULT_WEBRTC,
     DOMAIN,
     DPS_LIGHT_TIMER,
     DPS_LIGHT_TIMER_SWITCH,
@@ -60,7 +62,8 @@ async def async_setup_entry(
             None, "mdi:timer-outline",
             DPS_LIGHT_TIMER, DPS_LIGHT_TIMER_SWITCH, translation_key="night_light_timer",
         ))
-        if entry.options.get(CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING):
+        # Without WebRTC every path is the local one: nothing to choose.
+        if entry.options.get(CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING) and entry.options.get(CONF_WEBRTC, DEFAULT_WEBRTC):
             entities.append(AventStreamSourceSelect(coordinator, cam_id, data["stream_sources"]))
     async_add_entities(entities)
 

@@ -40,6 +40,8 @@ type BridgeConfig struct {
 	// RTSPBind is optional: the --bind flag wins when it is given.
 	RTSPBind string   `json:"rtsp_bind_address"`
 	Cameras  []Camera `json:"cameras"`
+	// WebRTC false leaves only the local stream path; absent means enabled.
+	WebRTC *bool `json:"webrtc"`
 }
 
 // Camera is one entry under "cameras" in the JSON.
@@ -52,6 +54,17 @@ type Camera struct {
 	P2PPassword string `json:"p2p_password"`
 	LanIP       string `json:"lan_ip"`
 	LanProtocol string `json:"lan_protocol"`
+}
+
+func webrtcEnabled(cfg BridgeConfig) bool {
+	return cfg.WebRTC == nil || *cfg.WebRTC
+}
+
+// configureWebRTC sets talkback and WebRTC off from the config. Talkback
+// rides a cloud session, which WebRTC off leaves out.
+func configureWebRTC(server *rtsp.RTSPServer, cfg BridgeConfig) {
+	server.Talkback = cfg.Talkback && webrtcEnabled(cfg)
+	server.NoWebRTC = !webrtcEnabled(cfg)
 }
 
 func lanStreamingEnabled(cfg BridgeConfig) bool {
@@ -428,7 +441,7 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	server := rtsp.NewRTSPServer(port, storageManager)
 	server.BindAddress = bind
 	server.MobileClient = client
-	server.Talkback = cfg.Talkback
+	configureWebRTC(server, cfg)
 	server.TalkbackMode = talkbackMode
 	server.SpeakerOff = speakerOff
 	server.WebRTCAudio = webrtcAudio
@@ -441,11 +454,13 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	server.UID = uid
 	server.LANTargets = targets
 	core.Logger.Info().Msgf("LAN streaming %t, %d cameras with LAN targets", server.LanStreaming, len(targets))
-	if cfg.Talkback && talkbackMode == rtsp.TalkbackOnDemand {
+	if server.NoWebRTC { // no cloud session, so nothing about them
+		core.Logger.Info().Msg("WebRTC off: every camera is served on its local path only, without the cloud; no talkback")
+	} else if server.Talkback && talkbackMode == rtsp.TalkbackOnDemand {
 		core.Logger.Info().Msg("Two-way audio on demand (experimental): camera sessions stay one-way, and a " +
 			"two-way session opens only while a client sends audio on the backchannel")
 		core.Logger.Info().Msgf("Cloud sessions: audio %s, speaker off %t", webrtcAudio, speakerOff)
-	} else if cfg.Talkback {
+	} else if server.Talkback {
 		core.Logger.Info().Msg("Two-way audio enabled: streams will ask the camera for talkback")
 		if webrtcAudio == rtsp.WebRTCAudioNone {
 			core.Logger.Warn().Msg("webrtc_audio none is ignored: two-way audio needs the audio section")
@@ -454,7 +469,7 @@ func runAddon(cmd *cobra.Command, args []string) error {
 	} else {
 		core.Logger.Info().Msgf("Cloud sessions: audio %s, speaker off %t", webrtcAudio, speakerOff)
 	}
-	if cloudTransport == rtsp.CloudTransportIMM {
+	if cloudTransport == rtsp.CloudTransportIMM && !server.NoWebRTC {
 		core.Logger.Info().Msg("Cloud transport imm (experimental): streams that do not take the LAN try imm " +
 			"over cloud signalling first, and fall back to webrtc")
 	}

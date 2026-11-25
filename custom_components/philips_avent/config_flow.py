@@ -25,11 +25,14 @@ from .const import (
     CONF_SID,
     CONF_TALKBACK,
     CONF_UID,
+    CONF_WEBRTC,
     DEFAULT_BRIDGE_HOST,
     DEFAULT_BRIDGE_PORT,
     DEFAULT_LAN_STREAMING,
     DEFAULT_TALKBACK,
+    DEFAULT_WEBRTC,
     DOMAIN,
+    options_error,
 )
 from .payload import strip_stored_password
 from .region import (
@@ -405,8 +408,11 @@ class PhilipsAventOptionsFlowHandler(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None):
         """Manage the options."""
+        errors = {}
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            if not (error := options_error(user_input)):
+                return self.async_create_entry(title="", data=user_input)
+            errors["base"] = error
 
         current_port = self.config_entry.options.get(
             CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT
@@ -420,17 +426,22 @@ class PhilipsAventOptionsFlowHandler(config_entries.OptionsFlow):
         current_lan_streaming = self.config_entry.options.get(
             CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING
         )
+        current_webrtc = self.config_entry.options.get(CONF_WEBRTC, DEFAULT_WEBRTC)
 
+        schema = vol.Schema(
+            {
+                vol.Optional(CONF_BRIDGE_HOST, default=current_host): str,
+                vol.Optional(CONF_BRIDGE_PORT, default=current_port): vol.All(
+                    int, vol.Range(min=1024, max=65535)
+                ),
+                vol.Optional(CONF_TALKBACK, default=current_talkback): bool,
+                vol.Optional(CONF_LAN_STREAMING, default=current_lan_streaming): bool,
+                vol.Optional(CONF_WEBRTC, default=current_webrtc): bool,
+            }
+        )
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Optional(CONF_BRIDGE_HOST, default=current_host): str,
-                    vol.Optional(CONF_BRIDGE_PORT, default=current_port): vol.All(
-                        int, vol.Range(min=1024, max=65535)
-                    ),
-                    vol.Optional(CONF_TALKBACK, default=current_talkback): bool,
-                    vol.Optional(CONF_LAN_STREAMING, default=current_lan_streaming): bool,
-                }
-            ),
+            # A refused form comes back with what the user entered, not the saved options.
+            data_schema=self.add_suggested_values_to_schema(schema, user_input),
+            errors=errors,
         )
