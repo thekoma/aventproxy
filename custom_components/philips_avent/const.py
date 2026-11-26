@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import secrets
+from urllib.parse import quote
 
 DOMAIN = "philips_avent"
 
@@ -160,6 +162,44 @@ CONF_TALKBACK = "talkback"
 DEFAULT_TALKBACK = False
 CONF_LAN_STREAMING = "lan_streaming"
 DEFAULT_LAN_STREAMING = True
+# "Password on the RTSP streams": off by default, as the bridge has always
+# been (it listens on localhost only unless told otherwise). On, the bridge
+# asks every RTSP client for the password (Digest, user RTSP_USER), the
+# camera's stream URL carries it, and the bridge's /status asks for the API
+# token. The options flow makes both secrets once when the option is turned
+# on and keeps them in the entry's options while it stays on.
+CONF_RTSP_AUTH = "rtsp_auth"
+DEFAULT_RTSP_AUTH = False
+CONF_BRIDGE_RTSP_PASSWORD = "bridge_rtsp_password"
+CONF_BRIDGE_API_TOKEN = "bridge_api_token"
+RTSP_USER = "homeassistant"
+
+
+def rtsp_auth_options(options: dict, previous: dict) -> dict:
+    """``options`` with the bridge's RTSP password and API token, while the option is on.
+
+    The secrets already in ``previous`` are kept, so a stream URL stays the
+    same across options changes; turning the option off drops them.
+    """
+    out = {k: v for k, v in options.items() if k not in (CONF_BRIDGE_RTSP_PASSWORD, CONF_BRIDGE_API_TOKEN)}
+    if out.get(CONF_RTSP_AUTH, DEFAULT_RTSP_AUTH):
+        for key in (CONF_BRIDGE_RTSP_PASSWORD, CONF_BRIDGE_API_TOKEN):
+            out[key] = previous.get(key) or secrets.token_urlsafe(32)
+    return out
+
+
+def active_rtsp_password(options: dict) -> str | None:
+    """The RTSP password in use: the entry's, while the option is on."""
+    if not options.get(CONF_RTSP_AUTH, DEFAULT_RTSP_AUTH):
+        return None
+    return options.get(CONF_BRIDGE_RTSP_PASSWORD) or None
+
+
+def active_api_token(options: dict) -> str | None:
+    """The token for the bridge's /status, while the option is on."""
+    if not options.get(CONF_RTSP_AUTH, DEFAULT_RTSP_AUTH):
+        return None
+    return options.get(CONF_BRIDGE_API_TOKEN) or None
 
 
 def lullaby_report_id(raw: object) -> int | None:
@@ -283,7 +323,15 @@ def unique_camera_name(name: str, cam_id: str, path: str) -> str:
     return f"{name} {path[len(base) + 1:].replace('_', ' ')}"
 
 
-def build_rtsp_url(host: str, port: int, name: str, cam_id: str, path: str | None = None) -> str:
+def build_rtsp_url(
+    host: str,
+    port: int,
+    name: str,
+    cam_id: str,
+    path: str | None = None,
+    *,
+    password: str | None = None,
+) -> str:
     """Build the RTSP URL Home Assistant should pull the stream from.
 
     The host defaults to localhost, which only holds when the bridge runs
@@ -292,5 +340,20 @@ def build_rtsp_url(host: str, port: int, name: str, cam_id: str, path: str | Non
     "Connection refused" makes the camera entity flap between Unavailable and
     Idle, because Home Assistant marks a camera unavailable while its stream
     cannot be opened (issue #62).
+
+    ``password`` puts the bridge's RTSP credentials in the URL. Such a URL is a
+    secret: log ``redact_rtsp_url`` of it instead.
     """
-    return f"rtsp://{host or DEFAULT_BRIDGE_HOST}:{port}/{path or sanitize_rtsp_path(name, cam_id)}"
+    auth = f"{RTSP_USER}:{quote(password, safe='')}@" if password else ""
+    return f"rtsp://{auth}{host or DEFAULT_BRIDGE_HOST}:{port}/{path or sanitize_rtsp_path(name, cam_id)}"
+
+
+def redact_rtsp_url(url: str) -> str:
+    """``url`` without the credentials ``build_rtsp_url`` may have put in it."""
+    scheme, sep, rest = url.partition("://")
+    if not sep:
+        return url
+    authority, slash, path = rest.partition("/")
+    if "@" in authority:
+        authority = "***@" + authority.rsplit("@", 1)[1]
+    return f"{scheme}://{authority}{slash}{path}"

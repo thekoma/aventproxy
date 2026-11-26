@@ -148,6 +148,9 @@ func (s *RTSPServer) handleRTSPProtocol(client *RTSPClient) {
 			}
 			break
 		}
+		if !s.authorize(client.conn, client.session, request) {
+			continue
+		}
 
 		if close := s.handleRTSPMethod(client, request); close == true {
 			break

@@ -97,6 +97,8 @@ def build_bridge_config(
     uid: str = "",
     lan_streaming: bool = True,
     lan: dict[str, dict] | None = None,
+    rtsp_password: str | None = None,
+    api_token: str | None = None,
 ) -> dict:
     """Build the bridge JSON the add-on reads.
 
@@ -107,6 +109,9 @@ def build_bridge_config(
     defaults to off (issue #72).
     `uid` and `lan_streaming` steer the LAN path; `lan` maps a camera id to its
     `local_key`, `p2p_password`, `lan_ip` and `lan_protocol`.
+    `rtsp_password` makes every RTSP request authenticate (the camera
+    entity's stream URL carries it) and `api_token` guards /status; without
+    them, as before, neither asks for anything.
 
     With LAN streaming off the bridge never uses the local key or the P2P
     password, so they stay out of a file that every backup copies. The address
@@ -130,6 +135,8 @@ def build_bridge_config(
         "talkback": talkback,
         "uid": uid,
         "lan_streaming": lan_streaming,
+        **({"rtsp_password": rtsp_password} if rtsp_password else {}),
+        **({"api_token": api_token} if api_token else {}),
         "bridge_port": bridge_port,
         "cameras": build_cameras_payload(cameras, lan),
     }

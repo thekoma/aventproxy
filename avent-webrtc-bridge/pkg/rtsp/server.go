@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -70,9 +71,16 @@ type RTSPServer struct {
 	// before the webrtc one (experimental, Dev card only; see tryIMM).
 	CloudTransport string
 
-	// BindAddress limits the interfaces the RTSP server listens on. The server
-	// has no authentication, so anyone who can reach the port can watch the
-	// camera. Accepted values (see bindHosts):
+	// RTSPPassword, when set, makes every RTSP request authenticate with
+	// Digest as RTSPUser (auth.go). Without it the server has no
+	// authentication, as before, and anyone who can reach the port can watch
+	// the camera. Set it before Start.
+	RTSPPassword string
+	auth         *digestAuth
+
+	// BindAddress limits the interfaces the RTSP server listens on. Without
+	// RTSPPassword the server has no authentication, so anyone who can reach
+	// the port can watch the camera. Accepted values (see bindHosts):
 	//   - "" (default for library callers): all interfaces, the old behavior;
 	//   - "localhost": 127.0.0.1 and ::1 (the add-on default);
 	//   - one address or a comma-separated list, e.g. "127.0.0.1,192.168.1.10";
@@ -85,6 +93,14 @@ type RTSPServer struct {
 	LanStreaming bool
 	UID          string
 	LANTargets   map[string]LANTarget
+
+	// StatusPort serves /status (status.go) on the RTSP bind addresses; 0
+	// leaves it off. With StatusToken set, /status asks for it as a bearer
+	// token. Set both before Start.
+	StatusPort    int
+	StatusToken   string
+	status        statusBoard
+	statusServers []*http.Server
 
 	cooldownMutex sync.Mutex
 	lanCooldowns  map[string]time.Time // device id -> end of its LAN cool-down
@@ -324,6 +340,10 @@ func (s *RTSPServer) Start() error {
 	}
 
 	s.listeners = listeners
+	if s.RTSPPassword != "" {
+		s.auth = newDigestAuth(RTSPUser, s.RTSPPassword)
+	}
+	s.startStatus(hosts)
 	s.running = true
 
 	if s.MobileClient != nil {
@@ -366,6 +386,7 @@ func (s *RTSPServer) Stop() error {
 	for _, ln := range s.listeners {
 		ln.Close()
 	}
+	s.stopStatus()
 
 	// Close all client connections
 	for _, client := range s.clients {
@@ -477,15 +498,19 @@ func (s *RTSPServer) handleConnection(conn net.Conn) {
 
 	reader := bufio.NewReader(conn)
 
-	// Parse initial RTSP request. A client that connects and never sends
-	// one would otherwise hold this goroutine and its socket for good: it is
-	// not in the client map yet, so not even Stop closes it.
+	// The first authorized request picks the camera: nothing is looked up and
+	// no stream starts for a connection that has not proved the password. A
+	// client that connects and never sends one would otherwise hold this
+	// goroutine and its socket for good: it is not in the client map yet, so
+	// not even Stop closes it.
 	if err := conn.SetReadDeadline(time.Now().Add(requestReadTimeout)); err != nil {
 		return
 	}
-	request, err := s.parseRTSPRequestFromReader(reader)
+	request, err := s.firstAuthorizedRequest(conn, session, reader)
 	if err != nil {
-		core.Logger.Error().Err(err).Msg("Error parsing initial RTSP request")
+		if !errors.Is(err, errNoCredentials) {
+			core.Logger.Error().Err(err).Msg("Error parsing initial RTSP request")
+		}
 		return
 	}
 
@@ -835,11 +860,15 @@ func (cs *CameraStream) inUse() bool {
 	return cs.pending.Load() > 0 || cs.connecting.Load() || cs.active.Load()
 }
 
-// markActive commits a successful start; see inUse for the order. Callers
+// markActive commits a successful start on path (PathLocal, PathIMM or
+// PathWebRTC, for the status); see inUse for the order. Callers
 // hold mutex.
-func (cs *CameraStream) markActive() {
+func (cs *CameraStream) markActive(path string) {
 	cs.active.Store(true)
 	cs.connecting.Store(false)
+	if cs.server != nil {
+		cs.server.status.streamActive(cs, path)
+	}
 }
 
 // clientArrived takes one client off pending. A client attached without
@@ -963,7 +992,7 @@ func (cs *CameraStream) startStream(gen uint64) {
 		}
 		cs.cloudBridge = nil
 		if err == nil {
-			cs.markActive()
+			cs.markActive(PathWebRTC)
 			if len(cs.clients) == 0 { // the last client left during a LAN attempt or the retry wait
 				cs.scheduleShutdown()
 			}
@@ -1165,6 +1194,9 @@ func (cs *CameraStream) stopStreamInternal() {
 	wasActive := cs.active.Load()
 	cs.active.Store(false)
 	cs.connecting.Store(false)
+	if wasActive && cs.server != nil {
+		cs.server.status.streamStopped(cs)
+	}
 
 	// Cancel any pending shutdown
 	if cs.shutdownTimer != nil {
