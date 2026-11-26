@@ -6,11 +6,16 @@ import logging
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
+    CONF_LAN_STREAMING,
+    DEFAULT_LAN_STREAMING,
     DOMAIN,
     DPS_LIGHT_TIMER,
     DPS_LIGHT_TIMER_SWITCH,
@@ -20,6 +25,9 @@ from .const import (
     DPS_LULLABY_TIMER_SWITCH,
     LULLABY_TRACK_MAP,
     LULLABY_TRACKS,
+    SIGNAL_STREAM_SOURCE,
+    STREAM_SOURCE_AUTO,
+    STREAM_SOURCES,
     TIMER_OPTIONS,
     TIMER_SECONDS_TO_LABEL,
     lullaby_report_id,
@@ -52,7 +60,53 @@ async def async_setup_entry(
             None, "mdi:timer-outline",
             DPS_LIGHT_TIMER, DPS_LIGHT_TIMER_SWITCH, translation_key="night_light_timer",
         ))
+        if entry.options.get(CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING):
+            entities.append(AventStreamSourceSelect(coordinator, cam_id, data["stream_sources"]))
     async_add_entities(entities)
+
+
+class AventStreamSourceSelect(RestoreEntity, SelectEntity):
+    """Which bridge path the camera entity streams from.
+
+    "auto" (the default) is the bridge's usual path, the LAN first and the
+    cloud as fallback; "local" is its local path, the LAN only: no stream
+    rather than a cloud one. Only offered with LAN streaming on. The option is
+    Home Assistant's alone (restored from its state store); the bridge config
+    does not change.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "stream_source"
+    _attr_icon = "mdi:lan-connect"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_should_poll = False  # its state changes only when an option is picked
+
+    def __init__(self, coordinator: PhilipsAventCoordinator, cam_id: str, sources: dict[str, str]):
+        self._attr_options = list(STREAM_SOURCES)
+        self._cam_id = cam_id
+        self._sources = sources
+        self._attr_unique_id = f"{cam_id}_stream_source"
+        self._attr_device_info = build_device_info(coordinator, cam_id)
+
+    @property
+    def current_option(self) -> str:
+        return self._sources.get(self._cam_id, STREAM_SOURCE_AUTO)
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        if last is not None and last.state in STREAM_SOURCES:
+            self._set(last.state)
+
+    async def async_select_option(self, option: str) -> None:
+        self._set(option)
+        self.async_write_ha_state()
+
+    def _set(self, option: str) -> None:
+        if self._sources.get(self._cam_id, STREAM_SOURCE_AUTO) == option:
+            return
+        self._sources[self._cam_id] = option
+        async_dispatcher_send(self.hass, SIGNAL_STREAM_SOURCE.format(self._cam_id))
 
 
 class AventLullabySelect(CoordinatorEntity, SelectEntity):

@@ -97,6 +97,63 @@ class Camera:
         self.hass = None
         self.stream = None
 
+    async def async_added_to_hass(self):
+        pass
+
+    def async_on_remove(self, func):
+        pass
+
+
+class SelectEntity:
+    """Home Assistant's SelectEntity: `writes` counts async_write_ha_state.
+
+    `should_poll` is Entity's (helpers/entity.py, 2026.11.2): True unless the
+    entity sets `_attr_should_poll`, and then HA updates it every 30 s.
+    """
+
+    hass = None
+    writes = 0
+    _attr_should_poll = True
+
+    @property
+    def should_poll(self) -> bool:
+        return self._attr_should_poll
+
+    def async_write_ha_state(self):
+        self.writes += 1
+
+
+class RestoreEntity:
+    """Home Assistant's RestoreEntity: `last_state` is what the state store held."""
+
+    last_state = None
+
+    async def async_added_to_hass(self):
+        pass
+
+    async def async_get_last_state(self):
+        return self.last_state
+
+
+class Dispatcher:
+    """Home Assistant's dispatcher, synchronous: `sent` lists every signal sent."""
+
+    def __init__(self):
+        self.targets: dict[str, list] = {}
+        self.sent: list[str] = []
+
+    def connect(self, hass, signal, target):
+        self.targets.setdefault(signal, []).append(target)
+        return lambda: self.targets[signal].remove(target)
+
+    def send(self, hass, signal, *args):
+        self.sent.append(signal)
+        for target in list(self.targets.get(signal, [])):
+            target(*args)
+
+
+dispatcher = Dispatcher()
+
 
 async def _no_ffmpeg(*args, **kwargs):
     raise AssertionError("tests replace ffmpeg's async_get_image")
@@ -127,6 +184,13 @@ def _stand_in_modules() -> dict[str, types.ModuleType]:
             CoordinatorEntity=CoordinatorEntity,
         ),
         "homeassistant.helpers.entity_platform": module("homeassistant.helpers.entity_platform", AddEntitiesCallback=object),
+        "homeassistant.helpers.dispatcher": module(
+            "homeassistant.helpers.dispatcher",
+            async_dispatcher_connect=dispatcher.connect,
+            async_dispatcher_send=dispatcher.send,
+        ),
+        "homeassistant.helpers.restore_state": module("homeassistant.helpers.restore_state", RestoreEntity=RestoreEntity),
+        "homeassistant.components.select": module("homeassistant.components.select", SelectEntity=SelectEntity),
         "homeassistant.config_entries": module("homeassistant.config_entries", ConfigEntry=object),
         "homeassistant.const": module(
             "homeassistant.const",
@@ -175,6 +239,7 @@ def load(monkeypatch, name: str) -> types.ModuleType:
     Every module of the package is registered with `monkeypatch` before the
     import, so the ones it pulls in are removed again afterwards too.
     """
+    dispatcher.__init__()
     for key, mod in _stand_in_modules().items():
         monkeypatch.setitem(sys.modules, key, mod)
     for path in PKG_DIR.glob("*.py"):

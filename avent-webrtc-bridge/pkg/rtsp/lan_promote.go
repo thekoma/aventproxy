@@ -15,6 +15,10 @@ import (
 // errLANAvailable is why a cloud stream is torn down once the LAN works again.
 var errLANAvailable = errors.New("LAN signalling available again")
 
+// lanBusyRetry is how long a cloud stream waits before it looks at the LAN
+// again while another stream of the camera holds the LAN session.
+const lanBusyRetry = lanCooldownPeriod
+
 // armPromotion probes the LAN when the camera's cool-down ends, if the
 // cool-down is all that keeps this stream on the cloud. Callers hold cs.mutex.
 func (cs *CameraStream) armPromotion() {
@@ -25,6 +29,9 @@ func (cs *CameraStream) armPromotion() {
 	s.cooldownMutex.Lock()
 	delay := time.Until(s.lanCooldowns[cs.camera.DeviceID])
 	s.cooldownMutex.Unlock()
+	if cs.lanHeldByOther() { // the local path streams it: look again later
+		delay = max(delay, lanBusyRetry)
+	}
 
 	if cs.promoteTimer != nil {
 		cs.promoteTimer.Stop()
@@ -60,12 +67,19 @@ func (cs *CameraStream) promote() {
 		return
 	}
 	// A forwarder with no clients: the cloud stream's viewers never see the probe.
-	probe := cs.lanFactory(NewRTPForwarder())
-	stopped, err := cs.runLANAttempt(probe)
-	if stopped {
+	probe := cs.newHeldLAN(NewRTPForwarder())
+	if probe == nil {
+		cs.armPromotion()
 		cs.mutex.Unlock()
 		return
 	}
+	cs.probe = probe
+	stopped, err := cs.runLANAttempt(probe)
+	if stopped { // stopStreamInternal stopped the probe; a restart may own cs.probe now
+		cs.mutex.Unlock()
+		return
+	}
+	cs.probe = nil
 	probe.Stop() // before the clients reconnect, so the monitor is free for them
 	if err != nil {
 		cs.server.startLANCooldown(cs.camera.DeviceID)
