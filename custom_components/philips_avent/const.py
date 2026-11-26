@@ -160,6 +160,30 @@ CONF_TALKBACK = "talkback"
 DEFAULT_TALKBACK = False
 CONF_LAN_STREAMING = "lan_streaming"
 DEFAULT_LAN_STREAMING = True
+# Use WebRTC. Off leaves only the bridge's local path: no stream goes through
+# the cloud, a camera without a LAN path has none, and there is no talkback.
+CONF_WEBRTC = "webrtc"
+DEFAULT_WEBRTC = True
+
+
+def options_error(options: dict) -> str | None:
+    """The options form's error for these options, or None.
+
+    Without WebRTC only the bridge's local path is left, which needs LAN
+    streaming: with both off, no camera could stream.
+    """
+    if options.get(CONF_WEBRTC, DEFAULT_WEBRTC) or options.get(CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING):
+        return None
+    return "webrtc_needs_lan"
+
+
+# A camera's "Stream source" select: "auto" is the bridge's /<camera> path (the
+# LAN first, the cloud as fallback), "local" its /<camera>/local path (the LAN
+# only, never the cloud).
+STREAM_SOURCE_AUTO = "auto"
+STREAM_SOURCE_LOCAL = "local"
+STREAM_SOURCES = [STREAM_SOURCE_AUTO, STREAM_SOURCE_LOCAL]
+SIGNAL_STREAM_SOURCE = f"{DOMAIN}_stream_source_{{}}"  # .format(cam_id)
 
 
 def lullaby_report_id(raw: object) -> int | None:
@@ -283,7 +307,15 @@ def unique_camera_name(name: str, cam_id: str, path: str) -> str:
     return f"{name} {path[len(base) + 1:].replace('_', ' ')}"
 
 
-def build_rtsp_url(host: str, port: int, name: str, cam_id: str, path: str | None = None) -> str:
+def build_rtsp_url(
+    host: str,
+    port: int,
+    name: str,
+    cam_id: str,
+    path: str | None = None,
+    *,
+    source: str = STREAM_SOURCE_AUTO,
+) -> str:
     """Build the RTSP URL Home Assistant should pull the stream from.
 
     The host defaults to localhost, which only holds when the bridge runs
@@ -292,5 +324,7 @@ def build_rtsp_url(host: str, port: int, name: str, cam_id: str, path: str | Non
     "Connection refused" makes the camera entity flap between Unavailable and
     Idle, because Home Assistant marks a camera unavailable while its stream
     cannot be opened (issue #62).
+    `source` STREAM_SOURCE_LOCAL asks for the bridge's local path.
     """
-    return f"rtsp://{host or DEFAULT_BRIDGE_HOST}:{port}/{path or sanitize_rtsp_path(name, cam_id)}"
+    url = f"rtsp://{host or DEFAULT_BRIDGE_HOST}:{port}/{path or sanitize_rtsp_path(name, cam_id)}"
+    return url + "/local" if source == STREAM_SOURCE_LOCAL else url

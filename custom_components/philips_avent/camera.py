@@ -7,17 +7,22 @@ import shlex
 from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.components.ffmpeg import async_get_image as ffmpeg_get_image
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     CONF_BRIDGE_HOST,
     CONF_BRIDGE_PORT,
     CONF_TALKBACK,
+    CONF_WEBRTC,
     DEFAULT_BRIDGE_HOST,
     DEFAULT_BRIDGE_PORT,
     DEFAULT_TALKBACK,
+    DEFAULT_WEBRTC,
     DOMAIN,
+    SIGNAL_STREAM_SOURCE,
+    STREAM_SOURCE_AUTO,
     build_rtsp_url,
 )
 from .coordinator import PhilipsAventCoordinator
@@ -37,10 +42,13 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     bridge_port = entry.options.get(CONF_BRIDGE_PORT, DEFAULT_BRIDGE_PORT)
     bridge_host = entry.options.get(CONF_BRIDGE_HOST, DEFAULT_BRIDGE_HOST)
-    talkback = entry.options.get(CONF_TALKBACK, DEFAULT_TALKBACK)
+    # Two-way audio rides a cloud session: with Use WebRTC off the bridge has none.
+    talkback = entry.options.get(CONF_TALKBACK, DEFAULT_TALKBACK) and entry.options.get(CONF_WEBRTC, DEFAULT_WEBRTC)
     entities = []
     for cam_id, coordinator in data["coordinators"].items():
-        entities.append(AventCamera(coordinator, cam_id, bridge_port, bridge_host, talkback))
+        entities.append(AventCamera(
+            coordinator, cam_id, bridge_port, bridge_host, talkback, data.get("stream_sources")
+        ))
     async_add_entities(entities)
 
 
@@ -58,14 +66,16 @@ class AventCamera(Camera):
         bridge_port: int = DEFAULT_BRIDGE_PORT,
         bridge_host: str = DEFAULT_BRIDGE_HOST,
         talkback: bool = DEFAULT_TALKBACK,
+        stream_sources: dict[str, str] | None = None,
     ):
         super().__init__()
         self.coordinator = coordinator
         self._cam_id = cam_id
         self._attr_unique_id = f"{cam_id}_camera"
-        self._stream_url = build_rtsp_url(
-            bridge_host, bridge_port, coordinator.camera_name, cam_id, coordinator.rtsp_path
-        )
+        self._bridge_host = bridge_host
+        self._bridge_port = bridge_port
+        # The "Stream source" selects' options, shared with select.py.
+        self._stream_sources = stream_sources if stream_sources is not None else {}
         self._attr_device_info = build_device_info(coordinator, cam_id)
         if talkback and CameraEntityCapabilities is not None:
             # Home Assistant offers its microphone (a Labs preview, over WebRTC
@@ -74,8 +84,49 @@ class AventCamera(Camera):
             # talkback is on.
             self._attr_camera_entity_capabilities = CameraEntityCapabilities(two_way_audio=True)
 
+    @property
+    def _stream_url(self) -> str:
+        source = self._stream_sources.get(self._cam_id, STREAM_SOURCE_AUTO)
+        return build_rtsp_url(
+            self._bridge_host,
+            self._bridge_port,
+            self.coordinator.camera_name,
+            self._cam_id,
+            self.coordinator.rtsp_path,
+            source=source,
+        )
+
     async def stream_source(self) -> str:
         return self._stream_url
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(async_dispatcher_connect(
+            self.hass, SIGNAL_STREAM_SOURCE.format(self._cam_id), self._stream_source_changed
+        ))
+
+    @callback
+    def _stream_source_changed(self) -> None:
+        """Point Home Assistant's own stream at the new path.
+
+        WebRTC through go2rtc asks stream_source() again for every offer
+        (go2rtc/__init__.py, 2026.11.2), so only the stream worker (HLS,
+        recording) has to move. Stream.update_source restarts a running
+        worker with the new source. On a stopped stream it leaves the
+        fast-restart flag set, which start() does not clear (still so in
+        2026.11.2), and the next stop() then restarted the worker instead of
+        ending it and waited for it for good: on 05-11-2026 (2026.10.4) the
+        dashboard's stream request never answered after a source change. A
+        stopped stream only gets the new source for its next start.
+        """
+        stream, url = self.stream, self._stream_url
+        if stream is None or stream.source == url:
+            return
+        worker = getattr(stream, "_thread", None)
+        if worker is not None and worker.is_alive():
+            stream.update_source(url)
+        else:
+            stream.source = url
 
     async def async_camera_image(
         self,

@@ -626,3 +626,25 @@ func TestCloudTransportFlag(t *testing.T) {
 		}
 	}
 }
+
+// "webrtc": false leaves only the local path and turns talkback off; absent,
+// WebRTC stays on and talkback is as configured.
+func TestConfigureWebRTC(t *testing.T) {
+	for body, want := range map[string][2]bool{ // NoWebRTC, Talkback
+		`"talkback": true,`:                  {false, true},
+		`"talkback": true, "webrtc": true,`:  {false, true},
+		`"talkback": true, "webrtc": false,`: {true, false},
+		`"webrtc": false,`:                   {true, false},
+	} {
+		cfg := writeCfg(t, `{ `+body+`
+		  "signing_key": "sk", "sid": "S", "ecode": "E", "partner": "P",
+		  "app_key": "AK", "device_id": "D",
+		  "cameras": [{"camera_id": "abc123", "camera_name": "Monitor"}]
+		}`)
+		server := rtsp.NewRTSPServer(0, nil)
+		configureWebRTC(server, cfg)
+		if got := [2]bool{server.NoWebRTC, server.Talkback}; got != want {
+			t.Errorf("%s: NoWebRTC, Talkback = %v, want %v", body, got, want)
+		}
+	}
+}

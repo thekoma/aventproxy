@@ -73,7 +73,7 @@ func (cs *CameraStream) lanEligible() (bool, string) {
 	target := s.LANTargets[id]
 	protocol, err := strconv.ParseFloat(target.Protocol, 64)
 	switch {
-	case s.sessionTalkback():
+	case s.sessionTalkback() && !cs.localOnly:
 		return false, "talkback on" // the LAN path carries no return audio; on demand it talks in a session of its own
 	case cs.resolution == "sd":
 		return false, "sd stream"
@@ -85,7 +85,7 @@ func (cs *CameraStream) lanEligible() (bool, string) {
 		return false, "protocol unknown"
 	case err != nil || !(protocol >= lanMinProtocol): // written so NaN fails too
 		return false, "protocol " + target.Protocol
-	case s.lanCoolingDown(id):
+	case !cs.localOnly && s.lanCoolingDown(id): // the local path has nothing to wait on the LAN for
 		return false, "cooling down"
 	}
 	return true, ""
@@ -106,6 +106,7 @@ func (cs *CameraStream) tryLAN(gen uint64) (done bool) {
 		core.Logger.Info().Msgf("Not using LAN signalling for %s: %s", cs.camera.DeviceName, reason)
 		return false
 	}
+	cs.freeLAN()
 
 	cs.mutex.Lock()
 	if cs.superseded(gen) {
@@ -117,7 +118,12 @@ func (cs *CameraStream) tryLAN(gen uint64) (done bool) {
 		cs.replaceBridge()
 	}
 	// The stream's forwarder is the one RTSP clients attach to at SETUP.
-	source := cs.lanFactory(cs.forwarder)
+	source := cs.newHeldLAN(cs.forwarder)
+	if source == nil { // the local path has it: not a LAN failure, so no cool-down
+		cs.mutex.Unlock()
+		core.Logger.Info().Msgf("Not using LAN signalling for %s: %v", cs.camera.DeviceName, errLANBusy)
+		return false
+	}
 	// Set before Start, so a death between Start and the commit below reaches
 	// lanDied, whose teardown cancels the attempt.
 	cs.lan = source
@@ -197,8 +203,12 @@ func (cs *CameraStream) lanDied(source lanStreamer, err error) {
 		cs.mutex.Unlock()
 		return
 	}
-	period := cs.server.startLANCooldown(cs.camera.DeviceID)
-	core.Logger.Warn().Msgf("Stream with LAN signalling for %s died: %v; using cloud signalling for %v", cs.camera.DeviceName, err, period)
+	if cs.localOnly {
+		core.Logger.Warn().Msgf("Local stream of %s died: %v", cs.camera.DeviceName, err)
+	} else {
+		period := cs.server.startLANCooldown(cs.camera.DeviceID)
+		core.Logger.Warn().Msgf("Stream with LAN signalling for %s died: %v; using cloud signalling for %v", cs.camera.DeviceName, err, period)
+	}
 	clients := cs.teardownLocked()
 	cs.mutex.Unlock()
 	closeClients(clients)

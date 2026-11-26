@@ -23,9 +23,11 @@ from .const import (
     CONF_SID,
     CONF_TALKBACK,
     CONF_UID,
+    CONF_WEBRTC,
     DEFAULT_BRIDGE_PORT,
     DEFAULT_LAN_STREAMING,
     DEFAULT_TALKBACK,
+    DEFAULT_WEBRTC,
     DOMAIN,
     TUYA_APP_KEY,
     TUYA_DEFAULT_COUNTRY_CODE,
@@ -86,6 +88,7 @@ async def _write_bridge_config(
         uid=entry.data.get(CONF_UID, ""),
         lan_streaming=entry.options.get(CONF_LAN_STREAMING, DEFAULT_LAN_STREAMING),
         lan=lan,
+        webrtc=entry.options.get(CONF_WEBRTC, DEFAULT_WEBRTC),
         bridge_port=bridge_port,
         cameras=cameras,
     )
@@ -299,6 +302,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "coordinators": coordinators,
         "config": entry.data,
         "options": dict(entry.options),
+        "stream_sources": {},  # cam_id -> the "Stream source" select's option
     }
     ready = False
 

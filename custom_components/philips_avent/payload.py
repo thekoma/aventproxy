@@ -97,6 +97,7 @@ def build_bridge_config(
     uid: str = "",
     lan_streaming: bool = True,
     lan: dict[str, dict] | None = None,
+    webrtc: bool = True,
 ) -> dict:
     """Build the bridge JSON the add-on reads.
 
@@ -107,6 +108,7 @@ def build_bridge_config(
     defaults to off (issue #72).
     `uid` and `lan_streaming` steer the LAN path; `lan` maps a camera id to its
     `local_key`, `p2p_password`, `lan_ip` and `lan_protocol`.
+    `webrtc` False leaves the bridge only its local path, without talkback.
 
     With LAN streaming off the bridge never uses the local key or the P2P
     password, so they stay out of a file that every backup copies. The address
@@ -118,7 +120,7 @@ def build_bridge_config(
             camera_id: {**values, "local_key": "", "p2p_password": ""}
             for camera_id, values in (lan or {}).items()
         }
-    return {
+    config = {
         "signing_key": signing_key,
         "sid": sid,
         "ecode": ecode,
@@ -127,12 +129,15 @@ def build_bridge_config(
         "device_id": device_id,
         "package_name": package_name,
         "api_host": api_host,
-        "talkback": talkback,
+        "talkback": talkback and webrtc,  # talkback rides a cloud session
         "uid": uid,
         "lan_streaming": lan_streaming,
         "bridge_port": bridge_port,
         "cameras": build_cameras_payload(cameras, lan),
     }
+    if not webrtc:  # absent means on, so the file stays as it was by default
+        config["webrtc"] = False
+    return config
 
 
 def build_cameras_payload(cameras: list, lan: dict[str, dict] | None = None) -> list:

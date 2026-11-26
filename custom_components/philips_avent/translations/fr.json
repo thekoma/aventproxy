@@ -61,15 +61,20 @@
           "bridge_host": "Hôte du pont",
           "bridge_port": "Port RTSP du pont",
           "talkback": "Audio bidirectionnel (interphone)",
-          "lan_streaming": "Streaming sur le réseau local"
+          "lan_streaming": "Streaming sur le réseau local",
+          "webrtc": "Utiliser WebRTC"
         },
         "data_description": {
           "bridge_host": "Emplacement où Home Assistant peut joindre le pont WebRTC. Laissez localhost si vous utilisez l'add-on ; indiquez le nom du conteneur ou l'adresse IP si vous exécutez le pont ailleurs vous-même.",
           "bridge_port": "Port sur lequel le pont WebRTC écoute (par défaut : 38554)",
           "talkback": "Activez pour parler dans la pièce, depuis Home Assistant 2026.11 (aperçu Labs, HTTPS et WebRTC) ou un autre client qui envoie de l'audio sur le flux. Avec la carte Dev du pont, l'audio bidirectionnel n'est demandé au moniteur que pendant qu'on parle ; ailleurs chaque flux le demande, ce qui fait que le moniteur arrête une berceuse en cours et la redémarre depuis le début quand vous fermez le flux.",
-          "lan_streaming": "Diffuser via le réseau local lorsque le moniteur le permet. Désactivez-le si votre flux a cessé de fonctionner après une mise à jour."
+          "lan_streaming": "Diffuser via le réseau local lorsque le moniteur le permet. Désactivez-le si votre flux a cessé de fonctionner après une mise à jour.",
+          "webrtc": "Utiliser un flux WebRTC lorsqu'un flux ne peut pas passer par le réseau local. Le cloud Tuya l'établit ; la vidéo passe par votre réseau local quand c'est possible, sinon par Internet, éventuellement via le relais de Tuya. Désactivez-le pour garder chaque flux hors du cloud : une caméra ne diffuse alors que via le réseau local, ou pas du tout, et l'audio bidirectionnel est désactivé. Nécessite le streaming sur le réseau local."
         }
       }
+    },
+    "error": {
+      "webrtc_needs_lan": "Activez le streaming sur le réseau local ou Utiliser WebRTC : si les deux sont désactivés, aucune caméra ne peut diffuser."
     }
   },
   "entity": {
@@ -187,6 +192,13 @@
       },
       "night_light_timer": {
         "name": "Minuterie veilleuse"
+      },
+      "stream_source": {
+        "name": "Source du flux",
+        "state": {
+          "auto": "Automatique (local d'abord)",
+          "local": "Local uniquement"
+        }
       }
     },
     "button": {
