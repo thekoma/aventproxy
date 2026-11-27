@@ -61,13 +61,15 @@
           "bridge_host": "Bridge host",
           "bridge_port": "Bridge RTSP port",
           "talkback": "Two-way audio (talkback)",
-          "lan_streaming": "LAN streaming"
+          "lan_streaming": "LAN streaming",
+          "aac_audio": "Sound for Home Assistant's own player (AAC)"
         },
         "data_description": {
           "bridge_host": "Where Home Assistant can reach the WebRTC bridge. Leave it as localhost when you use the add-on; set the container name or IP address if you run the bridge yourself, elsewhere.",
           "bridge_port": "Port the WebRTC bridge listens on (default: 38554)",
           "talkback": "Turn this on to talk to the room, from Home Assistant 2026.11 (Labs preview, HTTPS and WebRTC) or another client that sends audio on the stream. With the bridge's Dev card the monitor is asked for two-way audio only while someone talks; elsewhere every stream asks for it, which makes the monitor stop a playing lullaby and restart it from the beginning when you close the stream.",
-          "lan_streaming": "Stream over the local network when the monitor allows it. Turn it off if your stream stopped working after updating."
+          "lan_streaming": "Stream over the local network when the monitor allows it. Turn it off if your stream stopped working after updating.",
+          "aac_audio": "Home Assistant's own player (HLS, used when WebRTC does not connect, and for viewing through Home Assistant from outside the home) plays only AAC or MP3 sound, and the cameras send G.711, so it plays them without sound. On: the bridge adds an AAC copy of the sound to each stream, made by ffmpeg while a player takes it. Off: the streams carry only the camera's own sound. Off by default."
         }
       }
     }

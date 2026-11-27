@@ -56,6 +56,34 @@ type RTPForwarder struct {
 	// backchannelSink takes talkback audio from the clients; see
 	// SetBackchannelSink.
 	backchannelSink func(*rtp.Packet)
+
+	// AACFFmpeg is the ffmpeg that encodes the AAC track (aac.go); "" leaves
+	// the track out. AACLabel names the stream in its log lines.
+	AACFFmpeg string
+	AACLabel  string
+	aac       *aacEncoder
+	aacGen    uint64 // which encoder's frames are current
+	aacClock  aacClock
+	aacSeq    uint16
+	// aacStarted: the AAC clients got their first frame (the silent one).
+	aacStarted bool
+	// aacRetry holds off a new encoder after one that failed; aacFailures
+	// counts failures in a row (the wait doubles, and only the first is
+	// logged as a warning). aacStarting: an encoder is being started, outside
+	// the lock.
+	aacRetry    time.Time
+	aacFailures int
+	aacStarting bool
+}
+
+// aacRetryAfter is the wait after the given number of encoder failures in a
+// row: 5 s, doubling, at most 5 minutes.
+func aacRetryAfter(failures int) time.Duration {
+	wait := 5 * time.Second
+	for i := 1; i < failures && wait < 5*time.Minute; i++ {
+		wait *= 2
+	}
+	return min(wait, 5*time.Minute)
 }
 
 type RTPClient struct {
@@ -90,6 +118,15 @@ type RTPClient struct {
 	videoRTPChannel     byte
 	audioRTPChannel     byte
 	backAudioRTPChannel byte
+	// noVideo and noAudio mark a TCP client that did not set up that track
+	// (AddTCPClientTracks): an unset channel is 0, the video's, so the channel
+	// number cannot tell. Both false, the default, sends both, as before.
+	noVideo, noAudio bool
+
+	// The AAC track, only for a client that set it up (SetupAACTrack).
+	aacOn         bool
+	aacRTPChannel byte
+	aacConn       *net.UDPConn
 
 	lastActivity time.Time
 
@@ -238,8 +275,16 @@ func (rf *RTPForwarder) Play(sessionID string) bool {
 	return ok
 }
 
-// AddTCPClient adds an interleaved client, at PLAY, and starts its media.
+// AddTCPClient adds an interleaved client, at PLAY, and starts its media,
+// on both the video and the G.711 track.
 func (rf *RTPForwarder) AddTCPClient(sessionID string, conn net.Conn, videoRTPChannel, audioRTPChannel, backAudioRTPChannel byte) error {
+	return rf.AddTCPClientTracks(sessionID, conn, videoRTPChannel, audioRTPChannel, backAudioRTPChannel, true, true)
+}
+
+// AddTCPClientTracks is AddTCPClient for a client that set up only some of
+// the tracks: video and audio say which, and a track it did not set up gets
+// nothing. The flags are set with the client, before any media reaches it.
+func (rf *RTPForwarder) AddTCPClientTracks(sessionID string, conn net.Conn, videoRTPChannel, audioRTPChannel, backAudioRTPChannel byte, video, audio bool) error {
 	rf.mutex.Lock()
 	defer rf.mutex.Unlock()
 
@@ -250,6 +295,7 @@ func (rf *RTPForwarder) AddTCPClient(sessionID string, conn net.Conn, videoRTPCh
 		existingClient.videoRTPChannel = videoRTPChannel
 		existingClient.audioRTPChannel = audioRTPChannel
 		existingClient.backAudioRTPChannel = backAudioRTPChannel
+		existingClient.noVideo, existingClient.noAudio = !video, !audio
 		existingClient.lastActivity = time.Now()
 		existingClient.playing = true
 		return nil
@@ -263,6 +309,8 @@ func (rf *RTPForwarder) AddTCPClient(sessionID string, conn net.Conn, videoRTPCh
 		videoRTPChannel:     videoRTPChannel,
 		audioRTPChannel:     audioRTPChannel,
 		backAudioRTPChannel: backAudioRTPChannel,
+		noVideo:             !video,
+		noAudio:             !audio,
 		lastActivity:        time.Now(),
 		playing:             true, // added at PLAY
 	}
@@ -277,7 +325,7 @@ func (rf *RTPForwarder) AddTCPClient(sessionID string, conn net.Conn, videoRTPCh
 // close releases the sockets the forwarder opened for a client. The RTSP
 // connection of a TCP client belongs to the server and is left alone.
 func (c *RTPClient) close() {
-	for _, conn := range []*net.UDPConn{c.videoConn, c.audioConn, c.backchannelListener, c.backchannelRTCPListener} {
+	for _, conn := range []*net.UDPConn{c.videoConn, c.audioConn, c.aacConn, c.backchannelListener, c.backchannelRTCPListener} {
 		if conn != nil {
 			_ = conn.Close()
 		}
@@ -292,7 +340,210 @@ func (rf *RTPForwarder) RemoveClient(sessionID string) {
 		client.close()
 		delete(rf.clients, sessionID)
 		core.Logger.Trace().Msgf("Removed RTP client %s", sessionID)
+		rf.stopAACIfUnusedLocked()
 	}
+}
+
+// SetupAACTrack gives a client the AAC track: on the interleaved channel for
+// TCP, to udpPort at the address of its RTSP connection for UDP (as the other
+// tracks). The client must have been added already.
+func (rf *RTPForwarder) SetupAACTrack(sessionID string, channel byte, udpPort int) error {
+	rf.mutex.Lock()
+	defer rf.mutex.Unlock()
+
+	client, exists := rf.clients[sessionID]
+	if !exists {
+		return fmt.Errorf("client %s not found", sessionID)
+	}
+	if client.transportMode == TransportUDP && client.aacConn == nil {
+		if udpPort <= 0 {
+			return fmt.Errorf("client %s: no UDP port for the AAC track", sessionID)
+		}
+		ip := remoteIP(client.control)
+		if ip == nil {
+			return fmt.Errorf("no address to send UDP client %s its AAC track", sessionID)
+		}
+		conn, err := dialClientUDP(ip, udpPort)
+		if err != nil {
+			return fmt.Errorf("failed to create AAC UDP connection: %w", err)
+		}
+		client.aacConn = conn
+	}
+	client.aacRTPChannel = channel
+	client.aacOn = true
+	return nil
+}
+
+// encodeAACLocked hands one G.711 payload to the AAC encoder, starting one
+// when a client has the track. Callers hold rf.mutex.
+func (rf *RTPForwarder) encodeAACLocked(packet *rtp.Packet) {
+	if rf.AACFFmpeg == "" || !rf.hasAACClientLocked() {
+		return
+	}
+	if rf.aac == nil {
+		if rf.aacStarting || time.Now().Before(rf.aacRetry) {
+			return
+		}
+		// ffmpeg is started outside the lock, which every packet of the
+		// stream needs; the audio until it runs goes without AAC.
+		rf.aacGen++
+		rf.aacStarting = true
+		go rf.startAAC(rf.aacGen, packet.PayloadType == 8)
+		return
+	}
+	rf.aac.Write(packet.Payload)
+}
+
+// startAAC starts encoder gen and hands it to the forwarder, unless the
+// forwarder moved on meanwhile (no AAC client left, or a newer encoder).
+func (rf *RTPForwarder) startAAC(gen uint64, alaw bool) {
+	enc, err := newAACEncoder(rf.AACFFmpeg, alaw,
+		func(frame []byte) { rf.forwardAAC(gen, frame) },
+		func(stderr string) { rf.aacStopped(gen, stderr) })
+	rf.mutex.Lock()
+	defer rf.mutex.Unlock()
+	rf.aacStarting = false
+	if err != nil {
+		rf.aacFailedLocked("could not start: " + err.Error())
+		return
+	}
+	if rf.aacGen != gen || !rf.hasAACClientLocked() {
+		enc.Close()
+		return
+	}
+	select {
+	case <-enc.done:
+		// ffmpeg exited before this could take the lock: its aacStopped
+		// found no encoder and counted nothing, so the failure is counted
+		// here, and the dead one is not installed.
+		why := "exited at once"
+		if enc.stderr != nil {
+			if msg := strings.TrimSpace(enc.stderr.String()); msg != "" {
+				why += ": " + msg
+			}
+		}
+		rf.aacFailedLocked(why)
+		return
+	default:
+	}
+	rf.aac = enc
+}
+
+// aacFailedLocked holds off the next encoder for longer each failure in a
+// row and warns only about the first. Callers hold rf.mutex.
+func (rf *RTPForwarder) aacFailedLocked(why string) {
+	rf.aacFailures++
+	wait := aacRetryAfter(rf.aacFailures)
+	rf.aacRetry = time.Now().Add(wait)
+	if rf.aacFailures == 1 {
+		core.Logger.Warn().Msgf("AAC encoder for %s stopped (%s); trying again in %v, then less often while it keeps failing", rf.AACLabel, why, wait)
+	} else {
+		core.Logger.Debug().Msgf("AAC encoder for %s failed again (%s); next try in %v", rf.AACLabel, why, wait)
+	}
+}
+
+func (rf *RTPForwarder) hasAACClientLocked() bool {
+	for _, client := range rf.clients {
+		if client.aacOn {
+			return true
+		}
+	}
+	return false
+}
+
+// stopAACIfUnusedLocked ends the encoder once no client has the AAC track;
+// the next client starts a new timeline. An encoder that stopped by itself
+// is replaced on the same timeline: its clients are still listening.
+func (rf *RTPForwarder) stopAACIfUnusedLocked() {
+	if !rf.hasAACClientLocked() {
+		rf.closeAACLocked()
+		rf.aacClock = aacClock{}
+		rf.aacStarted = false
+	}
+}
+
+func (rf *RTPForwarder) closeAACLocked() {
+	if rf.aac != nil {
+		rf.aac.Close()
+		rf.aac = nil
+		rf.aacGen++
+	}
+}
+
+// aacStopped runs when an encoder's ffmpeg is gone. One that was not closed
+// on purpose is logged and replaced, after a pause, on the next audio.
+func (rf *RTPForwarder) aacStopped(gen uint64, stderr string) {
+	rf.mutex.Lock()
+	defer rf.mutex.Unlock()
+	if rf.aac == nil || rf.aacGen != gen {
+		return
+	}
+	rf.closeAACLocked()
+	if stderr == "" {
+		stderr = "no message"
+	}
+	rf.aacFailedLocked(stderr)
+}
+
+// forwardAAC sends one encoded frame to every client with the AAC track.
+func (rf *RTPForwarder) forwardAAC(gen uint64, frame []byte) {
+	rf.mutex.Lock()
+	defer rf.mutex.Unlock()
+	if rf.aac == nil || rf.aacGen != gen {
+		return // a stopped encoder's last frames
+	}
+	rf.aacStarted = true
+	if rf.aacFailures > 0 {
+		core.Logger.Info().Msgf("AAC encoder for %s runs again", rf.AACLabel)
+		rf.aacFailures = 0
+	}
+	rf.sendAACLocked(frame)
+}
+
+// sendAACLocked stamps one AAC frame and sends it to every playing client
+// with the track. Callers hold rf.mutex.
+func (rf *RTPForwarder) sendAACLocked(frame []byte) {
+	rf.aacSeq++
+	data, err := aacPacket(frame, rf.aacSeq, rf.aacClock.next(time.Now()), aacSSRC).Marshal()
+	if err != nil {
+		return
+	}
+	// A client that set up only the AAC track never meets forward()'s dead
+	// client check (it has no socket for the other tracks), so this path
+	// removes the dead ones itself, as forward() does.
+	var dead []string
+	for sessionID, client := range rf.clients {
+		if !client.aacOn || !client.playing {
+			continue
+		}
+		var err error
+		if client.transportMode == TransportUDP && client.aacConn != nil {
+			_, err = client.aacConn.Write(data)
+		} else if client.transportMode == TransportTCP && client.tcpConn != nil {
+			err = rf.sendInterleavedRTP(client.tcpConn, client.aacRTPChannel, data)
+		}
+		if err == nil {
+			continue
+		}
+		if isDeadClientError(err) {
+			dead = append(dead, sessionID)
+		} else {
+			core.Logger.Debug().Err(err).Msgf("Error forwarding AAC to client %s", sessionID)
+		}
+	}
+	rf.removeDeadClientsLocked(dead, "AAC")
+}
+
+// startAACLocked sends the AAC clients a silent frame right after the first
+// video packet (aacSilentFrame); the encoder's frames follow. Callers hold
+// rf.mutex.
+func (rf *RTPForwarder) startAACLocked() {
+	if rf.aacStarted || rf.AACFFmpeg == "" || !rf.hasAACClientLocked() {
+		return
+	}
+	rf.aacStarted = true
+	rf.sendAACLocked(aacSilentFrame)
+	rf.aacClock.resync = true
 }
 
 // tcpWriteTimeout bounds one interleaved write. Packets go to every client in
@@ -329,6 +580,9 @@ func (rf *RTPForwarder) send(client *RTPClient, video bool, data []byte) (sent b
 		channel := client.audioRTPChannel
 		if video {
 			channel = client.videoRTPChannel
+		}
+		if (video && client.noVideo) || (!video && client.noAudio) {
+			return false, nil // a track it did not set up
 		}
 		return true, rf.sendInterleavedRTP(client.tcpConn, channel, data)
 	}
@@ -384,6 +638,12 @@ func (rf *RTPForwarder) forward(data []byte, video bool) {
 		}
 	}
 
+	rf.removeDeadClientsLocked(dead, track)
+}
+
+// removeDeadClientsLocked drops the clients a send found gone for good.
+// Callers hold rf.mutex.
+func (rf *RTPForwarder) removeDeadClientsLocked(dead []string, track string) {
 	for _, sessionID := range dead {
 		client := rf.clients[sessionID]
 		core.Logger.Info().Msgf("Removing dead %s client %s", track, sessionID)
@@ -397,6 +657,9 @@ func (rf *RTPForwarder) forward(data []byte, video bool) {
 			_ = client.control.Close()
 		}
 		delete(rf.clients, sessionID)
+	}
+	if len(dead) > 0 {
+		rf.stopAACIfUnusedLocked()
 	}
 }
 
@@ -525,6 +788,7 @@ func (rf *RTPForwarder) forwardOrderedVideo(packet *rtp.Packet) {
 	}
 
 	rf.forwardVideoData(packet)
+	rf.startAACLocked()
 }
 
 func (rf *RTPForwarder) forwardVideoData(packet *rtp.Packet) {
@@ -537,7 +801,7 @@ func (rf *RTPForwarder) forwardVideoData(packet *rtp.Packet) {
 }
 
 // ForwardAudioPacket restamps a G.711 RTP packet by its samples and sends it
-// to every client.
+// to every client, and to the AAC encoder when a client has that track.
 func (rf *RTPForwarder) ForwardAudioPacket(packet *rtp.Packet) {
 	rf.mutex.Lock()
 	defer rf.mutex.Unlock()
@@ -553,6 +817,7 @@ func (rf *RTPForwarder) ForwardAudioPacket(packet *rtp.Packet) {
 	if len(rf.clients) == 0 {
 		return
 	}
+	rf.encodeAACLocked(packet)
 
 	data, err := packet.Marshal()
 	if err != nil {
@@ -572,6 +837,7 @@ func (rf *RTPForwarder) Stop() {
 		client.close()
 		delete(rf.clients, sessionID)
 	}
+	rf.stopAACIfUnusedLocked()
 	// No client survives a stop, so the clocks may start over too.
 	rf.resetSourceLocked()
 	rf.videoTs, rf.audioTs = frameClock{}, audioClock{}
@@ -665,6 +931,7 @@ func (rf *RTPForwarder) CleanupInactiveClients(timeout time.Duration) {
 			core.Logger.Trace().Msgf("Cleaned up inactive RTP client %s", sessionID)
 		}
 	}
+	rf.stopAACIfUnusedLocked()
 }
 
 func (rf *RTPForwarder) handleUDPBackchannelRTP(sessionID string, listener *net.UDPConn) {

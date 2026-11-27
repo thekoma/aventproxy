@@ -304,6 +304,28 @@ func TestRefusedUDPClientIsDropped(t *testing.T) {
 	}
 }
 
+// A UDP client with only the AAC track (an audio-only player) has no socket
+// for the video and G.711 tracks, so forward() never meets it; the AAC path
+// drops it itself once its socket refuses packets, and closes its RTSP
+// connection, as forward() does.
+func TestRefusedAACOnlyClientIsDropped(t *testing.T) {
+	control, peer := controlConn(t, net.IPv4(127, 0, 0, 1))
+	rf := NewRTPForwarder()
+	if err := rf.AddUDPClient("s1", control, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := rf.SetupAACTrack("s1", 0, refusedUDPPort(t)); err != nil {
+		t.Fatal(err)
+	}
+	rf.Play("s1")
+	waitClientCount(t, rf, 0, func() {
+		rf.mutex.Lock()
+		rf.sendAACLocked(make([]byte, 24))
+		rf.mutex.Unlock()
+	})
+	expectClosed(t, peer)
+}
+
 // A TCP client that stops reading must not stall every other viewer: the
 // write gives up, the client is dropped and its connection closed.
 func TestStalledTCPClientIsDropped(t *testing.T) {

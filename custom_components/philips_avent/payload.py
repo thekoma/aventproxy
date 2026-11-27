@@ -96,6 +96,7 @@ def build_bridge_config(
     talkback: bool = False,
     uid: str = "",
     lan_streaming: bool = True,
+    aac_audio: bool = False,
     lan: dict[str, dict] | None = None,
 ) -> dict:
     """Build the bridge JSON the add-on reads.
@@ -130,6 +131,7 @@ def build_bridge_config(
         "talkback": talkback,
         "uid": uid,
         "lan_streaming": lan_streaming,
+        "aac_audio": bool(aac_audio),
         "bridge_port": bridge_port,
         "cameras": build_cameras_payload(cameras, lan),
     }
